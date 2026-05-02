@@ -11,6 +11,7 @@ import Auth from "./pages/Auth.tsx";
 import DashboardLayout from "./components/dashboard/DashboardLayout.tsx";
 import Overview from "./pages/dashboard/Overview.tsx";
 import Accounts from "./pages/dashboard/Accounts.tsx";
+import Workspaces from "./pages/dashboard/Workspaces.tsx";
 import ProtectedRoute from "./components/auth/ProtectedRoute.tsx";
 
 const queryClient = new QueryClient();
@@ -36,6 +37,7 @@ const App = () => (
           >
             <Route index element={<Overview />} />
             <Route path="accounts" element={<Accounts />} />
+            <Route path="workspaces" element={<Workspaces />} />
           </Route>
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />

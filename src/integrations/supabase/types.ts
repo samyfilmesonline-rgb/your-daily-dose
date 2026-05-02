@@ -50,6 +50,7 @@ export type Database = {
       execucoes_lovable: {
         Row: {
           atualizado_em: string
+          conta_id: string | null
           creditos_adicionados: number
           creditos_finais: number | null
           creditos_iniciais: number | null
@@ -64,6 +65,7 @@ export type Database = {
         }
         Insert: {
           atualizado_em?: string
+          conta_id?: string | null
           creditos_adicionados?: number
           creditos_finais?: number | null
           creditos_iniciais?: number | null
@@ -78,6 +80,7 @@ export type Database = {
         }
         Update: {
           atualizado_em?: string
+          conta_id?: string | null
           creditos_adicionados?: number
           creditos_finais?: number | null
           creditos_iniciais?: number | null
@@ -90,7 +93,15 @@ export type Database = {
           status?: string
           workspace_nome?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "execucoes_lovable_conta_id_fkey"
+            columns: ["conta_id"]
+            isOneToOne: false
+            referencedRelation: "contas_lovable"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {

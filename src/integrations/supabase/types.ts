@@ -47,6 +47,51 @@ export type Database = {
         }
         Relationships: []
       }
+      execucoes_lovable: {
+        Row: {
+          atualizado_em: string
+          creditos_adicionados: number
+          creditos_finais: number | null
+          creditos_iniciais: number | null
+          email_lovable: string
+          erro: string | null
+          finalizado_em: string | null
+          id: string
+          id_do_usuario: string
+          iniciado_em: string
+          status: string
+          workspace_nome: string | null
+        }
+        Insert: {
+          atualizado_em?: string
+          creditos_adicionados?: number
+          creditos_finais?: number | null
+          creditos_iniciais?: number | null
+          email_lovable: string
+          erro?: string | null
+          finalizado_em?: string | null
+          id?: string
+          id_do_usuario: string
+          iniciado_em?: string
+          status?: string
+          workspace_nome?: string | null
+        }
+        Update: {
+          atualizado_em?: string
+          creditos_adicionados?: number
+          creditos_finais?: number | null
+          creditos_iniciais?: number | null
+          email_lovable?: string
+          erro?: string | null
+          finalizado_em?: string | null
+          id?: string
+          id_do_usuario?: string
+          iniciado_em?: string
+          status?: string
+          workspace_nome?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

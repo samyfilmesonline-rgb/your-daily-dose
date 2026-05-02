@@ -1,4 +1,4 @@
-import { LayoutDashboard, Users, LogOut, Boxes } from "lucide-react";
+import { LayoutDashboard, Users, LogOut, Boxes, Shield, Crown } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   Sidebar,
@@ -15,17 +15,21 @@ import {
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/hooks/useAuth";
 
-const items = [
+const baseItems = [
   { title: "Visão geral", url: "/dashboard", icon: LayoutDashboard, end: true },
   { title: "Clientes", url: "/dashboard/accounts", icon: Users, end: false },
   { title: "Workspaces", url: "/dashboard/workspaces", icon: Boxes, end: false },
+];
+const adminItems = [
+  { title: "Usuários", url: "/dashboard/users", icon: Shield, end: false },
 ];
 
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const { pathname } = useLocation();
-  const { signOut, user } = useAuth();
+  const { signOut, user, isAdmin } = useAuth();
+  const items = isAdmin ? [...baseItems, ...adminItems] : baseItems;
 
   return (
     <Sidebar collapsible="icon">
@@ -66,7 +70,14 @@ export function AppSidebar() {
       </SidebarContent>
       <SidebarFooter className="px-3 py-3 border-t">
         {!collapsed && user?.email && (
-          <div className="text-xs text-muted-foreground truncate mb-2">{user.email}</div>
+          <div className="mb-2">
+            <div className="text-xs text-muted-foreground truncate">{user.email}</div>
+            {isAdmin && (
+              <div className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-primary mt-1">
+                <Crown className="h-3 w-3" /> Admin
+              </div>
+            )}
+          </div>
         )}
         <SidebarMenuButton onClick={() => signOut()} className="text-destructive">
           <LogOut className="h-4 w-4" />

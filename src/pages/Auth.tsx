@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function Auth() {
   const navigate = useNavigate();
@@ -43,7 +44,10 @@ export default function Auth() {
   };
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-muted/30 px-4">
+    <main className="min-h-screen flex items-center justify-center bg-muted/30 px-4 relative">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
+      </div>
       <Card className="w-full max-w-md shadow-sm">
         <CardHeader>
           <CardTitle className="text-2xl">Acesse o painel</CardTitle>

@@ -17,7 +17,7 @@ import { useAuth } from "@/hooks/useAuth";
 
 const items = [
   { title: "Visão geral", url: "/dashboard", icon: LayoutDashboard, end: true },
-  { title: "Contas Lovable", url: "/dashboard/accounts", icon: Users, end: false },
+  { title: "Clientes", url: "/dashboard/accounts", icon: Users, end: false },
 ];
 
 export function AppSidebar() {

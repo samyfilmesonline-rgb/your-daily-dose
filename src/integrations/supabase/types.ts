@@ -21,7 +21,9 @@ export type Database = {
           email_lovable: string
           id: string
           id_do_usuario: string
+          nome: string | null
           senha_lovable: string
+          whatsapp: string | null
         }
         Insert: {
           atualizado_em?: string | null
@@ -29,7 +31,9 @@ export type Database = {
           email_lovable: string
           id?: string
           id_do_usuario: string
+          nome?: string | null
           senha_lovable: string
+          whatsapp?: string | null
         }
         Update: {
           atualizado_em?: string | null
@@ -37,7 +41,9 @@ export type Database = {
           email_lovable?: string
           id?: string
           id_do_usuario?: string
+          nome?: string | null
           senha_lovable?: string
+          whatsapp?: string | null
         }
         Relationships: []
       }

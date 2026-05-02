@@ -14,6 +14,7 @@ import {
 
 type Conta = {
   id: string;
+  nome: string | null;
   email_lovable: string;
   criado_em: string | null;
 };
@@ -32,7 +33,7 @@ export default function Overview() {
     (async () => {
       const { data } = await supabase
         .from("contas_lovable")
-        .select("id,email_lovable,criado_em")
+        .select("id,nome,email_lovable,criado_em")
         .order("criado_em", { ascending: false });
       setContas(data ?? []);
       setLoading(false);
@@ -79,7 +80,7 @@ export default function Overview() {
   }, [contas]);
 
   const kpis = [
-    { label: "Total de contas", value: stats.total, icon: Users },
+    { label: "Total de clientes", value: stats.total, icon: Users },
     { label: "Hoje", value: stats.today, icon: Activity },
     { label: "Últimos 7 dias", value: stats.week, icon: TrendingUp },
     { label: "Este mês", value: stats.month, icon: CalendarDays },
@@ -90,7 +91,7 @@ export default function Overview() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Visão geral</h1>
         <p className="text-sm text-muted-foreground">
-          Acompanhe o desempenho das contas Lovable em tempo real.
+          Acompanhe o crescimento dos seus clientes em tempo real.
         </p>
       </div>
 
@@ -114,7 +115,7 @@ export default function Overview() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Contas criadas — últimos 30 dias</CardTitle>
+          <CardTitle className="text-base">Clientes adicionados — últimos 30 dias</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="h-72 w-full">
@@ -146,13 +147,13 @@ export default function Overview() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Contas recentes</CardTitle>
+          <CardTitle className="text-base">Clientes recentes</CardTitle>
         </CardHeader>
         <CardContent>
           <ul className="divide-y">
             {contas.slice(0, 5).map((c) => (
               <li key={c.id} className="py-3 flex items-center justify-between text-sm">
-                <span className="font-medium truncate">{c.email_lovable}</span>
+                <span className="font-medium truncate">{c.nome ?? c.email_lovable}</span>
                 <span className="text-muted-foreground">
                   {c.criado_em ? new Date(c.criado_em).toLocaleString("pt-BR") : "—"}
                 </span>
@@ -160,7 +161,7 @@ export default function Overview() {
             ))}
             {!loading && contas.length === 0 && (
               <li className="py-6 text-sm text-muted-foreground text-center">
-                Nenhuma conta cadastrada ainda.
+                Nenhum cliente cadastrado ainda.
               </li>
             )}
           </ul>

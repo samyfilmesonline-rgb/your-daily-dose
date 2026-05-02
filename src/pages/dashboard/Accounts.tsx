@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Card,
   CardContent,
@@ -20,15 +18,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -39,36 +28,34 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { RefreshCw, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 type Conta = {
   id: string;
-  id_do_usuario: string;
   email_lovable: string;
-  senha_lovable: string;
   criado_em: string | null;
   atualizado_em: string | null;
 };
 
 export default function Accounts() {
-  const { user } = useAuth();
   const [items, setItems] = useState<Conta[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [openCreate, setOpenCreate] = useState(false);
-  const [editing, setEditing] = useState<Conta | null>(null);
-  const [form, setForm] = useState({ email: "", senha: "" });
-  const [saving, setSaving] = useState(false);
 
   const load = async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from("contas_lovable")
-      .select("*")
+      .select("id,email_lovable,criado_em,atualizado_em")
       .order("criado_em", { ascending: false });
-    if (error) toast.error(error.message);
-    setItems(data ?? []);
+
+    if (error) {
+      toast.error(error.message);
+      setItems([]);
+    } else {
+      setItems(data ?? []);
+    }
     setLoading(false);
   };
 
@@ -84,49 +71,10 @@ export default function Accounts() {
     [items, search]
   );
 
-  const resetForm = () => setForm({ email: "", senha: "" });
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user) return;
-    setSaving(true);
-    const { error } = await supabase.from("contas_lovable").insert({
-      email_lovable: form.email,
-      senha_lovable: form.senha,
-      id_do_usuario: user.id,
-    });
-    setSaving(false);
-    if (error) return toast.error(error.message);
-    toast.success("Conta criada");
-    setOpenCreate(false);
-    resetForm();
-    load();
-  };
-
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editing) return;
-    setSaving(true);
-    const { error } = await supabase
-      .from("contas_lovable")
-      .update({
-        email_lovable: form.email,
-        senha_lovable: form.senha,
-        atualizado_em: new Date().toISOString(),
-      })
-      .eq("id", editing.id);
-    setSaving(false);
-    if (error) return toast.error(error.message);
-    toast.success("Conta atualizada");
-    setEditing(null);
-    resetForm();
-    load();
-  };
-
   const handleDelete = async (id: string) => {
     const { error } = await supabase.from("contas_lovable").delete().eq("id", id);
     if (error) return toast.error(error.message);
-    toast.success("Conta excluída");
+    toast.success("Conta excluida");
     load();
   };
 
@@ -136,35 +84,13 @@ export default function Accounts() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Contas Lovable</h1>
           <p className="text-sm text-muted-foreground">
-            Gerencie todas as contas armazenadas no backend.
+            Contas vinculadas ao mesmo banco usado pelo aplicativo desktop.
           </p>
         </div>
-        <Dialog open={openCreate} onOpenChange={(v) => { setOpenCreate(v); if (!v) resetForm(); }}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-1" /> Nova conta
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Nova conta</DialogTitle>
-              <DialogDescription>Adicione uma nova conta Lovable.</DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleCreate} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="ne">Email</Label>
-                <Input id="ne" type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="np">Senha</Label>
-                <Input id="np" required value={form.senha} onChange={(e) => setForm({ ...form, senha: e.target.value })} />
-              </div>
-              <DialogFooter>
-                <Button type="submit" disabled={saving}>{saving ? "Salvando…" : "Salvar"}</Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+        <Button variant="outline" onClick={load} disabled={loading}>
+          <RefreshCw className="h-4 w-4 mr-2" />
+          Atualizar
+        </Button>
       </div>
 
       <Card>
@@ -179,7 +105,7 @@ export default function Accounts() {
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar por email…"
+                placeholder="Buscar por email..."
                 className="pl-9"
               />
             </div>
@@ -191,61 +117,64 @@ export default function Accounts() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Email</TableHead>
-                  <TableHead>Senha</TableHead>
+                  <TableHead>Status</TableHead>
                   <TableHead>Criado em</TableHead>
-                  <TableHead className="text-right">Ações</TableHead>
+                  <TableHead>Atualizado em</TableHead>
+                  <TableHead className="text-right">Acoes</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground py-8">Carregando…</TableCell>
+                    <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                      Carregando...
+                    </TableCell>
                   </TableRow>
                 )}
                 {!loading && filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground py-8">Nenhuma conta encontrada.</TableCell>
+                    <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                      Nenhuma conta encontrada.
+                    </TableCell>
                   </TableRow>
                 )}
                 {filtered.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell className="font-medium">{c.email_lovable}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">••••••••</TableCell>
+                    <TableCell>
+                      <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                        Protegida
+                      </span>
+                    </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {c.criado_em ? new Date(c.criado_em).toLocaleString("pt-BR") : "—"}
+                      {c.criado_em ? new Date(c.criado_em).toLocaleString("pt-BR") : "-"}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {c.atualizado_em ? new Date(c.atualizado_em).toLocaleString("pt-BR") : "-"}
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="inline-flex gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => {
-                            setEditing(c);
-                            setForm({ email: c.email_lovable, senha: c.senha_lovable });
-                          }}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="text-destructive">
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Excluir conta?</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Esta ação não pode ser desfeita. A conta {c.email_lovable} será removida.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => handleDelete(c.id)}>Excluir</AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </div>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="ghost" size="icon" className="text-destructive">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Excluir conta?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Esta acao remove a conta {c.email_lovable} do banco.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => handleDelete(c.id)}>
+                              Excluir
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -254,28 +183,6 @@ export default function Accounts() {
           </div>
         </CardContent>
       </Card>
-
-      <Dialog open={!!editing} onOpenChange={(v) => { if (!v) { setEditing(null); resetForm(); } }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Editar conta</DialogTitle>
-            <DialogDescription>Atualize os dados da conta Lovable.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleUpdate} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="ee">Email</Label>
-              <Input id="ee" type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="ep">Senha</Label>
-              <Input id="ep" required value={form.senha} onChange={(e) => setForm({ ...form, senha: e.target.value })} />
-            </div>
-            <DialogFooter>
-              <Button type="submit" disabled={saving}>{saving ? "Salvando…" : "Salvar alterações"}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

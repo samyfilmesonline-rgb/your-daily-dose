@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -25,7 +26,7 @@ import {
 } from "@/components/ui/form";
 import {
   Copy, Eye, EyeOff, MessageCircle, Pencil, Plus, RefreshCw, Search,
-  Trash2, Users, Sparkles, Activity,
+  Trash2, Users, Sparkles, Activity, Boxes,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -84,7 +85,19 @@ export default function Accounts() {
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  const [wsCount, setWsCount] = useState<Record<string, number>>({});
+  const loadWsCount = async () => {
+    const { data } = await supabase
+      .from("execucoes_lovable")
+      .select("conta_id");
+    const map: Record<string, number> = {};
+    (data ?? []).forEach((r: any) => {
+      if (r.conta_id) map[r.conta_id] = (map[r.conta_id] ?? 0) + 1;
+    });
+    setWsCount(map);
+  };
+
+  useEffect(() => { load(); loadWsCount(); }, []);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -224,16 +237,17 @@ export default function Accounts() {
                   <TableHead>WhatsApp</TableHead>
                   <TableHead>Email Lovable</TableHead>
                   <TableHead>Senha</TableHead>
+                  <TableHead>Workspaces</TableHead>
                   <TableHead>Criado em</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading && (
-                  <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Carregando...</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Carregando...</TableCell></TableRow>
                 )}
                 {!loading && filtered.length === 0 && (
-                  <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Nenhum cliente encontrado.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Nenhum cliente encontrado.</TableCell></TableRow>
                 )}
                 {filtered.map((c) => {
                   const wa = onlyDigits(c.whatsapp ?? "");
@@ -273,6 +287,14 @@ export default function Accounts() {
                             <Copy className="h-3.5 w-3.5" />
                           </Button>
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        <Link to={`/dashboard/workspaces?conta=${c.id}`}>
+                          <Button variant="outline" size="sm" className="gap-1.5 h-7">
+                            <Boxes className="h-3.5 w-3.5 text-primary" />
+                            <span className="font-mono">{wsCount[c.id] ?? 0}</span>
+                          </Button>
+                        </Link>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {c.criado_em ? new Date(c.criado_em).toLocaleDateString("pt-BR") : "-"}

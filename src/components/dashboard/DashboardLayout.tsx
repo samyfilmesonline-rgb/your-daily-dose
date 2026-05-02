@@ -1,6 +1,7 @@
 import { Outlet } from "react-router-dom";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function DashboardLayout() {
   return (
@@ -11,6 +12,9 @@ export default function DashboardLayout() {
           <header className="h-14 flex items-center gap-3 border-b bg-background px-4">
             <SidebarTrigger />
             <div className="text-sm text-muted-foreground">Painel administrativo</div>
+            <div className="ml-auto">
+              <ThemeToggle />
+            </div>
           </header>
           <main className="flex-1 p-6">
             <Outlet />

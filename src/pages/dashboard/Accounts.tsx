@@ -121,7 +121,7 @@ export default function Accounts() {
       toast.success("Cliente atualizado");
     } else {
       if (!user) return toast.error("Sessão expirada");
-      const { error } = await supabase.from("contas_lovable").insert({ ...payload, id_do_usuario: user.id });
+      const { error } = await supabase.from("contas_lovable").insert([{ ...payload, id_do_usuario: user.id }]);
       if (error) return toast.error(error.message);
       toast.success("Cliente adicionado");
     }

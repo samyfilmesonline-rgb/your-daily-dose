@@ -1,4 +1,4 @@
-import { LayoutDashboard, Users, LogOut } from "lucide-react";
+import { LayoutDashboard, Users, LogOut, Boxes } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   Sidebar,
@@ -18,6 +18,7 @@ import { useAuth } from "@/hooks/useAuth";
 const items = [
   { title: "Visão geral", url: "/dashboard", icon: LayoutDashboard, end: true },
   { title: "Clientes", url: "/dashboard/accounts", icon: Users, end: false },
+  { title: "Workspaces", url: "/dashboard/workspaces", icon: Boxes, end: false },
 ];
 
 export function AppSidebar() {

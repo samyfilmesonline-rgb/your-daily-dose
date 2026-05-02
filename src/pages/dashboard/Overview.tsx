@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Users, TrendingUp, CalendarDays, Activity } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Users, TrendingUp, CalendarDays, Activity, Boxes, Coins } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -19,6 +21,16 @@ type Conta = {
   criado_em: string | null;
 };
 
+type Workspace = {
+  id: string;
+  workspace_nome: string | null;
+  email_lovable: string;
+  conta_id: string | null;
+  status: string;
+  creditos_adicionados: number;
+  iniciado_em: string;
+};
+
 function startOfDay(d: Date) {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
@@ -27,15 +39,17 @@ function startOfDay(d: Date) {
 
 export default function Overview() {
   const [contas, setContas] = useState<Conta[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase
-        .from("contas_lovable")
-        .select("id,nome,email_lovable,criado_em")
-        .order("criado_em", { ascending: false });
-      setContas(data ?? []);
+      const [c, w] = await Promise.all([
+        supabase.from("contas_lovable").select("id,nome,email_lovable,criado_em").order("criado_em", { ascending: false }),
+        supabase.from("execucoes_lovable").select("id,workspace_nome,email_lovable,conta_id,status,creditos_adicionados,iniciado_em").order("iniciado_em", { ascending: false }),
+      ]);
+      setContas(c.data ?? []);
+      setWorkspaces((w.data as Workspace[]) ?? []);
       setLoading(false);
     })();
   }, []);
@@ -57,6 +71,17 @@ export default function Overview() {
     });
     return { total: contas.length, today: t, week: w, month: m };
   }, [contas]);
+
+  const wsStats = useMemo(() => {
+    const monthAgo = Date.now() - 30 * 86400000;
+    const ativos = workspaces.filter((w) => w.status === "em_andamento").length;
+    const creditos30 = workspaces
+      .filter((w) => new Date(w.iniciado_em).getTime() >= monthAgo)
+      .reduce((s, w) => s + (Number(w.creditos_adicionados) || 0), 0);
+    return { total: workspaces.length, ativos, creditos30 };
+  }, [workspaces]);
+
+  const contasMap = useMemo(() => new Map(contas.map((c) => [c.id, c])), [contas]);
 
   const chartData = useMemo(() => {
     const days: { date: string; label: string; total: number }[] = [];
@@ -81,8 +106,8 @@ export default function Overview() {
 
   const kpis = [
     { label: "Total de clientes", value: stats.total, icon: Users },
-    { label: "Hoje", value: stats.today, icon: Activity },
-    { label: "Últimos 7 dias", value: stats.week, icon: TrendingUp },
+    { label: "Workspaces ativos", value: wsStats.ativos, icon: Boxes },
+    { label: "Créditos (30d)", value: wsStats.creditos30, icon: Coins },
     { label: "Este mês", value: stats.month, icon: CalendarDays },
   ];
 
@@ -162,6 +187,39 @@ export default function Overview() {
             {!loading && contas.length === 0 && (
               <li className="py-6 text-sm text-muted-foreground text-center">
                 Nenhum cliente cadastrado ainda.
+              </li>
+            )}
+          </ul>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="text-base">Workspaces recentes</CardTitle>
+          <Link to="/dashboard/workspaces" className="text-xs text-primary hover:underline">Ver todos</Link>
+        </CardHeader>
+        <CardContent>
+          <ul className="divide-y">
+            {workspaces.slice(0, 5).map((w) => {
+              const conta = w.conta_id ? contasMap.get(w.conta_id) : null;
+              const variant =
+                w.status === "concluido" ? "default" :
+                w.status === "erro" ? "destructive" : "secondary";
+              return (
+                <li key={w.id} className="py-3 flex items-center justify-between text-sm gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{w.workspace_nome ?? "(sem nome)"}</div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      {conta?.nome ?? w.email_lovable}
+                    </div>
+                  </div>
+                  <Badge variant={variant as any}>{w.status}</Badge>
+                </li>
+              );
+            })}
+            {!loading && workspaces.length === 0 && (
+              <li className="py-6 text-sm text-muted-foreground text-center">
+                Nenhum workspace registrado ainda.
               </li>
             )}
           </ul>

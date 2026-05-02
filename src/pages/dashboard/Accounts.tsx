@@ -114,7 +114,12 @@ export default function Accounts() {
   };
 
   const onSubmit = async (values: FormValues) => {
-    const payload = { ...values, whatsapp: onlyDigits(values.whatsapp) };
+    const payload = {
+      nome: values.nome,
+      whatsapp: onlyDigits(values.whatsapp),
+      email_lovable: values.email_lovable,
+      senha_lovable: values.senha_lovable,
+    };
     if (editing) {
       const { error } = await supabase.from("contas_lovable").update(payload).eq("id", editing.id);
       if (error) return toast.error(error.message);

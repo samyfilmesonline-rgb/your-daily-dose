@@ -213,6 +213,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      recalc_resumo_lovable_workspace: {
+        Args: { p_email: string; p_id_do_usuario: string; p_workspace: string }
+        Returns: undefined
+      }
     }
     Enums: {
       app_role: "admin" | "user"

@@ -1,49 +1,29 @@
-## Acesso ADMIN ao CRM
+# Corrigir tela branca no projeto publicado
 
-Implementar sistema de papéis (roles) seguro com **admin global** que vê e gerencia tudo de todos os usuários, mais uma página dedicada para gerenciar quem é admin.
+## Causa
 
-### 1. Banco de dados (migration)
+O `src/integrations/supabase/client.ts` lança erro se `VITE_SUPABASE_URL` ou `VITE_SUPABASE_PUBLISHABLE_KEY` não estiverem definidas no momento do build. O `.gitignore` atual ignora **todos** os arquivos `.env` (exceto `.env.example`), então o `.env` real não vai para o build de produção, e a app sobe sem as chaves → exceção no carregamento → tela branca.
 
-- Criar enum `app_role` com valores `admin` e `user`.
-- Criar tabela `user_roles` (`id`, `user_id`, `role`, `criado_em`) com RLS ativa.
-- Criar função `SECURITY DEFINER` `has_role(_user_id, _role)` para evitar recursão em policies.
-- Criar tabela `profiles` simples (`id`, `email`, `criado_em`) sincronizada via trigger `on_auth_user_created` para listar usuários (a tabela `auth.users` não pode ser lida pelo cliente).
-- Trigger no `auth.users`:
-  - Cria profile para todo novo usuário.
-  - Se o email for **`SEU_EMAIL_AQUI`** (você me confirma qual usar), insere automaticamente role `admin` em `user_roles`. Caso contrário, role `user`.
-- Atualizar policies RLS de `contas_lovable` e `execucoes_lovable`:
-  - SELECT/UPDATE/DELETE: dono OU `has_role(auth.uid(), 'admin')`.
-  - INSERT permanece restrito ao dono.
-- Policies de `user_roles`: usuário lê o próprio role; apenas admin pode INSERT/DELETE.
-- Policies de `profiles`: usuário lê próprio; admin lê todos.
+Esse é um padrão conhecido em projetos Vite/Lovable clássicos: variáveis públicas `VITE_*` precisam estar disponíveis no build.
 
-### 2. Frontend
+## Mudanças
 
-**`useAuth`**: expor flag `isAdmin` consultando `user_roles` após login.
+1. **`.gitignore`** — remover a linha `.env` (manter `.env.*` e `*.local` ignorados, exceto `.env.example`). Assim o `.env` raiz contendo as chaves públicas do Supabase é incluído no build de publicação.
 
-**Sidebar**: mostrar item "Usuários" só para admin; badge "ADMIN" no rodapé.
+2. **`.env`** — garantir que existe na raiz com:
+   ```
+   VITE_SUPABASE_PROJECT_ID="mdfxwynmmefaipqzdbyf"
+   VITE_SUPABASE_URL="https://mdfxwynmmefaipqzdbyf.supabase.co"
+   VITE_SUPABASE_PUBLISHABLE_KEY="<anon key do projeto>"
+   ```
+   (As chaves `VITE_*` e `anon` são públicas por design — seguras para irem ao bundle. A segurança real vem das RLS policies no Supabase, que já estão configuradas.)
 
-**Páginas existentes (Accounts, Workspaces, Overview)**:
-- Quando `isAdmin`, queries deixam de filtrar por `id_do_usuario` (RLS já libera) e mostram coluna "Dono" (email do profile).
-- KPIs do Overview passam a refletir o sistema todo quando admin.
+3. **Republicar** o projeto após o ajuste para o build novo subir com as variáveis.
 
-**Nova página `/dashboard/users`** (admin-only, protegida por guard):
-- Lista profiles com email, data de cadastro, role atual, contagem de contas e workspaces.
-- Botão para promover/rebaixar (toggle role admin) via insert/delete em `user_roles`.
-- Busca por email.
-- KPIs: total de usuários, total de admins, novos nos últimos 30 dias.
+## Por que é seguro
 
-**Rota** `/dashboard/users` adicionada em `App.tsx` dentro de `ProtectedRoute` + guard `AdminRoute`.
+A `anon key` do Supabase já é exposta em qualquer app frontend conectado — ela só dá acesso ao que as RLS policies permitirem. O projeto já tem RLS ativo em `contas_lovable`, `execucoes_lovable`, `user_roles` e `profiles`.
 
-### 3. Confirmação necessária
+## Após aprovar
 
-Preciso que você me diga **qual email** deve ser promovido a admin automaticamente (provavelmente o que você usa para logar no CRM). Vou usá-lo na trigger.
-
-### Arquivos
-
-- **Novo**: `supabase/migrations/..._admin_roles.sql`
-- **Novo**: `src/pages/dashboard/Users.tsx`
-- **Novo**: `src/components/auth/AdminRoute.tsx`
-- **Editar**: `src/hooks/useAuth.tsx`, `src/App.tsx`, `src/components/dashboard/AppSidebar.tsx`, `src/pages/dashboard/Accounts.tsx`, `src/pages/dashboard/Workspaces.tsx`, `src/pages/dashboard/Overview.tsx`
-
-Me confirma o email admin e eu sigo com a implementação.
+Vou ajustar `.gitignore`, garantir o `.env`, e te avisar para clicar em **Publish → Update** para republicar. Aí a tela branca some.

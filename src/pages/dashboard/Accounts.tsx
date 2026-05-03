@@ -87,12 +87,18 @@ export default function Accounts() {
 
   const [wsCount, setWsCount] = useState<Record<string, number>>({});
   const loadWsCount = async () => {
-    const { data } = await supabase
-      .from("execucoes_lovable")
-      .select("conta_id");
+    const [resumoRes, contasRes] = await Promise.all([
+      supabase.from("resumo_lovable_workspace").select("email_lovable"),
+      supabase.from("contas_lovable").select("id,email_lovable"),
+    ]);
+    const emailToId = new Map<string, string>();
+    (contasRes.data ?? []).forEach((c: any) =>
+      emailToId.set((c.email_lovable ?? "").toLowerCase(), c.id)
+    );
     const map: Record<string, number> = {};
-    (data ?? []).forEach((r: any) => {
-      if (r.conta_id) map[r.conta_id] = (map[r.conta_id] ?? 0) + 1;
+    (resumoRes.data ?? []).forEach((r: any) => {
+      const id = emailToId.get((r.email_lovable ?? "").toLowerCase());
+      if (id) map[id] = (map[id] ?? 0) + 1;
     });
     setWsCount(map);
   };

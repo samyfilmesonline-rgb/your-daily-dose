@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Users, TrendingUp, CalendarDays, Activity, Boxes, Coins } from "lucide-react";
+import { Users, CalendarDays, Boxes, Coins, TrendingUp } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -21,14 +21,14 @@ type Conta = {
   criado_em: string | null;
 };
 
-type Workspace = {
+type ResumoWS = {
   id: string;
-  workspace_nome: string | null;
+  workspace_nome: string;
   email_lovable: string;
-  conta_id: string | null;
-  status: string;
-  creditos_adicionados: number;
-  iniciado_em: string;
+  total_execucoes: number;
+  total_creditos_farmados: number;
+  ultima_execucao_status: string | null;
+  atualizado_em: string;
 };
 
 function startOfDay(d: Date) {
@@ -39,17 +39,20 @@ function startOfDay(d: Date) {
 
 export default function Overview() {
   const [contas, setContas] = useState<Conta[]>([]);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [workspaces, setWorkspaces] = useState<ResumoWS[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       const [c, w] = await Promise.all([
         supabase.from("contas_lovable").select("id,nome,email_lovable,criado_em").order("criado_em", { ascending: false }),
-        supabase.from("execucoes_lovable").select("id,workspace_nome,email_lovable,conta_id,status,creditos_adicionados,iniciado_em").order("iniciado_em", { ascending: false }),
+        supabase
+          .from("resumo_lovable_workspace")
+          .select("id,workspace_nome,email_lovable,total_execucoes,total_creditos_farmados,ultima_execucao_status,atualizado_em")
+          .order("atualizado_em", { ascending: false }),
       ]);
       setContas(c.data ?? []);
-      setWorkspaces((w.data as Workspace[]) ?? []);
+      setWorkspaces((w.data as ResumoWS[]) ?? []);
       setLoading(false);
     })();
   }, []);
@@ -73,15 +76,17 @@ export default function Overview() {
   }, [contas]);
 
   const wsStats = useMemo(() => {
-    const monthAgo = Date.now() - 30 * 86400000;
-    const ativos = workspaces.filter((w) => w.status === "em_andamento").length;
-    const creditos30 = workspaces
-      .filter((w) => new Date(w.iniciado_em).getTime() >= monthAgo)
-      .reduce((s, w) => s + (Number(w.creditos_adicionados) || 0), 0);
-    return { total: workspaces.length, ativos, creditos30 };
+    const total = workspaces.length;
+    const execucoes = workspaces.reduce((s, w) => s + (Number(w.total_execucoes) || 0), 0);
+    const creditos = workspaces.reduce((s, w) => s + (Number(w.total_creditos_farmados) || 0), 0);
+    return { total, execucoes, creditos };
   }, [workspaces]);
 
-  const contasMap = useMemo(() => new Map(contas.map((c) => [c.id, c])), [contas]);
+  const contasByEmail = useMemo(() => {
+    const m = new Map<string, Conta>();
+    contas.forEach((c) => m.set(c.email_lovable.toLowerCase(), c));
+    return m;
+  }, [contas]);
 
   const chartData = useMemo(() => {
     const days: { date: string; label: string; total: number }[] = [];
@@ -106,9 +111,10 @@ export default function Overview() {
 
   const kpis = [
     { label: "Total de clientes", value: stats.total, icon: Users },
-    { label: "Workspaces ativos", value: wsStats.ativos, icon: Boxes },
-    { label: "Créditos (30d)", value: wsStats.creditos30, icon: Coins },
-    { label: "Este mês", value: stats.month, icon: CalendarDays },
+    { label: "Workspaces", value: wsStats.total, icon: Boxes },
+    { label: "Execuções totais", value: wsStats.execucoes, icon: TrendingUp },
+    { label: "Créditos farmados", value: wsStats.creditos, icon: Coins },
+    { label: "Clientes este mês", value: stats.month, icon: CalendarDays },
   ];
 
   return (
@@ -120,7 +126,7 @@ export default function Overview() {
         </p>
       </div>
 
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5">
         {kpis.map((k) => (
           <Card key={k.label}>
             <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
@@ -201,19 +207,19 @@ export default function Overview() {
         <CardContent>
           <ul className="divide-y">
             {workspaces.slice(0, 5).map((w) => {
-              const conta = w.conta_id ? contasMap.get(w.conta_id) : null;
+              const conta = contasByEmail.get(w.email_lovable.toLowerCase());
               const variant =
-                w.status === "concluido" ? "default" :
-                w.status === "erro" ? "destructive" : "secondary";
+                w.ultima_execucao_status === "concluido" ? "default" :
+                w.ultima_execucao_status === "erro" ? "destructive" : "secondary";
               return (
                 <li key={w.id} className="py-3 flex items-center justify-between text-sm gap-3">
                   <div className="min-w-0">
-                    <div className="font-medium truncate">{w.workspace_nome ?? "(sem nome)"}</div>
+                    <div className="font-medium truncate">{w.workspace_nome}</div>
                     <div className="text-xs text-muted-foreground truncate">
                       {conta?.nome ?? w.email_lovable}
                     </div>
                   </div>
-                  <Badge variant={variant as any}>{w.status}</Badge>
+                  <Badge variant={variant as any}>{w.ultima_execucao_status ?? "—"}</Badge>
                 </li>
               );
             })}

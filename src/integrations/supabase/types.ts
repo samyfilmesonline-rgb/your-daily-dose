@@ -121,6 +121,65 @@ export type Database = {
         }
         Relationships: []
       }
+      resumo_lovable_workspace: {
+        Row: {
+          atualizado_em: string
+          criado_em: string
+          email_lovable: string
+          id: string
+          id_do_usuario: string
+          total_creditos_farmados: number
+          total_execucoes: number
+          total_falhas: number
+          total_limites: number
+          total_sucessos: number
+          ultima_execucao_id: string | null
+          ultima_execucao_status: string | null
+          ultimo_creditos_finais: number | null
+          workspace_nome: string
+        }
+        Insert: {
+          atualizado_em?: string
+          criado_em?: string
+          email_lovable: string
+          id?: string
+          id_do_usuario: string
+          total_creditos_farmados?: number
+          total_execucoes?: number
+          total_falhas?: number
+          total_limites?: number
+          total_sucessos?: number
+          ultima_execucao_id?: string | null
+          ultima_execucao_status?: string | null
+          ultimo_creditos_finais?: number | null
+          workspace_nome: string
+        }
+        Update: {
+          atualizado_em?: string
+          criado_em?: string
+          email_lovable?: string
+          id?: string
+          id_do_usuario?: string
+          total_creditos_farmados?: number
+          total_execucoes?: number
+          total_falhas?: number
+          total_limites?: number
+          total_sucessos?: number
+          ultima_execucao_id?: string | null
+          ultima_execucao_status?: string | null
+          ultimo_creditos_finais?: number | null
+          workspace_nome?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "resumo_lovable_workspace_ultima_execucao_id_fkey"
+            columns: ["ultima_execucao_id"]
+            isOneToOne: false
+            referencedRelation: "execucoes_lovable"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           criado_em: string

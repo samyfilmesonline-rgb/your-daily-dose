@@ -136,6 +136,7 @@ export type Database = {
       }
       credit_packs: {
         Row: {
+          badge_label: string | null
           created_at: string
           credits: number
           display_order: number
@@ -147,6 +148,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          badge_label?: string | null
           created_at?: string
           credits: number
           display_order?: number
@@ -158,6 +160,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          badge_label?: string | null
           created_at?: string
           credits?: number
           display_order?: number

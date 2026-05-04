@@ -13,6 +13,7 @@ import Overview from "./pages/dashboard/Overview.tsx";
 import Accounts from "./pages/dashboard/Accounts.tsx";
 import Workspaces from "./pages/dashboard/Workspaces.tsx";
 import Users from "./pages/dashboard/Users.tsx";
+import Partners from "./pages/dashboard/Partners.tsx";
 import ProtectedRoute from "./components/auth/ProtectedRoute.tsx";
 import AdminRoute from "./components/auth/AdminRoute.tsx";
 
@@ -41,6 +42,7 @@ const App = () => (
             <Route path="accounts" element={<Accounts />} />
             <Route path="workspaces" element={<Workspaces />} />
             <Route path="users" element={<AdminRoute><Users /></AdminRoute>} />
+            <Route path="parceiros" element={<AdminRoute><Partners /></AdminRoute>} />
           </Route>
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />

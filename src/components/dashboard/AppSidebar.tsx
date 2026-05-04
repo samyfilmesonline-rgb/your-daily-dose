@@ -1,4 +1,4 @@
-import { LayoutDashboard, Users, LogOut, Boxes, Shield, Crown } from "lucide-react";
+import { LayoutDashboard, Users, LogOut, Boxes, Shield, Crown, Handshake } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   Sidebar,
@@ -21,6 +21,7 @@ const baseItems = [
   { title: "Workspaces", url: "/dashboard/workspaces", icon: Boxes, end: false },
 ];
 const adminItems = [
+  { title: "Parceiros", url: "/dashboard/parceiros", icon: Handshake, end: false },
   { title: "Usuários", url: "/dashboard/users", icon: Shield, end: false },
 ];
 

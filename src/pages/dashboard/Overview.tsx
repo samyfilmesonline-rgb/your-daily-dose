@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Users, CalendarDays, Boxes, Coins, TrendingUp } from "lucide-react";
@@ -38,24 +39,28 @@ function startOfDay(d: Date) {
 }
 
 export default function Overview() {
+  const { viewAs } = useAuth();
   const [contas, setContas] = useState<Conta[]>([]);
   const [workspaces, setWorkspaces] = useState<ResumoWS[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
-      const [c, w] = await Promise.all([
-        supabase.from("contas_lovable").select("id,nome,email_lovable,criado_em").order("criado_em", { ascending: false }),
-        supabase
-          .from("resumo_lovable_workspace")
-          .select("id,workspace_nome,email_lovable,total_execucoes,total_creditos_farmados,ultima_execucao_status,atualizado_em")
-          .order("atualizado_em", { ascending: false }),
-      ]);
+      let cQ = supabase.from("contas_lovable").select("id,nome,email_lovable,criado_em").order("criado_em", { ascending: false });
+      let wQ = supabase
+        .from("resumo_lovable_workspace")
+        .select("id,workspace_nome,email_lovable,total_execucoes,total_creditos_farmados,ultima_execucao_status,atualizado_em")
+        .order("atualizado_em", { ascending: false });
+      if (viewAs) {
+        cQ = cQ.eq("id_do_usuario", viewAs);
+        wQ = wQ.eq("id_do_usuario", viewAs);
+      }
+      const [c, w] = await Promise.all([cQ, wQ]);
       setContas(c.data ?? []);
       setWorkspaces((w.data as ResumoWS[]) ?? []);
       setLoading(false);
     })();
-  }, []);
+  }, [viewAs]);
 
   const stats = useMemo(() => {
     const now = new Date();

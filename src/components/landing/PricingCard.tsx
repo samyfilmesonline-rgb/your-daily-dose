@@ -1,4 +1,4 @@
-import { Check, Zap } from "lucide-react";
+import { Check, Zap, Users, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { CreditPack, formatBRL, pricePerCredit } from "@/lib/credit-packs";
@@ -10,12 +10,16 @@ export default function PricingCard({
   pack: CreditPack;
   onBuy: (pack: CreditPack) => void;
 }) {
+  const daysSingleAccount = Math.ceil(pack.credits / 200);
+  const isResellerFriendly = pack.credits >= 1000;
+  const badge = pack.badge_label ?? (pack.is_popular ? "Mais popular" : null);
+
   const features = [
     `${pack.credits.toLocaleString("pt-BR")} créditos Lovable`,
-    "Acesso imediato após o pagamento",
-    "Sem assinatura mensal",
-    "Suporte via WhatsApp",
     `${pricePerCredit(pack)} por crédito`,
+    "Liberação automática via Pix",
+    "Use em várias contas Lovable",
+    isResellerFriendly ? "Ideal para revenda" : "Sem assinatura mensal",
   ];
 
   return (
@@ -26,9 +30,9 @@ export default function PricingCard({
         pack.is_popular && "border-primary shadow-[0_0_40px_hsl(120_100%_45%/0.35)] scale-[1.02]"
       )}
     >
-      {pack.is_popular && (
+      {badge && (
         <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
-          Mais popular
+          {badge}
         </div>
       )}
 
@@ -43,6 +47,23 @@ export default function PricingCard({
         </div>
         <div className="text-sm text-muted-foreground mt-1">
           {pack.credits.toLocaleString("pt-BR")} créditos
+        </div>
+      </div>
+
+      <div className="mb-4 rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs space-y-1">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
+          <span className="text-foreground/90">
+            Lovable libera no máximo <strong>200 créditos/conta a cada 24h</strong>.
+          </span>
+        </div>
+        <div className="flex items-start gap-2">
+          <Users className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
+          <span className="text-muted-foreground">
+            {daysSingleAccount === 1
+              ? "Consome em 1 dia em uma única conta."
+              : `~${daysSingleAccount} dias em 1 conta · 1 dia se dividir em ${daysSingleAccount} contas.`}
+          </span>
         </div>
       </div>
 

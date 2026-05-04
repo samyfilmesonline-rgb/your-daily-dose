@@ -59,26 +59,43 @@ Deno.serve(async (req) => {
 
     if (isPaid && charge.status !== "paid") {
       const pack = charge.credit_packs as { name: string; credits: number };
-      const { data: license } = await supabase
-        .from("app_licenses")
-        .insert({
-          customer_email: charge.customer_email,
-          customer_name: charge.customer_name,
-          plan_code: `credits_${pack.credits}`,
-          plan_name: `${pack.name} - ${pack.credits} créditos`,
-          max_machines: 1,
-          status: "active",
-          notes: `Pagamento Pix Abacate ${txId} (webhook)`,
-        })
-        .select()
-        .single();
+      let licenseId: string | null = null;
+
+      if ((charge as { partner_user_id?: string | null }).partner_user_id) {
+        const partnerId = (charge as { partner_user_id: string }).partner_user_id;
+        const { data: parc } = await supabase
+          .from("parceiros")
+          .select("limite_creditos")
+          .eq("user_id", partnerId)
+          .maybeSingle();
+        const novoLimite = Number(parc?.limite_creditos ?? 0) + Number(pack.credits);
+        await supabase
+          .from("parceiros")
+          .update({ limite_creditos: novoLimite })
+          .eq("user_id", partnerId);
+      } else {
+        const { data: license } = await supabase
+          .from("app_licenses")
+          .insert({
+            customer_email: charge.customer_email,
+            customer_name: charge.customer_name,
+            plan_code: `credits_${pack.credits}`,
+            plan_name: `${pack.name} - ${pack.credits} créditos`,
+            max_machines: 1,
+            status: "active",
+            notes: `Pagamento Pix Abacate ${txId} (webhook)`,
+          })
+          .select()
+          .single();
+        licenseId = license?.id ?? null;
+      }
 
       await supabase
         .from("pix_charges")
         .update({
           status: "paid",
           paid_at: new Date().toISOString(),
-          license_id: license?.id ?? null,
+          license_id: licenseId,
           raw_payload: payload as unknown as Record<string, unknown>,
         })
         .eq("tx_id", txId);

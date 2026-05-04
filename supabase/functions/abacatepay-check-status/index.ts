@@ -53,35 +53,52 @@ Deno.serve(async (req) => {
     const remoteStatus = (remote.status || "").toUpperCase();
 
     if (remoteStatus === "PAID") {
-      // Cria licença vinculada ao email
       const pack = charge.credit_packs as { id: string; name: string; credits: number };
-      const { data: license, error: licErr } = await supabase
-        .from("app_licenses")
-        .insert({
-          customer_email: charge.customer_email,
-          customer_name: charge.customer_name,
-          plan_code: `credits_${pack.credits}`,
-          plan_name: `${pack.name} - ${pack.credits} créditos`,
-          max_machines: 1,
-          status: "active",
-          notes: `Pagamento Pix Abacate ${txId}`,
-        })
-        .select()
-        .single();
-      if (licErr) console.error("license insert error", licErr);
+      let licenseId: string | null = null;
+
+      if (charge.partner_user_id) {
+        // Compra interna: incrementa o limite de crédito do parceiro
+        const { data: parc } = await supabase
+          .from("parceiros")
+          .select("limite_creditos")
+          .eq("user_id", charge.partner_user_id)
+          .maybeSingle();
+        const novoLimite = Number(parc?.limite_creditos ?? 0) + Number(pack.credits);
+        await supabase
+          .from("parceiros")
+          .update({ limite_creditos: novoLimite })
+          .eq("user_id", charge.partner_user_id);
+      } else {
+        // Fluxo público /vendas: cria licença vinculada ao email
+        const { data: license, error: licErr } = await supabase
+          .from("app_licenses")
+          .insert({
+            customer_email: charge.customer_email,
+            customer_name: charge.customer_name,
+            plan_code: `credits_${pack.credits}`,
+            plan_name: `${pack.name} - ${pack.credits} créditos`,
+            max_machines: 1,
+            status: "active",
+            notes: `Pagamento Pix Abacate ${txId}`,
+          })
+          .select()
+          .single();
+        if (licErr) console.error("license insert error", licErr);
+        licenseId = license?.id ?? null;
+      }
 
       await supabase
         .from("pix_charges")
         .update({
           status: "paid",
           paid_at: new Date().toISOString(),
-          license_id: license?.id ?? null,
+          license_id: licenseId,
           raw_payload: remote as unknown as Record<string, unknown>,
         })
         .eq("tx_id", txId);
 
       return new Response(
-        JSON.stringify({ status: "paid", licenseCreated: !!license }),
+        JSON.stringify({ status: "paid", licenseCreated: !!licenseId, creditsAdded: charge.partner_user_id ? pack.credits : 0 }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

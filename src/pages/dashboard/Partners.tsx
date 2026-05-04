@@ -22,9 +22,14 @@ import {
 import { Label } from "@/components/ui/label";
 import {
   Handshake, Search, RefreshCw, Check, Ban, Play, Eye, Pencil, Trash2,
-  Clock, CheckCircle2, AlertTriangle,
+  Clock, CheckCircle2, AlertTriangle, Plus, Copy,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import { z } from "zod";
 
 type Parceiro = {
   user_id: string;
@@ -57,6 +62,25 @@ export default function Partners() {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Parceiro | null>(null);
   const [form, setForm] = useState({ limite_clientes: 50, limite_workspaces: 100, limite_creditos: 1000 });
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    email: "",
+    nome: "",
+    whatsapp: "",
+    status: "ativo" as "pendente" | "ativo" | "suspenso",
+    limite_clientes: 50,
+    limite_workspaces: 100,
+    limite_creditos: 1000,
+    send_invite: true,
+  });
+  const [createdInfo, setCreatedInfo] = useState<{
+    email: string;
+    temp_password: string | null;
+    already_existed: boolean;
+    invited: boolean;
+  } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -150,6 +174,62 @@ export default function Partners() {
     navigate("/dashboard");
   };
 
+  const resetCreateForm = () =>
+    setCreateForm({
+      email: "",
+      nome: "",
+      whatsapp: "",
+      status: "ativo",
+      limite_clientes: 50,
+      limite_workspaces: 100,
+      limite_creditos: 1000,
+      send_invite: true,
+    });
+
+  const handleCreate = async () => {
+    const schema = z.object({
+      email: z.string().trim().toLowerCase().email("E-mail inválido").max(255),
+      nome: z.string().trim().max(120).optional().or(z.literal("")),
+      whatsapp: z.string().trim().max(40).optional().or(z.literal("")),
+      status: z.enum(["pendente", "ativo", "suspenso"]),
+      limite_clientes: z.number().int().min(0).max(100000),
+      limite_workspaces: z.number().int().min(0).max(100000),
+      limite_creditos: z.number().min(0).max(10_000_000),
+      send_invite: z.boolean(),
+    });
+    const parsed = schema.safeParse(createForm);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      return toast.error(first?.message ?? "Dados inválidos");
+    }
+    setCreating(true);
+    const { data, error } = await supabase.functions.invoke("admin-create-partner", {
+      body: parsed.data,
+    });
+    setCreating(false);
+    if (error) {
+      const msg = (error as any)?.context?.error || error.message || "Falha ao criar parceiro";
+      return toast.error(typeof msg === "string" ? msg : "Falha ao criar parceiro");
+    }
+    if ((data as any)?.error) {
+      return toast.error((data as any).error);
+    }
+    toast.success(
+      (data as any)?.already_existed
+        ? "Parceiro vinculado a usuário existente"
+        : "Parceiro criado com sucesso"
+    );
+    setCreatedInfo({
+      email: (data as any).email,
+      temp_password: (data as any).temp_password ?? null,
+      already_existed: !!(data as any).already_existed,
+      invited: !!(data as any).invited,
+    });
+    setCreateOpen(false);
+    resetCreateForm();
+    load();
+  };
+
   return (
     <div className="space-y-6">
       <div className="rounded-xl border p-6 flex items-start justify-between gap-4 flex-wrap">
@@ -162,9 +242,14 @@ export default function Partners() {
             Aprove novos parceiros, defina cotas e acompanhe o consumo de cada um.
           </p>
         </div>
-        <Button variant="outline" onClick={load} disabled={loading}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} /> Atualizar
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={load} disabled={loading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} /> Atualizar
+          </Button>
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" /> Novo parceiro
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
@@ -338,6 +423,143 @@ export default function Partners() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditing(null)}>Cancelar</Button>
             <Button onClick={saveQuotas}>Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create partner dialog */}
+      <Dialog open={createOpen} onOpenChange={(o) => { setCreateOpen(o); if (!o) resetCreateForm(); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Novo parceiro</DialogTitle>
+            <DialogDescription>
+              Crie manualmente um parceiro. Se o e-mail já tiver conta, ele será vinculado.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>E-mail *</Label>
+              <Input
+                type="email"
+                placeholder="parceiro@exemplo.com"
+                value={createForm.email}
+                onChange={(e) => setCreateForm((f) => ({ ...f, email: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Nome</Label>
+                <Input
+                  value={createForm.nome}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, nome: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>WhatsApp</Label>
+                <Input
+                  placeholder="+55..."
+                  value={createForm.whatsapp}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, whatsapp: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Status inicial</Label>
+              <Select
+                value={createForm.status}
+                onValueChange={(v) => setCreateForm((f) => ({ ...f, status: v as any }))}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ativo">Ativo</SelectItem>
+                  <SelectItem value="pendente">Pendente</SelectItem>
+                  <SelectItem value="suspenso">Suspenso</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-2">
+                <Label>Clientes</Label>
+                <Input type="number" min={0} value={createForm.limite_clientes}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, limite_clientes: Number(e.target.value) }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Workspaces</Label>
+                <Input type="number" min={0} value={createForm.limite_workspaces}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, limite_workspaces: Number(e.target.value) }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Créditos</Label>
+                <Input type="number" min={0} step="0.01" value={createForm.limite_creditos}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, limite_creditos: Number(e.target.value) }))} />
+              </div>
+            </div>
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div>
+                <div className="text-sm font-medium">Enviar convite por e-mail</div>
+                <div className="text-xs text-muted-foreground">
+                  Se desligado, geramos uma senha temporária para você compartilhar.
+                </div>
+              </div>
+              <Switch
+                checked={createForm.send_invite}
+                onCheckedChange={(v) => setCreateForm((f) => ({ ...f, send_invite: v }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>
+              Cancelar
+            </Button>
+            <Button onClick={handleCreate} disabled={creating}>
+              {creating ? "Criando..." : "Criar parceiro"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Created info / temp password */}
+      <Dialog open={!!createdInfo} onOpenChange={(o) => !o && setCreatedInfo(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Parceiro {createdInfo?.already_existed ? "vinculado" : "criado"}</DialogTitle>
+            <DialogDescription>{createdInfo?.email}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {createdInfo?.invited && (
+              <p className="text-sm text-muted-foreground">
+                Convite enviado por e-mail. O parceiro precisa abrir o link para definir a senha.
+              </p>
+            )}
+            {createdInfo?.temp_password && (
+              <div className="space-y-2">
+                <Label>Senha temporária</Label>
+                <div className="flex items-center gap-2">
+                  <Input readOnly value={createdInfo.temp_password} className="font-mono" />
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => {
+                      navigator.clipboard.writeText(createdInfo.temp_password!);
+                      toast.success("Senha copiada");
+                    }}
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Compartilhe com o parceiro e oriente trocar a senha no primeiro acesso.
+                </p>
+              </div>
+            )}
+            {!createdInfo?.invited && !createdInfo?.temp_password && (
+              <p className="text-sm text-muted-foreground">
+                Usuário já existia no sistema — vinculado como parceiro com as configurações escolhidas.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setCreatedInfo(null)}>Fechar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

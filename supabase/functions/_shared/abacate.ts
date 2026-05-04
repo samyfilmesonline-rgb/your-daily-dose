@@ -34,10 +34,13 @@ export type AbacatePixOut = {
 };
 
 export async function createPixCharge(input: AbacatePixIn): Promise<AbacatePixOut> {
-  const res = await fetch(`${ABACATE_BASE}/pixQrCode/create`, {
+  const res = await fetch(`${ABACATE_BASE}/transparents/create`, {
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify(input),
+    body: JSON.stringify({
+      method: "PIX",
+      data: input,
+    }),
   });
   const json = await res.json();
   if (!res.ok) {
@@ -47,7 +50,7 @@ export async function createPixCharge(input: AbacatePixIn): Promise<AbacatePixOu
 }
 
 export async function checkPixStatus(id: string): Promise<AbacatePixOut> {
-  const res = await fetch(`${ABACATE_BASE}/pixQrCode/check?id=${encodeURIComponent(id)}`, {
+  const res = await fetch(`${ABACATE_BASE}/transparents/check?id=${encodeURIComponent(id)}`, {
     method: "GET",
     headers: authHeaders(),
   });

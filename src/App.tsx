@@ -8,6 +8,7 @@ import { ThemeProvider } from "@/hooks/useTheme";
 import Index from "./pages/Index.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import Auth from "./pages/Auth.tsx";
+import Vendas from "./pages/Vendas.tsx";
 import DashboardLayout from "./components/dashboard/DashboardLayout.tsx";
 import Overview from "./pages/dashboard/Overview.tsx";
 import Accounts from "./pages/dashboard/Accounts.tsx";
@@ -32,6 +33,7 @@ const App = () => (
           <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/auth" element={<Auth />} />
+          <Route path="/vendas" element={<Vendas />} />
           <Route
             path="/dashboard"
             element={

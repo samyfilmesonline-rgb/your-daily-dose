@@ -94,6 +94,14 @@ export default function Vendas() {
       a: "Assim que o Pix é confirmado (geralmente em segundos), uma licença é criada automaticamente vinculada ao seu e-mail. Você acessa o painel com esse mesmo e-mail e já pode usar.",
     },
     {
+      q: "Existe limite de quantos créditos posso usar por dia?",
+      a: "Sim. A Lovable libera no máximo 200 créditos por conta a cada 24h. Você pode recarregar valores menores que 200 quando quiser, desde que não ultrapasse esse teto por conta no período de 24h.",
+    },
+    {
+      q: "Posso usar o mesmo pacote em mais de uma conta Lovable?",
+      a: "Sim. O limite de 200/dia é por conta, não por compra. Comprando pacotes maiores você garante o melhor custo por crédito e pode distribuir os créditos entre várias contas próprias ou até revender para outras pessoas.",
+    },
+    {
       q: "Os créditos têm validade?",
       a: "Não. Os créditos comprados ficam disponíveis na sua conta até serem consumidos.",
     },
@@ -236,8 +244,10 @@ export default function Vendas() {
             <h3 className="text-3xl sm:text-4xl font-bold mb-4">
               <GlitchText>ESCOLHA SEU PACOTE</GlitchText>
             </h3>
-            <p className="text-muted-foreground">
-              Quanto maior o pacote, menor o custo por crédito.
+            <p className="text-muted-foreground max-w-2xl mx-auto">
+              Quanto maior o pacote, menor o custo por crédito. Use em várias contas
+              Lovable — o limite de <strong className="text-primary">200 créditos a cada 24h é por conta</strong>,
+              não por compra.
             </p>
           </div>
           {isLoading ? (

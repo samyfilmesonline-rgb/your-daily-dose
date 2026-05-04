@@ -6,6 +6,7 @@ export type CreditPack = {
   is_popular: boolean;
   is_active: boolean;
   display_order: number;
+  badge_label?: string | null;
 };
 
 export function formatBRL(cents: number): string {

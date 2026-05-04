@@ -61,7 +61,7 @@ function formatWhats(v: string | null) {
 }
 
 export default function Accounts() {
-  const { user } = useAuth();
+  const { user, viewAs } = useAuth();
   const [items, setItems] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -76,10 +76,12 @@ export default function Accounts() {
 
   const load = async () => {
     setLoading(true);
-    const { data, error } = await supabase
+    let q = supabase
       .from("contas_lovable")
       .select("id,nome,whatsapp,email_lovable,senha_lovable,criado_em,atualizado_em")
       .order("criado_em", { ascending: false });
+    if (viewAs) q = q.eq("id_do_usuario", viewAs);
+    const { data, error } = await q;
     if (error) { toast.error(error.message); setItems([]); }
     else setItems((data as Cliente[]) ?? []);
     setLoading(false);
@@ -103,7 +105,7 @@ export default function Accounts() {
     setWsCount(map);
   };
 
-  useEffect(() => { load(); loadWsCount(); }, []);
+  useEffect(() => { load(); loadWsCount(); }, [viewAs]);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();

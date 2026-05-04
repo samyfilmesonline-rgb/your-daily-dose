@@ -38,6 +38,7 @@ export default function CheckoutPixDialog({
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
+  const [taxId, setTaxId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [pix, setPix] = useState<PixData | null>(null);
   const pollRef = useRef<number | null>(null);
@@ -91,6 +92,7 @@ export default function CheckoutPixDialog({
             customerName: name.trim(),
             customerEmail: email.trim().toLowerCase(),
             customerWhatsapp: whatsapp.trim() || undefined,
+            customerTaxId: taxId.replace(/\D/g, ""),
           },
         }
       );
@@ -158,6 +160,20 @@ export default function CheckoutPixDialog({
                   onChange={(e) => setWhatsapp(e.target.value)}
                   placeholder="(11) 99999-9999"
                 />
+              </div>
+              <div>
+                <Label htmlFor="ck-cpf">CPF</Label>
+                <Input
+                  id="ck-cpf"
+                  required
+                  inputMode="numeric"
+                  value={taxId}
+                  onChange={(e) => setTaxId(e.target.value)}
+                  placeholder="000.000.000-00"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Obrigatório pelo gateway de pagamento (Pix).
+                </p>
               </div>
               <Button type="submit" className="w-full" size="lg" disabled={submitting}>
                 {submitting ? (

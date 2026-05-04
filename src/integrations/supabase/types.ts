@@ -285,6 +285,7 @@ export type Database = {
           license_id: string | null
           pack_id: string
           paid_at: string | null
+          partner_user_id: string | null
           raw_payload: Json | null
           status: string
           tx_id: string
@@ -300,6 +301,7 @@ export type Database = {
           license_id?: string | null
           pack_id: string
           paid_at?: string | null
+          partner_user_id?: string | null
           raw_payload?: Json | null
           status?: string
           tx_id: string
@@ -315,6 +317,7 @@ export type Database = {
           license_id?: string | null
           pack_id?: string
           paid_at?: string | null
+          partner_user_id?: string | null
           raw_payload?: Json | null
           status?: string
           tx_id?: string

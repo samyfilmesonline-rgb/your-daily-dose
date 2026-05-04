@@ -10,12 +10,12 @@ export default function QuotaBadge() {
   const color =
     pct >= 100 ? "bg-destructive" : pct >= 80 ? "bg-amber-500" : "bg-primary";
   return (
-    <div className="hidden sm:flex items-center gap-2 text-xs">
-      <Coins className="h-3.5 w-3.5 text-muted-foreground" />
-      <span className="font-mono text-muted-foreground">
+    <div className="hidden sm:flex items-center gap-2 text-xs border border-primary/30 bg-primary/5 rounded-full px-3 py-1">
+      <Coins className="h-3.5 w-3.5 text-primary" />
+      <span className="font-mono text-foreground/90">
         {used.toLocaleString("pt-BR")} / {max.toLocaleString("pt-BR")}
       </span>
-      <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
+      <div className="w-20 h-1.5 bg-muted/60 rounded-full overflow-hidden">
         <div className={`h-full ${color} transition-all`} style={{ width: `${pct}%` }} />
       </div>
     </div>

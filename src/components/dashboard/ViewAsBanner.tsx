@@ -24,15 +24,15 @@ export default function ViewAsBanner() {
   if (!isAdmin || !viewAs) return null;
 
   return (
-    <div className="bg-amber-500/10 border-b border-amber-500/30 px-4 py-2 flex items-center gap-2 text-xs">
-      <Eye className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-      <span>
+    <div className="bg-primary/10 border-b border-primary/30 px-4 py-2 flex items-center gap-2 text-xs">
+      <Eye className="h-3.5 w-3.5 text-primary" />
+      <span className="font-mono">
         Visualizando como parceiro: <strong className="font-mono">{email ?? viewAs}</strong>
       </span>
       <Button
         size="sm"
         variant="ghost"
-        className="ml-auto h-6 text-xs"
+        className="ml-auto h-6 text-xs text-primary hover:text-primary hover:bg-primary/10"
         onClick={() => setViewAs(null)}
       >
         <X className="h-3 w-3 mr-1" /> Sair desse modo

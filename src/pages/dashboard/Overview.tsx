@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Users, CalendarDays, Boxes, Coins, TrendingUp } from "lucide-react";
 import {
@@ -14,6 +13,48 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import GlitchText from "@/components/landing/GlitchText";
+
+// Wrappers de card no estilo Matrix (referência: matrix-farm Dashboard).
+function MatrixCard({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div
+      className={`relative backdrop-blur-md bg-card/50 border border-primary/30 rounded-2xl transition-all duration-500 hover:border-primary/60 hover:shadow-[0_0_40px_hsl(var(--primary)/0.15)] ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+function KpiCard({
+  label,
+  value,
+  icon: Icon,
+  loading,
+}: {
+  label: string;
+  value: number;
+  icon: React.ElementType;
+  loading?: boolean;
+}) {
+  return (
+    <MatrixCard className="p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
+            {label}
+          </p>
+          <p className="text-3xl font-bold text-foreground font-mono">
+            {loading ? "—" : value.toLocaleString("pt-BR")}
+          </p>
+        </div>
+        <div className="w-11 h-11 rounded-xl bg-primary/15 border border-primary/40 flex items-center justify-center shrink-0">
+          <Icon className="h-5 w-5 text-primary" />
+        </div>
+      </div>
+    </MatrixCard>
+  );
+}
 
 type Conta = {
   id: string;
@@ -125,35 +166,33 @@ export default function Overview() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Visão geral</h1>
-        <p className="text-sm text-muted-foreground">
+        <h1 className="text-3xl sm:text-4xl font-bold font-mono tracking-tight">
+          <GlitchText>VISÃO GERAL</GlitchText>
+        </h1>
+        <p className="text-sm text-muted-foreground mt-2">
           Acompanhe o crescimento dos seus clientes em tempo real.
         </p>
       </div>
 
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5">
         {kpis.map((k) => (
-          <Card key={k.label}>
-            <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                {k.label}
-              </CardTitle>
-              <k.icon className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-semibold tracking-tight">
-                {loading ? "—" : k.value.toLocaleString("pt-BR")}
-              </div>
-            </CardContent>
-          </Card>
+          <KpiCard
+            key={k.label}
+            label={k.label}
+            value={k.value}
+            icon={k.icon}
+            loading={loading}
+          />
         ))}
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Clientes adicionados — últimos 30 dias</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <MatrixCard>
+        <div className="p-5 border-b border-primary/15">
+          <h3 className="text-sm font-mono uppercase tracking-wider text-primary/90">
+            Clientes adicionados — últimos 30 dias
+          </h3>
+        </div>
+        <div className="p-5">
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
@@ -178,17 +217,19 @@ export default function Overview() {
               </AreaChart>
             </ResponsiveContainer>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </MatrixCard>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Clientes recentes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ul className="divide-y">
+      <MatrixCard>
+        <div className="p-5 border-b border-primary/15">
+          <h3 className="text-sm font-mono uppercase tracking-wider text-primary/90">
+            Clientes recentes
+          </h3>
+        </div>
+        <div className="p-5">
+          <ul className="divide-y divide-primary/10">
             {contas.slice(0, 5).map((c) => (
-              <li key={c.id} className="py-3 flex items-center justify-between text-sm">
+              <li key={c.id} className="py-3 flex items-center justify-between text-sm hover:bg-primary/5 -mx-2 px-2 rounded">
                 <span className="font-medium truncate">{c.nome ?? c.email_lovable}</span>
                 <span className="text-muted-foreground">
                   {c.criado_em ? new Date(c.criado_em).toLocaleString("pt-BR") : "—"}
@@ -201,16 +242,20 @@ export default function Overview() {
               </li>
             )}
           </ul>
-        </CardContent>
-      </Card>
+        </div>
+      </MatrixCard>
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="text-base">Workspaces recentes</CardTitle>
-          <Link to="/dashboard/workspaces" className="text-xs text-primary hover:underline">Ver todos</Link>
-        </CardHeader>
-        <CardContent>
-          <ul className="divide-y">
+      <MatrixCard>
+        <div className="p-5 border-b border-primary/15 flex flex-row items-center justify-between">
+          <h3 className="text-sm font-mono uppercase tracking-wider text-primary/90">
+            Workspaces recentes
+          </h3>
+          <Link to="/dashboard/workspaces" className="text-xs text-primary hover:underline font-mono uppercase tracking-wider">
+            Ver todos
+          </Link>
+        </div>
+        <div className="p-5">
+          <ul className="divide-y divide-primary/10">
             {workspaces.slice(0, 5).map((w) => {
               const conta = contasByEmail.get(w.email_lovable.toLowerCase());
               const variant =
@@ -223,7 +268,7 @@ export default function Overview() {
                 w.ultima_execucao_status === "em_andamento" ? "Em andamento" :
                 (w.ultima_execucao_status ?? "—");
               return (
-                <li key={w.id} className="py-3 flex items-center justify-between text-sm gap-3">
+                <li key={w.id} className="py-3 flex items-center justify-between text-sm gap-3 hover:bg-primary/5 -mx-2 px-2 rounded">
                   <div className="min-w-0">
                     <div className="font-medium truncate">{w.workspace_nome}</div>
                     <div className="text-xs text-muted-foreground truncate">
@@ -240,8 +285,8 @@ export default function Overview() {
               </li>
             )}
           </ul>
-        </CardContent>
-      </Card>
+        </div>
+      </MatrixCard>
     </div>
   );
 }

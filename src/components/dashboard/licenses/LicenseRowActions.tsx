@@ -2,6 +2,7 @@ import { useState } from "react";
 import { MoreHorizontal, Pencil, Ban, Play, RotateCcw, CalendarClock } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -22,6 +23,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { AppLicense, addDays, friendlySupabaseError, normalizeStatus } from "@/lib/licenses";
 
+type LicenseUpdate = Database["public"]["Tables"]["app_licenses"]["Update"];
+
 type Props = {
   license: AppLicense;
   onEdit: (license: AppLicense) => void;
@@ -34,7 +37,7 @@ export default function LicenseRowActions({ license, onEdit, onChanged }: Props)
   const status = normalizeStatus(license);
   const isBlocked = status === "bloqueado";
 
-  const updateLicense = async (payload: Record<string, unknown>, success: string) => {
+  const updateLicense = async (payload: LicenseUpdate, success: string) => {
     setLoading(true);
     const { error } = await supabase.from("app_licenses").update(payload).eq("id", license.id);
     setLoading(false);

@@ -14,6 +14,72 @@ export type Database = {
   }
   public: {
     Tables: {
+      app_licenses: {
+        Row: {
+          activated_at: string | null
+          created_at: string
+          customer_email: string
+          customer_name: string | null
+          expires_at: string | null
+          id: string
+          id_do_usuario: string | null
+          last_seen_at: string | null
+          machine_hash: string | null
+          machine_hashes: string[]
+          max_machines: number
+          notes: string | null
+          partner_id: string | null
+          partner_name: string | null
+          partner_whatsapp: string | null
+          plan_code: string
+          plan_name: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          activated_at?: string | null
+          created_at?: string
+          customer_email: string
+          customer_name?: string | null
+          expires_at?: string | null
+          id?: string
+          id_do_usuario?: string | null
+          last_seen_at?: string | null
+          machine_hash?: string | null
+          machine_hashes?: string[]
+          max_machines?: number
+          notes?: string | null
+          partner_id?: string | null
+          partner_name?: string | null
+          partner_whatsapp?: string | null
+          plan_code?: string
+          plan_name?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          activated_at?: string | null
+          created_at?: string
+          customer_email?: string
+          customer_name?: string | null
+          expires_at?: string | null
+          id?: string
+          id_do_usuario?: string | null
+          last_seen_at?: string | null
+          machine_hash?: string | null
+          machine_hashes?: string[]
+          max_machines?: number
+          notes?: string | null
+          partner_id?: string | null
+          partner_name?: string | null
+          partner_whatsapp?: string | null
+          plan_code?: string
+          plan_name?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       contas_lovable: {
         Row: {
           atualizado_em: string | null
@@ -251,6 +317,8 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      current_partner_name: { Args: never; Returns: string }
+      current_partner_whatsapp: { Args: never; Returns: string }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -258,6 +326,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      is_active_partner: { Args: never; Returns: boolean }
       parceiro_ativo: { Args: { _user_id: string }; Returns: boolean }
       recalc_parceiro_creditos: {
         Args: { _user_id: string }

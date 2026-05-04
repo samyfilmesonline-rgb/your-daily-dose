@@ -1,108 +1,96 @@
-# Sistema de Parceiros (revendedores) — plano
+## Objetivo
 
-## Conceito
+Criar uma área **Licenças** no painel para que parceiros ativos gerenciem registros em `public.app_licenses` (que o app desktop Python lê para liberar acesso). Nenhuma chamada usa `service_role` — apenas o cliente Supabase autenticado, respeitando as policies já existentes.
 
-```text
-Admin (você)
-  └─► gerencia Parceiros
-        ├─ aprova / desativa / exclui
-        ├─ define cotas (clientes, workspaces, créditos)
-        ├─ vê dashboard agregado de cada um
-        └─ "Ver como parceiro X" — entra na ótica dele
-Parceiro (revendedor)
-  └─► só vê e edita os próprios clientes/workspaces (RLS)
-        ├─ bloqueado até admin aprovar
-        ├─ bloqueado se atingir limite de créditos
-        └─ nunca acessa /dashboard/users nem dados de outros
-```
+## Navegação e acesso
 
-## Mudanças no banco (1 migration)
+- Adicionar item **"Licenças"** (`/dashboard/licencas`, ícone `KeyRound`) na sidebar (`AppSidebar.tsx`), visível para **parceiros ativos e admins** (não só admin).
+- Nova rota em `App.tsx` protegida por `ProtectedRoute` + um novo wrapper `ActivePartnerRoute` que:
+  - Admin sempre passa.
+  - Parceiro com `status === "ativo"` passa.
+  - Caso contrário, renderiza tela: *"Seu cadastro de parceiro ainda não está ativo."* (reaproveita visual do `PartnerGate`).
+- Quando admin estiver em modo "View As", filtrar licenças por `partner_id = viewAs`.
 
-Nova tabela `parceiros` (1 linha por usuário, criada automaticamente no signup):
+## Página `src/pages/dashboard/Licenses.tsx`
 
-| campo | propósito |
-|---|---|
-| `user_id` (PK, FK auth.users) | o usuário |
-| `nome`, `whatsapp` | exibição no painel admin |
-| `status` enum: `pendente` / `ativo` / `suspenso` | sign-up cai em `pendente` |
-| `limite_clientes` int (default 50) | cota |
-| `limite_workspaces` int (default 100) | cota |
-| `limite_creditos` numeric (default 1000) | quanto pode farmar |
-| `creditos_consumidos` numeric (recalculado) | soma de `total_creditos_farmados` do resumo |
-| `aprovado_em`, `aprovado_por`, `criado_em`, `atualizado_em` | auditoria |
+### Topo — cards de resumo
+4 cards calculados a partir do resultado já carregado:
+- **Ativas** (`status in ('active','ativo')` e não expirada)
+- **Bloqueadas** (`status in ('blocked','bloqueado')`)
+- **Expirando em 7 dias** (ativas com `expires_at` entre hoje e +7d)
+- **Total de clientes** (count distinct `customer_email`)
 
-**RLS**:
-- Parceiro: SELECT/UPDATE só do próprio (campos editáveis: nome/whatsapp). Não pode mudar status nem cotas.
-- Admin: tudo.
+### Toolbar
+- Busca por nome/e-mail (filtro client-side sobre `customer_name` / `customer_email`).
+- Filtro por status (chips: Todos / Ativo / Pendente / Bloqueado / Expirado).
+- Botão **"Nova licença"** (abre dialog de criação).
+- Botão **Atualizar** (refetch).
 
-**Triggers**:
-- No signup (`handle_new_user`): cria linha em `parceiros` com `status='pendente'`.
-- Em `execucoes_lovable` BEFORE INSERT: bloqueia se parceiro está `pendente`/`suspenso` ou se já atingiu `limite_creditos`. (Defesa em profundidade — o frontend também checa.)
-- Em `resumo_lovable_workspace` AFTER INSERT/UPDATE/DELETE: recalcula `creditos_consumidos` no `parceiros`.
-- Quando `creditos_consumidos >= limite_creditos`, vira `suspenso` automaticamente.
+### Tabela
+Colunas: Cliente · E-mail · Status (badge colorido) · Plano (`plan_name` + código) · Expiração (com destaque âmbar se ≤7d, vermelho se vencida) · Máquinas (`machine_hashes.length / max_machines`) · Última atividade (`last_seen_at`) · Criada em · Ações.
 
-**Função helper**:
-```sql
-public.parceiro_ativo(uuid) returns boolean  -- usada em RLS de inserts
-```
+Ações por linha (dropdown menu):
+- **Editar** — dialog com nome, plano, expiração, max_machines, observações.
+- **Renovar** — popover com seletor de período (+30/+90/+180/+365 dias ou data custom) → update `expires_at` e, se estava expirada, voltar `status = 'active'`.
+- **Bloquear / Reativar** — toggle status entre `'blocked'` e `'active'` (com `AlertDialog` de confirmação para bloquear).
+- **Resetar máquina** — `AlertDialog` de confirmação → update `machine_hash = null`, `machine_hashes = []`, `activated_at = null`.
 
-**Bloqueio no front também** (rápido + UX): adicionar à RLS de INSERT em `contas_lovable`/`execucoes_lovable` o predicado `AND public.parceiro_ativo(auth.uid())`.
+Estados: skeleton no carregamento; empty state amigável ("Nenhuma licença ainda — crie a primeira"); toasts (`sonner`) de sucesso/erro. Em erro 42501 (RLS) ou similar, mensagem: *"Você não tem permissão. Verifique se seu cadastro de parceiro está ativo."*
 
-## Mudanças no frontend
+### Dialog "Nova licença"
+Formulário validado com **zod** + react-hook-form:
+- `customer_name` (string, opcional, máx 120)
+- `customer_email` (email obrigatório, normalizado para `lower().trim()`)
+- `plan_code` select: `monthly | quarterly | semiannual | annual`
+- `plan_name` derivado automaticamente: Mensal / Trimestral / Semestral / Anual (editável)
+- `expires_at` (date input; sugestão automática: hoje + duração do plano)
+- `max_machines` (number, default 1, min 1, máx 10)
+- `notes` (textarea, opcional, máx 500)
 
-### Hook `useAuth`
-Buscar também o registro `parceiros` e expor:
+Antes do insert, **verificar duplicidade**: `select id from app_licenses where partner_id = auth.uid() and customer_email = <normalized> limit 1`. Se existir → toast "Já existe uma licença para este e-mail" e abortar.
+
+Insert payload:
 ```ts
-{ session, user, isAdmin, parceiro: { status, limites, creditos_consumidos }, loading }
+{
+  customer_email,                  // já normalizado
+  customer_name,
+  partner_id: user.id,             // trigger preenche partner_name/whatsapp
+  status: 'active',
+  plan_code, plan_name,
+  max_machines,
+  expires_at,                      // ISO
+  notes,
+}
 ```
+(`id_do_usuario`, `machine_hash`, `machine_hashes`, `activated_at`, `last_seen_at` ficam nulos/default — o app desktop preenche.)
 
-### Telas novas / alteradas
+## Hook `useAuth`
 
-1. **`/dashboard/parceiros`** (nova, admin-only)
-   - Lista todos os parceiros com: nome, email, status, clientes (count), workspaces (count), créditos consumidos / limite (barra de progresso), botão "Ver como".
-   - Ações: Aprovar (pendente→ativo), Suspender, Reativar, Excluir, Editar cotas.
-   - Cards no topo: Total / Pendentes / Ativos / Suspensos.
+Expor também `parceiro?.status` já existe — sem mudanças necessárias além de **garantir que parceiros ativos vejam a sidebar** (alterar `AppSidebar` para mostrar "Licenças" quando `isAdmin || parceiro?.status === 'ativo'`).
 
-2. **`/dashboard/parceiros/:id`** (admin-only)
-   - Detalhes de um parceiro: cotas editáveis, KPIs, atalho "Ver dados deste parceiro" (vai para Overview com `?as=<user_id>`).
+## Segurança e RLS
 
-3. **Sidebar**: nova entrada "Parceiros" só aparece se `isAdmin`. A entrada "Usuários" fica para gestão de roles (já existe).
+Policies já existentes em `app_licenses` cobrem o caso (insert exige `partner_id = auth.uid() AND is_active_partner()`; select/update idem). **Nenhuma migration de banco é necessária** — todas as operações usam o client anon autenticado. Nenhum `service_role` no frontend.
 
-4. **Modo "Ver como" (admin)**
-   - Query param `?as=<user_id>` em qualquer página do dashboard.
-   - Banner amarelo no topo: "Vendo como Fulano · sair desse modo".
-   - As queries de admin filtram por `id_do_usuario = paramAs`. Não muda permissão real, só ponto de vista.
+Tratamento de erros:
+- Mapear `code === '42501'` ou mensagem "row-level security" → "Sem permissão. Confirme se seu cadastro de parceiro está ativo."
+- Demais erros → mostrar `error.message` em toast destrutivo.
 
-5. **Tela de bloqueio para parceiro**
-   - Se `parceiro.status === 'pendente'`: mostra "Aguardando aprovação do administrador" em vez do dashboard.
-   - Se `parceiro.status === 'suspenso'`: mostra "Conta suspensa — limite de créditos atingido / contate admin".
-   - Aplicado no `ProtectedRoute` (ou novo wrapper `PartnerGate`).
+## Arquivos a criar / editar
 
-6. **Indicador de cota no header**
-   - Pequena barra "Créditos: 320 / 1000" sempre visível para parceiro. Vermelha quando >80%.
+Criar:
+- `src/pages/dashboard/Licenses.tsx`
+- `src/components/auth/ActivePartnerRoute.tsx`
+- `src/components/dashboard/licenses/LicenseFormDialog.tsx` (criar/editar)
+- `src/components/dashboard/licenses/LicenseRowActions.tsx`
+- `src/lib/licenses.ts` (helpers: normalização de status, cálculo de expiração, mapeamento plan_code→plan_name e duração)
 
-7. **Bloqueio de criação**
-   - Botão "Novo cliente" desabilitado se atingiu `limite_clientes`. Idem para criar workspace/execução.
+Editar:
+- `src/App.tsx` — registrar rota `/dashboard/licencas`.
+- `src/components/dashboard/AppSidebar.tsx` — incluir item "Licenças" para admins e parceiros ativos.
 
-### Auth (`/auth`)
-- Já tem signup. Após `signUp`, mostra mensagem: "Cadastro recebido. Aguardando aprovação do administrador. Você receberá acesso assim que aprovado."
-- Login funciona normalmente, mas o gate decide o que mostrar.
+## Fora de escopo
 
-## Nomenclatura
-- Tabela: `parceiros`. Texto na UI: **"Parceiro"** / "Parceiros".
-- A página atual `/dashboard/users` continua existindo só para gestão de **roles do sistema** (admin/user). Renomear visualmente para "Administradores" para evitar confusão.
-
-## Não muda
-- Estrutura de `contas_lovable`, `execucoes_lovable`, `resumo_lovable_workspace`, `user_roles`, `profiles`.
-- RLS existente continua válido (parceiros já só viam o próprio por `id_do_usuario`).
-- App desktop não precisa mudar — ele continua escrevendo execuções, e a trigger de bloqueio o impede automaticamente quando o parceiro estourar a cota.
-
-## Ordem de execução
-1. Migration: tabela `parceiros` + função `parceiro_ativo` + triggers + RLS + backfill (criar linha pendente para usuários existentes; **você fica `ativo` automaticamente por ser admin**).
-2. Hook `useAuth` retorna `parceiro`.
-3. `PartnerGate` (bloqueia pendente/suspenso).
-4. Página `/dashboard/parceiros` (admin) + sidebar item.
-5. Modo "Ver como" + banner.
-6. Indicador de cota + bloqueios de criação no front.
-
-Posso seguir direto após sua aprovação.
+- Criação/edição de campos sensíveis (`partner_id`, `id_do_usuario`, `machine_hash*`) — protegidos por trigger; UI não tenta alterá-los exceto no "Resetar máquina".
+- Exclusão de licenças (RLS já bloqueia DELETE).
+- Painel admin agregado de licenças entre parceiros (pode ser feito depois).

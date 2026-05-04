@@ -1,75 +1,92 @@
+## Plano: Aba "Minha Conta" no sidebar
 
-# Onboarding pós-compra — Matrix Hacker Style
+Adicionar uma nova aba sempre visível no sidebar onde o usuário vê seus dados pessoais, avatar, contato e a quantidade de créditos disponíveis.
 
-Hoje, quando o cliente paga via Pix em `/vendas`, o webhook cria uma `app_licenses` vinculada ao email — mas o cliente não tem conta no Supabase Auth nem senha. Ele cai no `/auth` sem como entrar. Vamos resolver criando um fluxo de ativação gameficado.
+### Onde aparece
 
-## Fluxo proposto
+- Nova entrada no catálogo `src/lib/sidebar-tabs.ts`:
+  - `key: "minha-conta"`, `title: "Minha Conta"`, `url: "/dashboard/minha-conta"`, `icon: UserCircle`, `alwaysOn: true`.
+- Posicionada logo após "Visão geral" (antes de "Loja").
+- Como `alwaysOn: true`, aparece para todo usuário sem necessidade de permissão (segue padrão de `overview` e `loja`).
 
-```text
-[Pix confirmado em CheckoutPixDialog]
-        │
-        ▼
-[CTA "Ativar minha conta" → /ativar?tx=<txId>]
-        │
-        ▼
-Step 1: Confirmar dados (nome, email, whatsapp já preenchidos)
-Step 2: Escolher avatar (9 da galeria + upload do PC/celular)
-Step 3: Criar senha + confirmar
-        │
-        ▼
-[Edge function ativa-conta]
-  - valida que pix_charges.tx_id está "paid"
-  - cria usuário no auth (email já confirmado)
-  - linka app_licenses.id_do_usuario ao novo user
-  - salva avatar_url no profiles
-        │
-        ▼
-[Login automático → /dashboard]
-```
+### Página `/dashboard/minha-conta`
 
-## Mudanças
+Arquivo novo: `src/pages/dashboard/MinhaConta.tsx`. Estilo Matrix consistente com Overview/Loja (MatrixCard, fonte mono, neon verde).
 
-### 1. Banco
-- Adicionar colunas em `profiles`:
-  - `avatar_url text`
-  - `nome text`
-  - `whatsapp text`
-  - `onboarding_completed boolean default false`
-- Storage bucket público `avatars` (RLS: dono pode insert/update no próprio path `<user_id>/...`).
-- Adicionar `pix_charges.activation_token text unique` (gerado no webhook quando pagar) — usado como chave de ativação na URL, evita expor `tx_id`.
+Layout em duas colunas no desktop, empilhado no mobile:
 
-### 2. Assets (galeria de avatares Matrix)
-- Copiar 9 avatares da imagem enviada para `src/assets/avatars/anon-01.png` ... `anon-09.png` (a imagem é referência — precisaremos gerar/usar imagens equivalentes; vou usar a foto enviada como base e cortar cada avatar).
+**Coluna esquerda — Perfil (card)**
+- Avatar grande (128px) com glow verde, lido de `profiles.avatar_url`. Fallback: iniciais do nome/email.
+- Nome (`profiles.nome`) com `GlitchText`.
+- Email (read-only, do `auth.user.email`).
+- WhatsApp (`profiles.whatsapp`).
+- Badge do papel: "ADMIN", "PARCEIRO ATIVO", "PARCEIRO PENDENTE" ou "USUÁRIO".
+- Botão "Editar perfil" → abre dialog para editar `nome`, `whatsapp` e trocar avatar (reusa `AvatarPicker` de `src/components/ativar/AvatarPicker.tsx`).
+- Botão secundário "Trocar senha" → dialog simples com `supabase.auth.updateUser({ password })`.
 
-### 3. Edge functions
-- **Modificar `abacatepay-webhook` e `abacatepay-check-status`**: ao marcar como `paid` no fluxo público (sem `partner_user_id`), gerar `activation_token` (uuid) e gravar em `pix_charges`.
-- **Nova `ativar-conta`** (sem JWT, pública): recebe `{ activationToken, password, nome, whatsapp, avatarUrl }`. Valida charge `paid` + token, cria usuário com `supabase.auth.admin.createUser({ email, password, email_confirm: true })`, atualiza `app_licenses.id_do_usuario`, faz upsert em `profiles` (avatar/nome/whatsapp/onboarding_completed=true). Retorna `email` para login automático no client.
+**Coluna direita — Créditos (card)**
+- Título "CRÉDITOS DISPONÍVEIS".
+- Número grande: `limite_creditos - creditos_consumidos` (do `parceiro` no `useAuth`).
+- Linha secundária: `consumidos / limite` (ex.: `1.250 / 5.000`).
+- Barra de progresso (verde / âmbar ≥80% / vermelho ≥100%, mesma lógica do `QuotaBadge`).
+- Status do parceiro (ativo/pendente/suspenso) como badge.
+- CTA "Comprar mais créditos" → `Link` para `/dashboard/loja`.
+- Quando não há `parceiro` (usuário comum), mostrar estado "Sem licença ativa" com CTA para a Loja.
 
-### 4. Frontend
-- **`CheckoutPixDialog.tsx`**: no step "paid", trocar botão "Acessar painel" por "Ativar minha conta" → `/ativar?token=<activationToken>` (retornado pelo `check-status`).
-- **`abacatepay-check-status`** já retorna o token agora; ajustar `CheckoutPixDialog` pra capturar.
-- **Nova página `src/pages/Ativar.tsx`** (rota pública `/ativar`):
-  - Tema matrix (MatrixRain, GlitchText, mesmo `matrixThemeStyle`).
-  - 3 steps com indicador estilo terminal: `[01/03] IDENTIFICAÇÃO → [02/03] AVATAR → [03/03] SENHA`.
-  - Step 1: mostra dados do `pix_charges` (read-only email; editáveis nome/whatsapp), texto "BEM-VINDO À MATRIX, OPERADOR".
-  - Step 2: grid 3×3 com 9 avatares (border verde glow no selecionado) + card "Importar foto" (input file → upload pro bucket `avatars`, preview circular com glow). Um avatar custom também aparece selecionável.
-  - Step 3: input senha + confirmação, validação min 8 chars, força visual (barra que enche em verde matrix). Botão "INICIAR SISTEMA →".
-  - Após sucesso: chama `supabase.auth.signInWithPassword`, redireciona pra `/dashboard`.
-- **Novo componente `src/components/ativar/AvatarPicker.tsx`** com a galeria + upload.
-- **Atualizar `useAuth.tsx`**: expor `profile.avatar_url` (opcional, pra mostrar no header/sidebar futuramente — escopo mínimo só carregar).
+**Card inferior — Conta (full width)**
+- Data de criação da conta (`profiles.criado_em`).
+- ID do usuário (com botão copiar).
+- Botão "Sair" (chama `signOut`).
 
-### 5. Detalhes técnicos
-- Validação client + server com `zod` (senha min 8, email válido, whatsapp opcional).
-- Upload de avatar: `supabase.storage.from("avatars").upload("<token>/<uuid>.png", file)` antes de criar conta (usando token como prefixo pra permitir antes do signup; depois mover/renomear opcional). Alternativa mais simples: edge function recebe arquivo base64 e faz upload com service role — vamos por essa pra não precisar de RLS complexa pré-auth.
-- Token de ativação tem TTL implícito (sempre válido enquanto charge `paid` e `app_licenses.id_do_usuario` IS NULL — uma única ativação).
-- Reidempotência: se token já foi usado, retornar erro amigável "Conta já ativada — faça login".
+### Edição de perfil (dialog)
 
-## Fora de escopo
-- Recuperação de senha (já existe fluxo padrão Supabase).
-- Editar avatar depois do onboarding (pode vir num "Meu Perfil" futuro).
-- Notificação por WhatsApp/email com o link de ativação (cliente recebe direto na tela do checkout — mas o link pode ser reaberto via `/ativar?token=...`).
+Componente novo: `src/components/dashboard/minha-conta/EditProfileDialog.tsx`.
+- Campos: `nome` (text), `whatsapp` (text), avatar (via `AvatarPicker`).
+- Salvar:
+  - Se avatar trocado: upload para bucket `avatars` em `{user_id}/avatar-{timestamp}.{ext}` e pegar `publicUrl`. Avatares preset (importados como asset) são copiados para o bucket no upload, ou salvos como string-key — usar mesma abordagem que `ativar-conta` (upload do blob).
+  - `update` em `profiles` com `nome`, `whatsapp`, `avatar_url`.
+- Após salvar: chamar `refreshProfile()` (novo no `useAuth`) e fechar dialog.
 
-## Arquivos
-- **DB migration**: alter `profiles` + alter `pix_charges` + bucket `avatars`.
-- **Novos**: `src/pages/Ativar.tsx`, `src/components/ativar/AvatarPicker.tsx`, `src/assets/avatars/anon-0[1-9].png`, `supabase/functions/ativar-conta/index.ts`.
-- **Modificados**: `src/App.tsx` (rota `/ativar`), `src/components/landing/CheckoutPixDialog.tsx`, `supabase/functions/abacatepay-webhook/index.ts`, `supabase/functions/abacatepay-check-status/index.ts`, `src/integrations/supabase/types.ts` (regenerado).
+### Trocar senha (dialog)
+
+Componente novo: `src/components/dashboard/minha-conta/ChangePasswordDialog.tsx`.
+- Campos: nova senha + confirmação (mín 8 chars, barra visual reusada).
+- `supabase.auth.updateUser({ password })`.
+
+### Ajuste no `useAuth`
+
+`src/hooks/useAuth.tsx`:
+- Adicionar estado `profile: { id, email, nome, whatsapp, avatar_url, criado_em, onboarding_completed } | null`.
+- Função `fetchProfile(uid)` que faz `select * from profiles where id = uid`.
+- Expor `profile` e `refreshProfile()` no contexto.
+- Chamar junto com `fetchParceiro` no `onAuthStateChange` e no `getSession`.
+
+### Reflexo no header
+
+Atualizar `src/components/dashboard/AppSidebar.tsx` (footer com email) para mostrar o mini-avatar (24px) ao lado do email quando `profile.avatar_url` existir. Pequeno polimento, opcional mas barato.
+
+### Roteamento
+
+`src/App.tsx`: adicionar `<Route path="minha-conta" element={<MinhaConta />} />` dentro de `/dashboard`.
+
+### Arquivos
+
+**Novos**
+- `src/pages/dashboard/MinhaConta.tsx`
+- `src/components/dashboard/minha-conta/EditProfileDialog.tsx`
+- `src/components/dashboard/minha-conta/ChangePasswordDialog.tsx`
+
+**Modificados**
+- `src/lib/sidebar-tabs.ts` — registrar a aba.
+- `src/App.tsx` — registrar a rota.
+- `src/hooks/useAuth.tsx` — expor `profile` e `refreshProfile`.
+- `src/components/dashboard/AppSidebar.tsx` — mini-avatar no footer (opcional).
+
+### Fora de escopo
+
+- Histórico de compras de créditos (pode virar um card depois).
+- Gerenciamento de sessões/dispositivos.
+- Exclusão de conta.
+- Recuperação de senha por email (já existe fluxo separado).
+
+Sem mudanças de banco de dados — a tabela `profiles` já tem `avatar_url`, `nome`, `whatsapp`, `onboarding_completed` (criados no fluxo `/ativar`) e o bucket `avatars` já existe e é público.

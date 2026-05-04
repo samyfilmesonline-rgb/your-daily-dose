@@ -14,6 +14,16 @@ export type Parceiro = {
   creditos_consumidos: number;
 };
 
+export type Profile = {
+  id: string;
+  email: string;
+  nome: string | null;
+  whatsapp: string | null;
+  avatar_url: string | null;
+  criado_em: string;
+  onboarding_completed: boolean;
+};
+
 type AuthContextType = {
   session: Session | null;
   user: User | null;
@@ -21,6 +31,8 @@ type AuthContextType = {
   isAdmin: boolean;
   parceiro: Parceiro | null;
   refreshParceiro: () => Promise<void>;
+  profile: Profile | null;
+  refreshProfile: () => Promise<void>;
   tabPermissions: Set<string>;
   refreshTabPermissions: () => Promise<void>;
   isActivePartner: boolean;
@@ -36,6 +48,8 @@ const AuthContext = createContext<AuthContextType>({
   isAdmin: false,
   parceiro: null,
   refreshParceiro: async () => {},
+  profile: null,
+  refreshProfile: async () => {},
   tabPermissions: new Set<string>(),
   refreshTabPermissions: async () => {},
   isActivePartner: false,
@@ -49,6 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [parceiro, setParceiro] = useState<Parceiro | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [tabPermissions, setTabPermissions] = useState<Set<string>>(new Set());
   const [viewAs, setViewAsState] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
@@ -68,6 +83,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .eq("user_id", uid)
       .maybeSingle();
     setParceiro((data as Parceiro) ?? null);
+  };
+
+  const fetchProfile = async (uid: string) => {
+    const { data } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", uid)
+      .maybeSingle();
+    setProfile((data as Profile) ?? null);
   };
 
   const fetchTabPermissions = async (uid: string) => {
@@ -92,11 +116,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             .maybeSingle()
             .then(({ data }) => setIsAdmin(!!data));
           fetchParceiro(s.user.id);
+          fetchProfile(s.user.id);
           fetchTabPermissions(s.user.id);
         }, 0);
       } else {
         setIsAdmin(false);
         setParceiro(null);
+        setProfile(null);
         setTabPermissions(new Set());
       }
     });
@@ -112,6 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .maybeSingle()
           .then(({ data: r }) => setIsAdmin(!!r));
         fetchParceiro(data.session.user.id);
+        fetchProfile(data.session.user.id);
         fetchTabPermissions(data.session.user.id);
       }
     });
@@ -128,6 +155,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         parceiro,
         refreshParceiro: async () => {
           if (session?.user) await fetchParceiro(session.user.id);
+        },
+        profile,
+        refreshProfile: async () => {
+          if (session?.user) await fetchProfile(session.user.id);
         },
         tabPermissions,
         refreshTabPermissions: async () => {

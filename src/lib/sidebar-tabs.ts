@@ -1,4 +1,4 @@
-import { LayoutDashboard, Users as UsersIcon, Boxes, Shield, Handshake, KeyRound, type LucideIcon } from "lucide-react";
+import { LayoutDashboard, Users as UsersIcon, Boxes, Shield, Handshake, KeyRound, ShoppingBag, type LucideIcon } from "lucide-react";
 
 export type TabVisibility =
   | "always"
@@ -29,6 +29,14 @@ export const SIDEBAR_TABS: SidebarTab[] = [
     url: "/dashboard",
     icon: LayoutDashboard,
     end: true,
+    defaultVisibility: "always",
+    alwaysOn: true,
+  },
+  {
+    key: "loja",
+    title: "Loja",
+    url: "/dashboard/loja",
+    icon: ShoppingBag,
     defaultVisibility: "always",
     alwaysOn: true,
   },

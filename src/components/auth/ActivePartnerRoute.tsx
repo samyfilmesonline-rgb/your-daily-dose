@@ -5,10 +5,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Clock } from "lucide-react";
 
 export default function ActivePartnerRoute({ children }: { children: ReactNode }) {
-  const { loading, session, isAdmin, parceiro, tabPermissions } = useAuth();
+  const { loading, session, isAdmin, tabPermissions } = useAuth();
   if (loading) return <div className="p-8 text-muted-foreground">Carregando…</div>;
   if (!session) return <Navigate to="/auth" replace />;
-  if (isAdmin || parceiro?.status === "ativo" || tabPermissions.has("licencas")) return <>{children}</>;
+  if (isAdmin || tabPermissions.has("licencas")) return <>{children}</>;
 
   return (
     <main className="min-h-[70vh] flex items-center justify-center p-6">

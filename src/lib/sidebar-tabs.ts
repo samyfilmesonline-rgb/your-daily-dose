@@ -78,17 +78,7 @@ export type TabAccessContext = {
 export function canAccessTab(tab: SidebarTab, ctx: TabAccessContext): boolean {
   if (tab.alwaysOn) return true;
   if (ctx.isAdmin) return true;
-  if (ctx.tabPermissions.has(tab.key)) return true;
-  switch (tab.defaultVisibility) {
-    case "always":
-      return true;
-    case "partnerOrAdmin":
-      return ctx.isActivePartner;
-    case "adminOrActivePartner":
-      return ctx.isActivePartner;
-    case "adminOnly":
-      return false;
-  }
+  return ctx.tabPermissions.has(tab.key);
 }
 
 export function getTabByKey(key: string): SidebarTab | undefined {

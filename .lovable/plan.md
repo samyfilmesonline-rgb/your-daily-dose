@@ -1,82 +1,65 @@
-## Objetivo
 
-Hoje o "gerenciador" (`/dashboard/*`) usa o tema neutro padrão (claro/escuro genérico shadcn), enquanto a página `/vendas` já está toda no estilo Matrix (verde neon, fundo preto, MatrixRain, GlitchText, cards com borda verde e glow). Vou alinhar o gerenciador ao mesmo estilo visual — tomando como referência o projeto `matrix-farm` (AdminLayout + Dashboard) e a página `/vendas` deste projeto — para que tudo fique coerente.
+# Loja de Créditos no Gerenciador
 
-## Escopo
+Hoje a página `/vendas` é pública e cria uma `app_license` ao confirmar o Pix (cliente final compra licença). Já o **parceiro logado** no painel tem um limite próprio em `parceiros.limite_creditos` que define quanto pode farmar (visto no `QuotaBadge`). Falta uma loja **dentro do gerenciador** que aumente esse limite quando o parceiro compra créditos para si.
 
-Áreas afetadas:
-- Casca do painel: `DashboardLayout`, `AppSidebar`, header, `QuotaBadge`, `ViewAsBanner`.
-- Páginas: `Overview`, `Accounts`, `Licenses`, `Workspaces`, `Users`, `Partners`.
-- Diálogos do gerenciador: `LicenseFormDialog`, `LicenseRowActions`, `TabPermissionsDialog`.
+## Modelo conceitual
 
-Sem mudanças de funcionalidade — só visual/estrutura de classes. Nenhum ajuste de banco, RLS ou edge functions.
+Quando um parceiro compra um pacote dentro do dashboard, ao confirmar o Pix:
+- **Não** cria `app_license`.
+- **Soma** os créditos comprados ao `parceiros.limite_creditos` do parceiro (ele passa a poder farmar mais).
+- Registra a compra em `pix_charges` com vínculo ao usuário comprador para auditoria.
 
-## Direção visual (igual à /vendas e ao matrix-farm)
+## Mudanças
 
-- Tema verde Matrix permanente no `/dashboard/*` (mesma paleta HSL já usada no `matrixThemeStyle` da Vendas):
-  - background `120 10% 2%`, foreground `120 80% 90%`, primary `120 100% 45%`, border `120 30% 18%` etc.
-- Aplicado via classe `.matrix-theme` no container raiz do `DashboardLayout`, idêntico ao que a Vendas faz (não mexe no `index.css` global, então o resto do app continua igual).
-- Fundo: `MatrixRain` sutil + overlay escurecedor + glow orbs no topo/rodapé (mesmos componentes de `src/components/landing/`).
-- Tipografia: títulos em `font-mono` com `GlitchText`, body normal. Uppercase tracking em rótulos de seção.
-- Cards: `border border-primary/30 rounded-2xl bg-card/40 backdrop-blur` com hover `border-primary/60` e glow `shadow-[0_0_40px_hsl(var(--primary)/0.15)]` — replicando o `StatsCardNew`/`DashboardCard` do matrix-farm.
-- KPIs: ícone dentro de quadrado `bg-primary/20 border border-primary/40 rounded-xl`, número grande, label em `text-muted-foreground`.
-- Tabelas/listas: linhas `divide-primary/15`, hover `bg-primary/5`, badges de status com cores semânticas (primary/destructive/secondary) já existentes no shadcn aplicadas sobre o tema verde.
-- Sidebar: header com selo "M" verde + "Matrix Admin / Console", itens ativos com `bg-primary/15 text-primary border-l-2 border-primary`. Footer com botão Sair em `text-destructive`.
-- Header do painel: barra fina translúcida `bg-background/60 backdrop-blur border-b border-primary/20`, breadcrumb/título à esquerda em `font-mono uppercase`.
-- Charts (recharts): manter, só trocar cores para `hsl(var(--primary))` e grids/eixos em `hsl(var(--border))` / `hsl(var(--muted-foreground))` (já está assim em parte do Overview).
-- Diálogos: `DialogContent` com `border-primary/30 bg-card/95 backdrop-blur`.
+### 1. Banco
+- Adicionar coluna `pix_charges.partner_user_id uuid null` para distinguir compras feitas por parceiro logado (loja interna) das compras públicas do site `/vendas`.
+- Adicionar índice `pix_charges (partner_user_id)`.
+- Política RLS extra em `pix_charges`: parceiro pode ver as próprias compras (`partner_user_id = auth.uid()`).
 
-## Mudanças por arquivo
+### 2. Sidebar
+- Adicionar aba **"Loja"** em `src/lib/sidebar-tabs.ts`:
+  - `key: "loja"`, `url: "/dashboard/loja"`, ícone `ShoppingBag`, `defaultVisibility: "always"`, `alwaysOn: true` (todo parceiro logado vê).
 
-1. `src/components/dashboard/DashboardLayout.tsx`
-   - Envolver tudo em `<div className="matrix-theme min-h-screen bg-background text-foreground relative overflow-x-hidden">`.
-   - Injetar o mesmo bloco `<style>` do `matrixThemeStyle` da Vendas (ou extrair para `src/lib/matrix-theme.ts` para reuso entre Vendas e Dashboard).
-   - Adicionar `<MatrixRain />` + overlays/glow orbs (`fixed`, `z-[1/2]`, `pointer-events-none`).
-   - Header com classes Matrix (translúcido, borda verde, fonte mono).
-   - `main` com `relative z-10`.
+### 3. Nova rota e página
+- Rota `/dashboard/loja` em `src/App.tsx`.
+- `src/pages/dashboard/Loja.tsx`:
+  - Header no estilo Matrix (`GlitchText`, `cyber-grid`, fontes mono) consistente com o resto do dashboard.
+  - Card de saldo atual: "Seus créditos: usados / limite" puxando do `useAuth().parceiro`.
+  - Grid de `PricingCard` reutilizando `credit_packs` (`useQuery` igual ao `/vendas`).
+  - Texto explicativo: "Os créditos comprados aqui vão direto para sua conta de farm."
+  - Histórico de compras (lista compacta das últimas `pix_charges` com `partner_user_id = user.id`).
 
-2. `src/components/dashboard/AppSidebar.tsx`
-   - Trocar selo "L / Lovable Admin" por "M / Matrix Admin · Console" no padrão da Vendas (selo verde, mono, uppercase).
-   - Itens ativos com estilo verde neon (via classes no `SidebarMenuButton`/`NavLink`).
-   - Footer: e-mail em mono pequeno, badge "Admin" com `Crown` em verde.
+### 4. Novo dialog de checkout interno
+- `src/components/dashboard/loja/CheckoutCreditsDialog.tsx` (variante do `CheckoutPixDialog`):
+  - Não pede e-mail/nome (usa o do parceiro logado), só pede CPF/WhatsApp se ainda não cadastrados.
+  - Chama nova edge function `loja-create-pix` (não a pública `abacatepay-create-pix`).
+  - Polling de status por `loja-check-status`.
+  - Ao confirmar pagamento: refetch do `parceiro` (mostra novo limite imediatamente) + toast "X créditos adicionados ao seu farm".
 
-3. `src/components/dashboard/QuotaBadge.tsx` e `ViewAsBanner.tsx`
-   - Repaginar com borda `primary/30`, fundo `primary/10`, texto `primary`.
+### 5. Edge functions
+- **`loja-create-pix`** (`supabase/functions/loja-create-pix/index.ts`):
+  - Requer JWT, identifica `auth.uid()`.
+  - Valida que o usuário tem registro em `parceiros`.
+  - Reusa `createPixCharge` de `_shared/abacate.ts`.
+  - Insere `pix_charges` com `partner_user_id = auth.uid()` e marca `notes`/payload como compra interna.
+- **`loja-check-status`**: igual ao `abacatepay-check-status` mas filtra por `partner_user_id`.
+- **`abacatepay-webhook`** (modificar):
+  - Quando o `pix_charges.partner_user_id` está preenchido → **NÃO** criar `app_license`. Em vez disso:
+    - `update parceiros set limite_creditos = limite_creditos + pack.credits where user_id = partner_user_id`.
+  - Quando `partner_user_id` é null → mantém comportamento atual (cria `app_license` para fluxo público de `/vendas`).
+  - Idempotência preservada via `pix_charges.status = 'paid'`.
 
-4. `src/pages/dashboard/Overview.tsx`
-   - Título "Visão geral" → `<GlitchText>VISÃO GERAL</GlitchText>` em `font-mono`.
-   - Recriar `KpiCard` e `SectionCard` locais usando o estilo do matrix-farm (glow + ícone em quadrado verde).
-   - Ajustar AreaChart já está usando `hsl(var(--primary))` — ok.
-
-5. `src/pages/dashboard/Accounts.tsx`, `Licenses.tsx`, `Workspaces.tsx`, `Users.tsx`, `Partners.tsx`
-   - Padronizar cabeçalho da página: título `font-mono` com `GlitchText`, subtítulo em `text-muted-foreground`, botões primários em estilo Matrix (`uppercase tracking-wider`).
-   - Trocar `Card` por wrapper `.matrix-card` (helper de classes utilitárias) ou aplicar as classes diretamente.
-   - Tabelas: header em `text-primary/80 uppercase tracking-wider text-xs`, linhas com hover verde discreto.
-   - Filtros/inputs já usam shadcn, vão herdar o tema do `matrix-theme`.
-
-6. `src/components/dashboard/licenses/LicenseFormDialog.tsx`, `LicenseRowActions.tsx`, `src/components/dashboard/users/TabPermissionsDialog.tsx`
-   - Aplicar bordas/fundos verdes nos `DialogContent`, `DropdownMenuContent`, `AlertDialogContent`.
-   - Botões destrutivos mantêm vermelho do shadcn (`destructive`), que combina com o tema.
-
-7. (Opcional) `src/lib/matrix-theme.ts`
-   - Extrair a string `matrixThemeStyle` e usá-la tanto em `Vendas.tsx` quanto em `DashboardLayout.tsx` para evitar duplicação.
-
-## Detalhes técnicos
-
-- O tema é aplicado via CSS variables sob a classe `.matrix-theme` (padrão já usado em Vendas), isolando o efeito do dashboard sem afetar `/auth`, `/`, `NotFound`, etc.
-- Os componentes `MatrixRain`, `GlitchText`, `Marquee` ficam em `src/components/landing/` e são reutilizados — sem necessidade de duplicar código nem mover arquivos.
-- Recharts: como tudo lê `hsl(var(--primary))` / `hsl(var(--border))`, não é preciso tocar nos dados, só garantir que estejam dentro do escopo `.matrix-theme`.
-- `MatrixRain` é canvas em `position: fixed` z-index baixo + `pointer-events-none`, não interfere no sidebar (que tem fundo sólido via `--sidebar-background`).
-- Performance: `MatrixRain` já está em uso na Vendas; carregar no painel é ok. Se ficar pesado em listas grandes, posso trocar por `MatrixRainCSS` mais leve depois.
-- Sem mudanças em rotas, hooks, queries, RLS, permissions.
+### 6. UX e estilo
+- Toda a página Loja segue o tema Matrix (verde neon, `font-mono`, glow), idêntico ao restante do `/dashboard/*`.
+- `PricingCard` é reaproveitado tal como está; texto secundário ajustado via prop opcional ou variante leve se necessário (pode ser feito sem alterar o componente, usando wrapper).
 
 ## Fora de escopo
+- Refunds, alteração de planos pagos, gateway alternativo.
+- Mudança no fluxo público `/vendas` (continua criando `app_license`).
+- Painel de admin para reembolsar / estornar (pode vir depois).
 
-- Página `/auth` e `/` (Index) — manter como estão, salvo pedido.
-- Não vou refatorar a lógica de dados nem migrações.
-- Não mudo `index.css` global; o tema Matrix continua escopado por classe.
-
-## Resultado esperado
-
-- `/vendas` continua igual.
-- Todo `/dashboard/*` aparece em verde Matrix, com a mesma "vibe" da landing e do projeto matrix-farm: fundo preto com chuva de código, cards translúcidos com borda verde e glow no hover, títulos em mono com glitch, sidebar verde neon.
+## Resumo de arquivos
+- **DB migration**: adicionar `partner_user_id` em `pix_charges` + RLS.
+- **Novo**: `src/pages/dashboard/Loja.tsx`, `src/components/dashboard/loja/CheckoutCreditsDialog.tsx`, `supabase/functions/loja-create-pix/index.ts`, `supabase/functions/loja-check-status/index.ts`.
+- **Modificado**: `src/App.tsx`, `src/lib/sidebar-tabs.ts`, `supabase/functions/abacatepay-webhook/index.ts`.

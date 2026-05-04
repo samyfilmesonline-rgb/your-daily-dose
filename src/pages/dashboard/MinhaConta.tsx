@@ -62,7 +62,7 @@ export default function MinhaConta() {
         <div className="text-[11px] font-mono uppercase tracking-[0.3em] text-primary/70 mb-1">
           // operador
         </div>
-        <GlitchText text="MINHA CONTA" className="text-3xl font-bold text-foreground" />
+        <GlitchText className="text-3xl font-bold text-foreground">MINHA CONTA</GlitchText>
         <p className="text-sm text-muted-foreground font-mono mt-1">
           Gerencie seus dados, avatar e visualize seus créditos.
         </p>
@@ -82,7 +82,7 @@ export default function MinhaConta() {
               </Avatar>
             </div>
             <div className="space-y-1">
-              <GlitchText text={displayName} className="text-2xl font-bold text-foreground" />
+              <GlitchText className="text-2xl font-bold text-foreground">{displayName}</GlitchText>
               <p className="text-xs font-mono text-muted-foreground">{user?.email}</p>
               {profile?.whatsapp && (
                 <p className="text-xs font-mono text-muted-foreground">{profile.whatsapp}</p>

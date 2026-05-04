@@ -103,6 +103,51 @@ export type Database = {
           },
         ]
       }
+      parceiros: {
+        Row: {
+          aprovado_em: string | null
+          aprovado_por: string | null
+          atualizado_em: string
+          creditos_consumidos: number
+          criado_em: string
+          limite_clientes: number
+          limite_creditos: number
+          limite_workspaces: number
+          nome: string | null
+          status: Database["public"]["Enums"]["parceiro_status"]
+          user_id: string
+          whatsapp: string | null
+        }
+        Insert: {
+          aprovado_em?: string | null
+          aprovado_por?: string | null
+          atualizado_em?: string
+          creditos_consumidos?: number
+          criado_em?: string
+          limite_clientes?: number
+          limite_creditos?: number
+          limite_workspaces?: number
+          nome?: string | null
+          status?: Database["public"]["Enums"]["parceiro_status"]
+          user_id: string
+          whatsapp?: string | null
+        }
+        Update: {
+          aprovado_em?: string | null
+          aprovado_por?: string | null
+          atualizado_em?: string
+          creditos_consumidos?: number
+          criado_em?: string
+          limite_clientes?: number
+          limite_creditos?: number
+          limite_workspaces?: number
+          nome?: string | null
+          status?: Database["public"]["Enums"]["parceiro_status"]
+          user_id?: string
+          whatsapp?: string | null
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           criado_em: string
@@ -213,6 +258,11 @@ export type Database = {
         }
         Returns: boolean
       }
+      parceiro_ativo: { Args: { _user_id: string }; Returns: boolean }
+      recalc_parceiro_creditos: {
+        Args: { _user_id: string }
+        Returns: undefined
+      }
       recalc_resumo_lovable_workspace: {
         Args: { p_email: string; p_id_do_usuario: string; p_workspace: string }
         Returns: undefined
@@ -220,6 +270,7 @@ export type Database = {
     }
     Enums: {
       app_role: "admin" | "user"
+      parceiro_status: "pendente" | "ativo" | "suspenso"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -348,6 +399,7 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "user"],
+      parceiro_status: ["pendente", "ativo", "suspenso"],
     },
   },
 } as const

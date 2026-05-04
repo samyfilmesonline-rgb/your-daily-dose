@@ -134,6 +134,42 @@ export type Database = {
         }
         Relationships: []
       }
+      credit_packs: {
+        Row: {
+          created_at: string
+          credits: number
+          display_order: number
+          id: string
+          is_active: boolean
+          is_popular: boolean
+          name: string
+          price_cents: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          credits: number
+          display_order?: number
+          id: string
+          is_active?: boolean
+          is_popular?: boolean
+          name: string
+          price_cents: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          credits?: number
+          display_order?: number
+          id?: string
+          is_active?: boolean
+          is_popular?: boolean
+          name?: string
+          price_cents?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       execucoes_lovable: {
         Row: {
           atualizado_em: string
@@ -234,6 +270,69 @@ export type Database = {
           whatsapp?: string | null
         }
         Relationships: []
+      }
+      pix_charges: {
+        Row: {
+          amount_cents: number
+          created_at: string
+          customer_email: string
+          customer_name: string
+          customer_whatsapp: string | null
+          id: string
+          license_id: string | null
+          pack_id: string
+          paid_at: string | null
+          raw_payload: Json | null
+          status: string
+          tx_id: string
+          updated_at: string
+        }
+        Insert: {
+          amount_cents: number
+          created_at?: string
+          customer_email: string
+          customer_name: string
+          customer_whatsapp?: string | null
+          id?: string
+          license_id?: string | null
+          pack_id: string
+          paid_at?: string | null
+          raw_payload?: Json | null
+          status?: string
+          tx_id: string
+          updated_at?: string
+        }
+        Update: {
+          amount_cents?: number
+          created_at?: string
+          customer_email?: string
+          customer_name?: string
+          customer_whatsapp?: string | null
+          id?: string
+          license_id?: string | null
+          pack_id?: string
+          paid_at?: string | null
+          raw_payload?: Json | null
+          status?: string
+          tx_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pix_charges_license_id_fkey"
+            columns: ["license_id"]
+            isOneToOne: false
+            referencedRelation: "app_licenses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pix_charges_pack_id_fkey"
+            columns: ["pack_id"]
+            isOneToOne: false
+            referencedRelation: "credit_packs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {

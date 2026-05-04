@@ -1,45 +1,53 @@
-# Por que o painel "Licenças" não aparece
+## Objetivo
 
-A implementação anterior ficou pela metade. Hoje no projeto existem apenas:
-- `src/lib/licenses.ts` (helpers)
-- `src/components/auth/ActivePartnerRoute.tsx` (wrapper de acesso)
-- `src/components/dashboard/licenses/LicenseFormDialog.tsx` (formulário)
+Permitir que o admin **crie parceiros manualmente** pelo painel `/dashboard/parceiros`, mantendo todo o gerenciamento já existente (aprovar, suspender, reativar, editar cotas, ver-como, excluir).
 
-Mas **faltam três peças críticas**, e por isso nada aparece para ninguém — admin ou parceiro:
+## Diagnóstico
 
-1. A página `src/pages/dashboard/Licenses.tsx` nunca foi criada.
-2. A rota `/dashboard/licencas` não está registrada em `src/App.tsx`.
-3. O item "Licenças" não foi adicionado em `src/components/dashboard/AppSidebar.tsx`.
+A página `src/pages/dashboard/Partners.tsx` já tem CRUD/gestão completa, exceto **criação manual**. Hoje o registro em `public.parceiros` é criado apenas pelo trigger `handle_new_user` quando alguém se cadastra via Auth.
 
-# O que vou fazer
+Como `parceiros.user_id` aponta para um usuário do Auth e o frontend **não pode criar usuários no Auth de terceiros** com o anon key, precisamos de uma **edge function** com `SUPABASE_SERVICE_ROLE_KEY` para:
+1. Criar (ou convidar) o usuário no Auth.
+2. Garantir que `profiles`, `user_roles` e `parceiros` existam (o trigger já faz, mas garantimos idempotência).
+3. Aplicar nome, whatsapp, status e cotas escolhidos pelo admin.
 
-## 1. Criar `src/pages/dashboard/Licenses.tsx`
-Página completa conforme o plano original:
-- 4 cards de resumo: Ativas, Bloqueadas, Expirando em 7 dias, Total de clientes.
-- Toolbar: busca por nome/e-mail, filtro por status (chips), botão "Nova licença", botão "Atualizar".
-- Tabela: Cliente · E-mail · Status (badge) · Plano · Expiração (com destaque âmbar ≤7d / vermelho se vencida) · Máquinas (`machine_hashes.length / max_machines`) · Última atividade · Criada em · Ações.
-- Estados: skeleton, empty state, toasts de sucesso/erro.
-- Tratamento de erro RLS (`code === '42501'` → "Sem permissão. Confirme se seu cadastro de parceiro está ativo").
-- Quando admin estiver em modo "View As", filtra `partner_id = viewAs`. Admin sem View As vê todas as licenças (RLS já permite via `is_active_partner` apenas para parceiros — admin precisa de uma policy adicional **ou** vamos restringir o filtro pelo `partner_id` do próprio admin se ele também for parceiro). **Decisão:** a página assume escopo de parceiro (`partner_id = user.id` ou `viewAs`), pois o RLS atual de `app_licenses` não dá SELECT global a admin. Para admins verem tudo, será necessário ajuste futuro de policy — fora do escopo desta correção.
+Apenas admins poderão chamar essa função (validação dentro da função usando o JWT do chamador + `has_role`).
 
-## 2. Criar `src/components/dashboard/licenses/LicenseRowActions.tsx`
-Dropdown por linha com:
-- **Editar** → reabre `LicenseFormDialog` em modo edição.
-- **Renovar** → popover com +30/+90/+180/+365 dias ou data custom; atualiza `expires_at` e, se estava expirada, volta `status = 'active'`.
-- **Bloquear / Reativar** → toggle entre `'blocked'` e `'active'` (AlertDialog para bloquear).
-- **Resetar máquina** → AlertDialog → `machine_hash = null`, `machine_hashes = []`, `activated_at = null`.
+## Mudanças
 
-## 3. Registrar rota em `src/App.tsx`
-Adicionar dentro do bloco `/dashboard`:
-```tsx
-<Route path="licencas" element={<ActivePartnerRoute><Licenses /></ActivePartnerRoute>} />
-```
+### 1. Edge Function: `supabase/functions/admin-create-partner/index.ts`
+- Recebe: `{ email, nome?, whatsapp?, status?, limite_clientes?, limite_workspaces?, limite_creditos?, send_invite? }`.
+- Lê o JWT do header `Authorization`, valida que o chamador é admin via `has_role(uid, 'admin')`.
+- Se `send_invite=true` → `auth.admin.inviteUserByEmail(email)`; senão → `auth.admin.createUser({ email, email_confirm: true, password: <gerada> })` e retorna a senha temporária para o admin copiar.
+- Faz upsert em `profiles`, `parceiros` (com cotas/status/nome/whatsapp informados) e garante `user_roles` `user`.
+- Retorna `{ user_id, email, temp_password? }`.
+- CORS habilitado, listada como `verify_jwt = true` em `supabase/config.toml`.
 
-## 4. Adicionar item na sidebar `AppSidebar.tsx`
-Novo array `partnerItems` com `{ title: "Licenças", url: "/dashboard/licencas", icon: KeyRound }`, exibido quando `isAdmin || parceiro?.status === "ativo"`. Assim **admin e parceiros ativos** veem o item.
+### 2. `supabase/config.toml`
+Adicionar entrada da função (verify_jwt true, padrão).
 
-## Sem migration de banco
-As policies de `app_licenses` já cobrem insert/select/update para parceiros ativos. Nada de `service_role` no frontend.
+### 3. `src/pages/dashboard/Partners.tsx`
+- Botão **“Novo parceiro”** no header (visível só para admin — a página já é `AdminRoute`).
+- Novo `Dialog` de criação com campos:
+  - E-mail (obrigatório, validado com `zod`)
+  - Nome
+  - WhatsApp
+  - Status inicial (`pendente` | `ativo`) — default `ativo`
+  - Limite de clientes / workspaces / créditos (defaults 50/100/1000)
+  - Switch “Enviar convite por e-mail” (se desligado, mostra senha temporária após criação para copiar)
+- Chama `supabase.functions.invoke("admin-create-partner", { body })`.
+- Em sucesso: toast, reload da lista, se houver `temp_password` mostra modal com botão de copiar.
+- Validação client-side com `zod`, mensagens amigáveis para erros (RLS / duplicado / e-mail inválido).
 
-## Observação sobre admin
-O RLS atual de `app_licenses` permite SELECT só para o cliente dono, ou para o `partner_id` se for parceiro ativo. Admins **que não sejam parceiros** não verão linhas de outros parceiros nesta página. Se você quiser visão global de admin sobre todas as licenças, me avise depois que eu adiciono uma policy `app_licenses_admin_select`.
+### 4. Sem alterações de schema
+RLS, tabelas e triggers existentes cobrem o fluxo. A função usa service_role internamente — nada vaza para o frontend.
+
+## Segurança
+- `service_role` permanece apenas na edge function (`Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')`).
+- Função valida `admin` via JWT do chamador antes de qualquer operação.
+- Frontend usa apenas o client anon padrão.
+
+## Detalhes técnicos
+- Senha temporária: `crypto.randomUUID().slice(0,12) + "Aa1!"` para atender política padrão.
+- Idempotência: se o e-mail já existir no Auth, a função recupera o `user_id` existente e apenas atualiza/insere `parceiros` (sem sobrescrever cotas se já houver, a menos que o admin marque “sobrescrever”).
+- Trigger `handle_new_user` continua funcionando para auto-cadastros.

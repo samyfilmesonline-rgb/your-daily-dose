@@ -42,12 +42,14 @@ export default function CheckoutPixDialog({
   const [submitting, setSubmitting] = useState(false);
   const [pix, setPix] = useState<PixData | null>(null);
   const pollRef = useRef<number | null>(null);
+  const [activationToken, setActivationToken] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
       setStep("form");
       setPix(null);
       setSubmitting(false);
+      setActivationToken(null);
       if (pollRef.current) {
         window.clearInterval(pollRef.current);
         pollRef.current = null;
@@ -68,6 +70,7 @@ export default function CheckoutPixDialog({
           window.clearInterval(pollRef.current);
           pollRef.current = null;
         }
+        if (data?.activationToken) setActivationToken(data.activationToken as string);
         setStep("paid");
       }
     }, 5000);
@@ -232,20 +235,27 @@ export default function CheckoutPixDialog({
               <DialogDescription>
                 Sua licença de {pack.credits.toLocaleString("pt-BR")} créditos foi criada
                 e vinculada ao e-mail <strong>{email}</strong>.
+                {activationToken
+                  ? " Agora crie sua senha para acessar o painel."
+                  : ""}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 mt-2">
               <p className="text-sm">
-                Acesse o painel com este e-mail para começar a usar seus créditos.
+                {activationToken
+                  ? "Ative sua conta e escolha um avatar para entrar na Matrix."
+                  : "Acesse o painel com este e-mail para começar a usar seus créditos."}
               </p>
               <Button
                 className="w-full"
                 onClick={() => {
                   onOpenChange(false);
-                  window.location.href = "/auth";
+                  window.location.href = activationToken
+                    ? `/ativar?token=${activationToken}`
+                    : "/auth";
                 }}
               >
-                Acessar painel
+                {activationToken ? "Ativar minha conta" : "Acessar painel"}
               </Button>
             </div>
           </>

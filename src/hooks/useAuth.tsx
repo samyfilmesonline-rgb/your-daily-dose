@@ -116,11 +116,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             .maybeSingle()
             .then(({ data }) => setIsAdmin(!!data));
           fetchParceiro(s.user.id);
+          fetchProfile(s.user.id);
           fetchTabPermissions(s.user.id);
         }, 0);
       } else {
         setIsAdmin(false);
         setParceiro(null);
+        setProfile(null);
         setTabPermissions(new Set());
       }
     });
@@ -136,6 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .maybeSingle()
           .then(({ data: r }) => setIsAdmin(!!r));
         fetchParceiro(data.session.user.id);
+        fetchProfile(data.session.user.id);
         fetchTabPermissions(data.session.user.id);
       }
     });
@@ -152,6 +155,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         parceiro,
         refreshParceiro: async () => {
           if (session?.user) await fetchParceiro(session.user.id);
+        },
+        profile,
+        refreshProfile: async () => {
+          if (session?.user) await fetchProfile(session.user.id);
         },
         tabPermissions,
         refreshTabPermissions: async () => {

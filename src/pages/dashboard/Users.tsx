@@ -8,8 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Search, Shield, ShieldOff, Users as UsersIcon, Crown, RefreshCw } from "lucide-react";
+import { Search, Shield, ShieldOff, Users as UsersIcon, Crown, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
+import TabPermissionsDialog from "@/components/dashboard/users/TabPermissionsDialog";
 
 type Profile = { id: string; email: string; criado_em: string };
 type Role = { user_id: string; role: "admin" | "user" };
@@ -21,6 +22,7 @@ export default function Users() {
   const [counts, setCounts] = useState<Record<string, { contas: number; ws: number }>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [permTarget, setPermTarget] = useState<{ id: string; email: string } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -173,14 +175,23 @@ export default function Users() {
                       <TableCell className="text-center">{c.contas}</TableCell>
                       <TableCell className="text-center">{c.ws}</TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant={admin ? "outline" : "default"}
-                          onClick={() => toggleAdmin(p.id, admin)}
-                          disabled={admin && p.id === user?.id}
-                        >
-                          {admin ? (<><ShieldOff className="h-4 w-4 mr-1" /> Remover admin</>) : (<><Shield className="h-4 w-4 mr-1" /> Promover</>)}
-                        </Button>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setPermTarget({ id: p.id, email: p.email })}
+                          >
+                            <SlidersHorizontal className="h-4 w-4 mr-1" /> Permissões
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={admin ? "outline" : "default"}
+                            onClick={() => toggleAdmin(p.id, admin)}
+                            disabled={admin && p.id === user?.id}
+                          >
+                            {admin ? (<><ShieldOff className="h-4 w-4 mr-1" /> Remover admin</>) : (<><Shield className="h-4 w-4 mr-1" /> Promover</>)}
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -190,6 +201,13 @@ export default function Users() {
           </div>
         </CardContent>
       </Card>
+
+      <TabPermissionsDialog
+        open={!!permTarget}
+        onOpenChange={(v) => !v && setPermTarget(null)}
+        userId={permTarget?.id ?? null}
+        userEmail={permTarget?.email}
+      />
     </div>
   );
 }

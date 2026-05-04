@@ -14,6 +14,16 @@ export type Parceiro = {
   creditos_consumidos: number;
 };
 
+export type Profile = {
+  id: string;
+  email: string;
+  nome: string | null;
+  whatsapp: string | null;
+  avatar_url: string | null;
+  criado_em: string;
+  onboarding_completed: boolean;
+};
+
 type AuthContextType = {
   session: Session | null;
   user: User | null;
@@ -21,6 +31,8 @@ type AuthContextType = {
   isAdmin: boolean;
   parceiro: Parceiro | null;
   refreshParceiro: () => Promise<void>;
+  profile: Profile | null;
+  refreshProfile: () => Promise<void>;
   tabPermissions: Set<string>;
   refreshTabPermissions: () => Promise<void>;
   isActivePartner: boolean;
@@ -36,6 +48,8 @@ const AuthContext = createContext<AuthContextType>({
   isAdmin: false,
   parceiro: null,
   refreshParceiro: async () => {},
+  profile: null,
+  refreshProfile: async () => {},
   tabPermissions: new Set<string>(),
   refreshTabPermissions: async () => {},
   isActivePartner: false,
@@ -49,6 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [parceiro, setParceiro] = useState<Parceiro | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [tabPermissions, setTabPermissions] = useState<Set<string>>(new Set());
   const [viewAs, setViewAsState] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
@@ -68,6 +83,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .eq("user_id", uid)
       .maybeSingle();
     setParceiro((data as Parceiro) ?? null);
+  };
+
+  const fetchProfile = async (uid: string) => {
+    const { data } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", uid)
+      .maybeSingle();
+    setProfile((data as Profile) ?? null);
   };
 
   const fetchTabPermissions = async (uid: string) => {

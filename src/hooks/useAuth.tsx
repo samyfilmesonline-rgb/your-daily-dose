@@ -21,6 +21,9 @@ type AuthContextType = {
   isAdmin: boolean;
   parceiro: Parceiro | null;
   refreshParceiro: () => Promise<void>;
+  tabPermissions: Set<string>;
+  refreshTabPermissions: () => Promise<void>;
+  isActivePartner: boolean;
   viewAs: string | null;
   setViewAs: (id: string | null) => void;
   signOut: () => Promise<void>;
@@ -33,6 +36,9 @@ const AuthContext = createContext<AuthContextType>({
   isAdmin: false,
   parceiro: null,
   refreshParceiro: async () => {},
+  tabPermissions: new Set<string>(),
+  refreshTabPermissions: async () => {},
+  isActivePartner: false,
   viewAs: null,
   setViewAs: () => {},
   signOut: async () => {},
@@ -43,6 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [parceiro, setParceiro] = useState<Parceiro | null>(null);
+  const [tabPermissions, setTabPermissions] = useState<Set<string>>(new Set());
   const [viewAs, setViewAsState] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     return localStorage.getItem("viewAs");
@@ -63,6 +70,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setParceiro((data as Parceiro) ?? null);
   };
 
+  const fetchTabPermissions = async (uid: string) => {
+    const { data } = await supabase
+      .from("tab_permissions")
+      .select("tab_key")
+      .eq("user_id", uid);
+    setTabPermissions(new Set((data ?? []).map((r: any) => r.tab_key as string)));
+  };
+
   useEffect(() => {
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
       setSession(s);
@@ -77,10 +92,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             .maybeSingle()
             .then(({ data }) => setIsAdmin(!!data));
           fetchParceiro(s.user.id);
+          fetchTabPermissions(s.user.id);
         }, 0);
       } else {
         setIsAdmin(false);
         setParceiro(null);
+        setTabPermissions(new Set());
       }
     });
     supabase.auth.getSession().then(({ data }) => {
@@ -95,6 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .maybeSingle()
           .then(({ data: r }) => setIsAdmin(!!r));
         fetchParceiro(data.session.user.id);
+        fetchTabPermissions(data.session.user.id);
       }
     });
     return () => sub.subscription.unsubscribe();
@@ -111,6 +129,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshParceiro: async () => {
           if (session?.user) await fetchParceiro(session.user.id);
         },
+        tabPermissions,
+        refreshTabPermissions: async () => {
+          if (session?.user) await fetchTabPermissions(session.user.id);
+        },
+        isActivePartner: parceiro?.status === "ativo",
         viewAs: isAdmin ? viewAs : null,
         setViewAs,
         signOut: async () => {

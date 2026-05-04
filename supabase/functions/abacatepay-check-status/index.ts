@@ -44,7 +44,11 @@ Deno.serve(async (req) => {
     // Já paga: retorna direto.
     if (charge.status === "paid") {
       return new Response(
-        JSON.stringify({ status: "paid", licenseCreated: !!charge.license_id }),
+        JSON.stringify({
+          status: "paid",
+          licenseCreated: !!charge.license_id,
+          activationToken: charge.activation_token ?? null,
+        }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -87,18 +91,29 @@ Deno.serve(async (req) => {
         licenseId = license?.id ?? null;
       }
 
+      // Gera activation_token apenas para fluxo público (sem partner_user_id)
+      const activationToken = !charge.partner_user_id
+        ? (charge.activation_token ?? crypto.randomUUID().replace(/-/g, ""))
+        : null;
+
       await supabase
         .from("pix_charges")
         .update({
           status: "paid",
           paid_at: new Date().toISOString(),
           license_id: licenseId,
+          activation_token: activationToken,
           raw_payload: remote as unknown as Record<string, unknown>,
         })
         .eq("tx_id", txId);
 
       return new Response(
-        JSON.stringify({ status: "paid", licenseCreated: !!licenseId, creditsAdded: charge.partner_user_id ? pack.credits : 0 }),
+        JSON.stringify({
+          status: "paid",
+          licenseCreated: !!licenseId,
+          creditsAdded: charge.partner_user_id ? pack.credits : 0,
+          activationToken,
+        }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

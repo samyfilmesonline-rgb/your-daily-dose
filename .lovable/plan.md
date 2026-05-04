@@ -1,162 +1,65 @@
-
 ## Objetivo
 
-Criar uma landing page de vendas pública em `/vendas` (e também como rota raiz `/` opcional) com o mesmo visual da Matrix Farms (verde neon, MatrixRain, glitch text), vendendo **pacotes de créditos Lovable**. Pagamento via **Pix usando AbacatePay**. Após pagamento confirmado, uma licença é criada automaticamente em `app_licenses` vinculada ao email do comprador.
+Atualizar a página `/vendas` com os 8 pacotes oficiais da tabela enviada e deixar bem claro o limite de **200 créditos por conta a cada 24h**, reforçando o ângulo de "compre pacotes maiores e use em várias contas / revenda".
 
-## Pacotes de créditos (sugestão inicial — editáveis no código)
+## 1. Atualizar pacotes no banco (`credit_packs`)
 
-| Pacote | Créditos | Preço (R$) | Destaque |
-|--------|----------|------------|----------|
-| Starter | 100 | 47,00 | — |
-| Pro | 500 | 197,00 | Mais popular |
-| Power | 1000 | 347,00 | Melhor custo/crédito |
-| Mega | 2500 | 747,00 | — |
+Substituir os pacotes existentes pelos da imagem:
 
-Os valores ficam em uma constante `CREDIT_PACKS` em `src/lib/credit-packs.ts` para ajuste fácil.
+| Créditos | Preço     | R$/crédito | Marcar popular? |
+|----------|-----------|------------|-----------------|
+| 100      | R$ 15,00  | R$ 0,150   | —               |
+| 200      | R$ 25,00  | R$ 0,125   | —               |
+| 300      | R$ 35,00  | R$ 0,117   | —               |
+| 500      | R$ 55,00  | R$ 0,110   | ✓ (popular)     |
+| 1000     | R$ 85,00  | R$ 0,085   | —               |
+| 2000     | R$ 155,00 | R$ 0,078   | —               |
+| 3000     | R$ 215,00 | R$ 0,072   | —               |
+| 5000     | R$ 300,00 | R$ 0,060   | ✓ (melhor custo)|
 
-## Estrutura visual (réplica Matrix Farms)
+Operação: `DELETE` nos `credit_packs` atuais e `INSERT` dos 8 novos com `display_order` 1–8, `price_cents` em centavos e `is_active=true`. (Feito via tool de insert/update — não é alteração de schema.)
 
-1. **Hero** — `MATRIX CREDITS` em glitch text + subtítulo "Compre créditos Lovable sem assinatura mensal" + CTA "QUERO MEUS CRÉDITOS".
-2. **Como funciona** — 3 passos (Escolha o pacote → Pague no Pix → Receba acesso instantâneo).
-3. **Vídeo** — placeholder de VSL (player simples; URL configurável).
-4. **Depoimentos** — Marquee horizontal com cards (mockados).
-5. **Pricing** — Cards dos 4 pacotes, com badge "POPULAR" no Pro, botão "COMPRAR AGORA".
-6. **FAQ** — Accordion com 5 perguntas (segurança, garantia, prazo de entrega, etc.).
-7. **Footer** — links institucionais simples + login.
+> Nota: o tipo `CreditPack` no front já cobre `is_popular`. Para diferenciar "Mais popular" (500) de "Melhor custo" (5000), adiciono um campo opcional `badge_label` no card vindo de uma coluna nova `badge_label text` em `credit_packs` (migration mínima). Se preferir não mexer no schema, uso só `is_popular` e marco apenas o 500.
 
-Tema: tudo no verde neon Matrix usando o design system atual (já tem `--primary` configurável). Vou injetar os tokens HSL Matrix (`120 100% 45%`) num CSS scoped à página `/vendas` para não alterar o tema do dashboard.
+## 2. Aviso do limite 200/dia (sem banner no topo)
 
-Componentes novos reutilizáveis:
-- `src/components/landing/MatrixRain.tsx` — canvas com chuva matrix (FPS throttled).
-- `src/components/landing/GlitchText.tsx` — efeito glitch leve.
-- `src/components/landing/Marquee.tsx` — depoimentos rolando.
-- `src/components/landing/PricingCard.tsx` — card de pacote.
+Conforme escolhido: **apenas nos cards + FAQ**.
 
-## Fluxo de pagamento (AbacatePay + Pix)
+### `PricingCard.tsx`
+- Adicionar uma faixa destacada dentro de cada card:
+  > "Limite Lovable: 200 créditos/conta a cada 24h. Use o pacote em **várias contas** ou revenda."
+- Calcular e mostrar **"≈ X dias para consumir em 1 conta"** = `Math.ceil(credits / 200)` (ex.: 1000 créditos = ~5 dias em 1 conta, ou 1 dia distribuindo em 5 contas).
+- Reorganizar a lista de features para incluir:
+  - `{credits} créditos Lovable`
+  - `{R$/crédito} por crédito` (já existe)
+  - `Use em várias contas Lovable`
+  - `Ideal para revenda` (apenas em pacotes ≥ 1000)
+  - `Liberação automática via Pix`
 
-```text
-Cliente clica COMPRAR
-   ↓
-Modal CheckoutDialog: nome + email + WhatsApp
-   ↓
-POST → edge function `abacatepay-create-pix`
-   ↓
-AbacatePay retorna { qrCode, copiaECola, txId, amount }
-   ↓
-Modal exibe QR Code + botão "Copiar Pix"
-   ↓
-Frontend faz polling (5s) em `abacatepay-check-status?txId=...`
-   ↓
-Quando status = PAID:
-   - edge function cria registro em `app_licenses`
-     (customer_email, customer_name, plan_code='credits_<qty>',
-      plan_name='Pacote N créditos', max_machines=1, status='active',
-      notes='Pagamento Pix Abacate <txId>')
-   - Frontend mostra tela de sucesso com instruções de acesso
-```
+### `Vendas.tsx` — FAQ
+Adicionar 2 novas perguntas no array `faqs`:
+1. **"Existe limite de quantos créditos posso usar por dia?"**
+   Resposta: a Lovable libera no máximo **200 créditos por conta a cada 24h**. Você pode recarregar valores menores que 200 quando quiser, desde que não ultrapasse esse teto por conta no período.
+2. **"Posso usar o mesmo pacote em mais de uma conta Lovable?"**
+   Resposta: sim. O limite de 200/dia é **por conta**, não por compra. Comprando pacotes maiores você garante o melhor custo por crédito e pode distribuir entre várias contas próprias ou revender.
 
-## Edge Functions
+Também ajustar o subtítulo da seção de pricing para:
+> "Quanto maior o pacote, menor o custo por crédito. Use em várias contas (limite Lovable: 200/conta a cada 24h)."
 
-1. **`abacatepay-create-pix`** (público, sem JWT)
-   - Input validado com Zod: `{ packId, customerName, customerEmail, customerWhatsapp }`
-   - Busca o pacote em uma tabela `credit_packs` (ou usa constante shared) e cria cobrança na API AbacatePay.
-   - Salva uma linha em nova tabela `pix_charges` com status `pending`.
-   - Retorna `{ txId, qrCode, copiaECola, amount, expiresAt }`.
+## 3. Layout dos cards
 
-2. **`abacatepay-check-status`** (público)
-   - Input: `{ txId }`.
-   - Consulta status da cobrança na API Abacate.
-   - Se PAID e ainda não processado → cria `app_licenses` e marca `pix_charges.status='paid'`.
-   - Retorna `{ status: 'pending' | 'paid' | 'expired', licenseCreated: bool }`.
+Hoje o grid é `lg:grid-cols-4` e funcionava com 4 pacotes. Com 8, mudar para:
+- `sm:grid-cols-2 lg:grid-cols-4` (2 linhas de 4)
+- Marcar **500 créditos** como `is_popular` (badge "Mais popular")
+- Marcar **5000 créditos** com badge "Melhor custo" (via novo `badge_label` ou via flag local no front baseada em `credits === 5000`)
 
-3. **`abacatepay-webhook`** (público, sem JWT)
-   - Endpoint que receberá callbacks da AbacatePay (configurar URL no painel deles).
-   - Mesma lógica de criação de licença, idempotente por `txId`.
+## Detalhes técnicos
 
-Secret necessário: **`ABACATEPAY_API_KEY`** (será solicitado depois que o plano for aprovado).
+- **DB**: opção A (recomendada) — migration adicionando `badge_label text` em `credit_packs` + reset dos dados via insert tool. Opção B — sem migration, hardcode "Melhor custo" no `PricingCard` quando `pack.credits >= 5000`.
+- **Edge functions**: nenhuma alteração — `abacatepay-create-pix` continua lendo `credit_packs` por `id`, e `plan_code` no `app_licenses` será `credits_{n}` automaticamente (já implementado).
+- **Tipos**: regenerados automaticamente após a migration; `src/lib/credit-packs.ts` ganha o campo opcional `badge_label?: string | null`.
 
-## Mudanças no banco
+## Fora de escopo
 
-Migration nova:
-
-```sql
--- Tabela de pacotes de créditos (admin pode editar via SQL ou futuro CRUD)
-create table public.credit_packs (
-  id text primary key,            -- 'starter','pro','power','mega'
-  name text not null,
-  credits integer not null,
-  price_cents integer not null,
-  is_popular boolean not null default false,
-  is_active boolean not null default true,
-  display_order integer not null default 0,
-  created_at timestamptz not null default now()
-);
-alter table public.credit_packs enable row level security;
-create policy credit_packs_public_read on public.credit_packs
-  for select to anon, authenticated using (is_active = true);
-create policy credit_packs_admin_write on public.credit_packs
-  for all to authenticated
-  using (has_role(auth.uid(),'admin')) with check (has_role(auth.uid(),'admin'));
-
--- Cobranças Pix
-create table public.pix_charges (
-  id uuid primary key default gen_random_uuid(),
-  tx_id text unique not null,        -- id retornado pela Abacate
-  pack_id text not null references public.credit_packs(id),
-  customer_name text not null,
-  customer_email text not null,
-  customer_whatsapp text,
-  amount_cents integer not null,
-  status text not null default 'pending', -- pending | paid | expired | failed
-  license_id uuid references public.app_licenses(id),
-  raw_payload jsonb,
-  paid_at timestamptz,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-alter table public.pix_charges enable row level security;
--- nenhuma policy pública: só edge functions (service role) escrevem/leem
-create policy pix_charges_admin_read on public.pix_charges
-  for select to authenticated using (has_role(auth.uid(),'admin'));
-
--- Seed dos pacotes
-insert into public.credit_packs (id,name,credits,price_cents,is_popular,display_order) values
-  ('starter','Starter',100,4700,false,1),
-  ('pro','Pro',500,19700,true,2),
-  ('power','Power',1000,34700,false,3),
-  ('mega','Mega',2500,74700,false,4);
-```
-
-## Mudanças de rotas (`src/App.tsx`)
-
-```tsx
-<Route path="/vendas" element={<Vendas />} />
-```
-
-(Não vou mexer na home `/` automaticamente; se quiser que a landing seja a raiz, é só trocar depois.)
-
-## Arquivos a criar
-
-- `src/pages/Vendas.tsx` — página principal.
-- `src/components/landing/MatrixRain.tsx`
-- `src/components/landing/GlitchText.tsx`
-- `src/components/landing/Marquee.tsx`
-- `src/components/landing/PricingCard.tsx`
-- `src/components/landing/CheckoutPixDialog.tsx` — modal com formulário + QR Code + polling.
-- `src/lib/credit-packs.ts` — tipos compartilhados.
-- `supabase/functions/abacatepay-create-pix/index.ts`
-- `supabase/functions/abacatepay-check-status/index.ts`
-- `supabase/functions/abacatepay-webhook/index.ts`
-- Migration SQL (acima).
-
-## Arquivos a editar
-
-- `src/App.tsx` — registrar rota `/vendas`.
-- `supabase/config.toml` — declarar as 3 edge functions com `verify_jwt = false`.
-
-## Pontos de atenção
-
-- **Secret AbacatePay**: depois que aprovar este plano, vou pedir a `ABACATEPAY_API_KEY` antes de implementar as edge functions.
-- **Webhook URL**: depois do deploy, vou te passar a URL para colar no painel da AbacatePay.
-- **Licença vinculada por email**: como o comprador pode não ter conta ainda, a licença é criada com `customer_email` e `id_do_usuario = null`. Quando ele se cadastrar com o mesmo email, a RLS já permite que ele "reivindique" (update do `id_do_usuario`). Isso já está suportado pelo trigger `app_licenses_guard_authenticated_updates`.
-- **Teste sem pagar de verdade**: a AbacatePay tem ambiente sandbox; vou usar a key sandbox primeiro.
+- Não mexo no fluxo de checkout, webhook, ou Auth.
+- Não crio painel admin para editar pacotes (já dá para editar direto na tabela `credit_packs`).

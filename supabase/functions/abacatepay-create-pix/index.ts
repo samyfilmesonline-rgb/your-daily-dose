@@ -16,6 +16,7 @@ const BodySchema = z.object({
   customerName: z.string().min(2).max(120),
   customerEmail: z.string().email(),
   customerWhatsapp: z.string().max(40).optional(),
+  customerTaxId: z.string().min(11).max(20),
 });
 
 Deno.serve(async (req) => {
@@ -31,7 +32,14 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
-    const { packId, customerName, customerEmail, customerWhatsapp } = parsed.data;
+    const { packId, customerName, customerEmail, customerWhatsapp, customerTaxId } = parsed.data;
+    const taxIdDigits = customerTaxId.replace(/\D/g, "");
+    if (taxIdDigits.length !== 11 && taxIdDigits.length !== 14) {
+      return new Response(
+        JSON.stringify({ error: "CPF/CNPJ inválido" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -60,6 +68,7 @@ Deno.serve(async (req) => {
         name: customerName,
         email: customerEmail.toLowerCase(),
         cellphone: customerWhatsapp,
+        taxId: taxIdDigits,
       },
     });
 

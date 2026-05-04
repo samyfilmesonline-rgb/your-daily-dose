@@ -276,6 +276,7 @@ export type Database = {
       }
       pix_charges: {
         Row: {
+          activation_token: string | null
           amount_cents: number
           created_at: string
           customer_email: string
@@ -292,6 +293,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          activation_token?: string | null
           amount_cents: number
           created_at?: string
           customer_email: string
@@ -308,6 +310,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          activation_token?: string | null
           amount_cents?: number
           created_at?: string
           customer_email?: string
@@ -342,19 +345,31 @@ export type Database = {
       }
       profiles: {
         Row: {
+          avatar_url: string | null
           criado_em: string
           email: string
           id: string
+          nome: string | null
+          onboarding_completed: boolean
+          whatsapp: string | null
         }
         Insert: {
+          avatar_url?: string | null
           criado_em?: string
           email: string
           id: string
+          nome?: string | null
+          onboarding_completed?: boolean
+          whatsapp?: string | null
         }
         Update: {
+          avatar_url?: string | null
           criado_em?: string
           email?: string
           id?: string
+          nome?: string | null
+          onboarding_completed?: boolean
+          whatsapp?: string | null
         }
         Relationships: []
       }

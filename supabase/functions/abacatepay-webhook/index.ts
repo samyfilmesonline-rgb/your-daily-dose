@@ -90,12 +90,17 @@ Deno.serve(async (req) => {
         licenseId = license?.id ?? null;
       }
 
+      const activationToken = !(charge as { partner_user_id?: string | null }).partner_user_id
+        ? ((charge as { activation_token?: string | null }).activation_token ?? crypto.randomUUID().replace(/-/g, ""))
+        : null;
+
       await supabase
         .from("pix_charges")
         .update({
           status: "paid",
           paid_at: new Date().toISOString(),
           license_id: licenseId,
+          activation_token: activationToken,
           raw_payload: payload as unknown as Record<string, unknown>,
         })
         .eq("tx_id", txId);

@@ -1,212 +1,108 @@
-# Auditoria do banco + frontend — falhas encontradas
+# Sistema de Parceiros (revendedores) — plano
 
-Olhei o schema, RLS, dados reais e o código. **A estrutura está OK, mas os dados estão fora de sincronia** e há um bug visual no frontend. Não é nada quebrado de propósito — é falta de "cola" entre as 3 tabelas.
+## Conceito
 
-## O que encontrei
+```text
+Admin (você)
+  └─► gerencia Parceiros
+        ├─ aprova / desativa / exclui
+        ├─ define cotas (clientes, workspaces, créditos)
+        ├─ vê dashboard agregado de cada um
+        └─ "Ver como parceiro X" — entra na ótica dele
+Parceiro (revendedor)
+  └─► só vê e edita os próprios clientes/workspaces (RLS)
+        ├─ bloqueado até admin aprovar
+        ├─ bloqueado se atingir limite de créditos
+        └─ nunca acessa /dashboard/users nem dados de outros
+```
 
-### 1. CRÍTICO — `resumo_lovable_workspace` está dessincronizado com `execucoes_lovable`
+## Mudanças no banco (1 migration)
 
-Os números não batem:
+Nova tabela `parceiros` (1 linha por usuário, criada automaticamente no signup):
 
-| Workspace | Execuções reais (`execucoes_lovable`) | No resumo | Créditos reais | Resumo |
-|---|---|---|---|---|
-| `mar's Lovable` | **6** | 3 | **200** | 40 |
-| `Eeduardo's LovablePro` | 1 | 1 | 0 | 0 |
-| `Lucass2` | **1** | **AUSENTE** | 40 | — |
-| `marc's Lovable` | **1** | **AUSENTE** | 0 | — |
-| (sem nome) | 1 | (ignorado) | 0 | — |
+| campo | propósito |
+|---|---|
+| `user_id` (PK, FK auth.users) | o usuário |
+| `nome`, `whatsapp` | exibição no painel admin |
+| `status` enum: `pendente` / `ativo` / `suspenso` | sign-up cai em `pendente` |
+| `limite_clientes` int (default 50) | cota |
+| `limite_workspaces` int (default 100) | cota |
+| `limite_creditos` numeric (default 1000) | quanto pode farmar |
+| `creditos_consumidos` numeric (recalculado) | soma de `total_creditos_farmados` do resumo |
+| `aprovado_em`, `aprovado_por`, `criado_em`, `atualizado_em` | auditoria |
 
-**Causa:** o resumo é populado por um agente externo (app desktop). Não existe trigger no Postgres que mantenha o resumo atualizado quando uma execução é inserida/atualizada. Se o app falhar uma vez, o resumo nunca recupera.
+**RLS**:
+- Parceiro: SELECT/UPDATE só do próprio (campos editáveis: nome/whatsapp). Não pode mudar status nem cotas.
+- Admin: tudo.
 
-**O usuário vê dados errados** no painel: "Workspaces" mostra 2 quando há 4 reais; "Créditos farmados" mostra 40 quando o cliente farmou 200.
+**Triggers**:
+- No signup (`handle_new_user`): cria linha em `parceiros` com `status='pendente'`.
+- Em `execucoes_lovable` BEFORE INSERT: bloqueia se parceiro está `pendente`/`suspenso` ou se já atingiu `limite_creditos`. (Defesa em profundidade — o frontend também checa.)
+- Em `resumo_lovable_workspace` AFTER INSERT/UPDATE/DELETE: recalcula `creditos_consumidos` no `parceiros`.
+- Quando `creditos_consumidos >= limite_creditos`, vira `suspenso` automaticamente.
 
-### 2. CRÍTICO — Status `"falha"` não é reconhecido pelo frontend
-
-No banco os status reais são `falha` e `em_andamento`. Mas o frontend espera `concluido`, `limite`, `erro`, `em_andamento`. Resultado:
-
-- O badge de "Último status" mostra a string crua `"falha"` sem cor/ícone.
-- O filtro "Erro" não filtra nada (filtra `erro`, mas o banco tem `falha`).
-- Nas execuções concluídas com sucesso, qual é o status? Não há nenhuma no banco hoje, mas o código ainda espera `concluido`. Precisa alinhar com o que o app desktop realmente grava.
-
-### 3. MÉDIO — `execucoes_lovable.conta_id` nunca é preenchido
-
-10/10 execuções têm `conta_id = NULL`. A FK existe mas é inútil. O link entre execução e cliente é feito 100% por `email_lovable` (lookup em memória no frontend). Funciona, mas é frágil (case-sensitive, sem índice).
-
-### 4. BAIXO — Execução com `workspace_nome = NULL`
-
-1 execução não tem workspace. Some completamente do CRM (resumo exige `workspace_nome NOT NULL`). Tudo bem ignorar, mas vale registrar.
-
-### 5. OK — RLS, tipos, auth, layout
-
-Policies estão coerentes. `has_role` está SECURITY DEFINER. Tipos do Supabase estão atualizados. Não há recursão. Sem riscos de segurança novos.
-
----
-
-## Plano de correção
-
-### A. Banco — criar trigger de sincronização (migration)
-
-Trigger `AFTER INSERT/UPDATE/DELETE` em `execucoes_lovable` que faz UPSERT em `resumo_lovable_workspace` recalculando os totais a partir das execuções reais. Garante que o resumo **nunca mais** fica fora de sincronia, independente do app desktop.
-
+**Função helper**:
 ```sql
--- Recalcula a linha do resumo para um (id_do_usuario, email_lovable, workspace_nome)
-CREATE OR REPLACE FUNCTION public.recalc_resumo_lovable_workspace(
-  p_id_do_usuario uuid, p_email text, p_workspace text
-) RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE r RECORD;
-BEGIN
-  IF p_workspace IS NULL THEN RETURN; END IF;
-
-  SELECT
-    COUNT(*)::int AS total_execucoes,
-    COUNT(*) FILTER (WHERE status IN ('concluido','sucesso'))::int AS total_sucessos,
-    COUNT(*) FILTER (WHERE status = 'limite')::int AS total_limites,
-    COUNT(*) FILTER (WHERE status IN ('falha','erro'))::int AS total_falhas,
-    COALESCE(SUM(creditos_adicionados),0) AS total_creditos_farmados,
-    (ARRAY_AGG(creditos_finais ORDER BY iniciado_em DESC))[1] AS ultimo_creditos_finais,
-    (ARRAY_AGG(status ORDER BY iniciado_em DESC))[1] AS ultima_execucao_status,
-    (ARRAY_AGG(id ORDER BY iniciado_em DESC))[1] AS ultima_execucao_id,
-    MAX(atualizado_em) AS atualizado_em
-  INTO r
-  FROM execucoes_lovable
-  WHERE id_do_usuario = p_id_do_usuario
-    AND email_lovable = p_email
-    AND workspace_nome = p_workspace;
-
-  IF r.total_execucoes = 0 THEN
-    DELETE FROM resumo_lovable_workspace
-     WHERE id_do_usuario = p_id_do_usuario
-       AND email_lovable = p_email
-       AND workspace_nome = p_workspace;
-    RETURN;
-  END IF;
-
-  INSERT INTO resumo_lovable_workspace AS t
-    (id_do_usuario, email_lovable, workspace_nome,
-     total_execucoes, total_sucessos, total_limites, total_falhas,
-     total_creditos_farmados, ultimo_creditos_finais,
-     ultima_execucao_status, ultima_execucao_id, atualizado_em)
-  VALUES
-    (p_id_do_usuario, p_email, p_workspace,
-     r.total_execucoes, r.total_sucessos, r.total_limites, r.total_falhas,
-     r.total_creditos_farmados, r.ultimo_creditos_finais,
-     r.ultima_execucao_status, r.ultima_execucao_id, COALESCE(r.atualizado_em, now()))
-  ON CONFLICT (id_do_usuario, email_lovable, workspace_nome) DO UPDATE
-    SET total_execucoes = EXCLUDED.total_execucoes,
-        total_sucessos = EXCLUDED.total_sucessos,
-        total_limites = EXCLUDED.total_limites,
-        total_falhas = EXCLUDED.total_falhas,
-        total_creditos_farmados = EXCLUDED.total_creditos_farmados,
-        ultimo_creditos_finais = EXCLUDED.ultimo_creditos_finais,
-        ultima_execucao_status = EXCLUDED.ultima_execucao_status,
-        ultima_execucao_id = EXCLUDED.ultima_execucao_id,
-        atualizado_em = EXCLUDED.atualizado_em;
-END $$;
-
--- UNIQUE necessário para o ON CONFLICT
-ALTER TABLE resumo_lovable_workspace
-  ADD CONSTRAINT resumo_lovable_workspace_unico
-  UNIQUE (id_do_usuario, email_lovable, workspace_nome);
-
--- Trigger
-CREATE OR REPLACE FUNCTION public.tg_sync_resumo_lovable_workspace()
-RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-BEGIN
-  IF TG_OP = 'DELETE' THEN
-    PERFORM recalc_resumo_lovable_workspace(OLD.id_do_usuario, OLD.email_lovable, OLD.workspace_nome);
-  ELSE
-    PERFORM recalc_resumo_lovable_workspace(NEW.id_do_usuario, NEW.email_lovable, NEW.workspace_nome);
-    IF TG_OP='UPDATE' AND (OLD.email_lovable<>NEW.email_lovable OR COALESCE(OLD.workspace_nome,'')<>COALESCE(NEW.workspace_nome,'')) THEN
-      PERFORM recalc_resumo_lovable_workspace(OLD.id_do_usuario, OLD.email_lovable, OLD.workspace_nome);
-    END IF;
-  END IF;
-  RETURN NULL;
-END $$;
-
-CREATE TRIGGER trg_sync_resumo
-AFTER INSERT OR UPDATE OR DELETE ON execucoes_lovable
-FOR EACH ROW EXECUTE FUNCTION tg_sync_resumo_lovable_workspace();
-
--- Backfill imediato dos dados existentes
-INSERT INTO resumo_lovable_workspace (id_do_usuario,email_lovable,workspace_nome,total_execucoes,total_sucessos,total_limites,total_falhas,total_creditos_farmados,ultimo_creditos_finais,ultima_execucao_status,ultima_execucao_id,atualizado_em)
-SELECT id_do_usuario,email_lovable,workspace_nome,
-  COUNT(*),
-  COUNT(*) FILTER (WHERE status IN ('concluido','sucesso')),
-  COUNT(*) FILTER (WHERE status='limite'),
-  COUNT(*) FILTER (WHERE status IN ('falha','erro')),
-  COALESCE(SUM(creditos_adicionados),0),
-  (ARRAY_AGG(creditos_finais ORDER BY iniciado_em DESC))[1],
-  (ARRAY_AGG(status ORDER BY iniciado_em DESC))[1],
-  (ARRAY_AGG(id ORDER BY iniciado_em DESC))[1],
-  MAX(atualizado_em)
-FROM execucoes_lovable
-WHERE workspace_nome IS NOT NULL
-GROUP BY 1,2,3
-ON CONFLICT (id_do_usuario,email_lovable,workspace_nome) DO UPDATE SET
-  total_execucoes=EXCLUDED.total_execucoes,
-  total_sucessos=EXCLUDED.total_sucessos,
-  total_limites=EXCLUDED.total_limites,
-  total_falhas=EXCLUDED.total_falhas,
-  total_creditos_farmados=EXCLUDED.total_creditos_farmados,
-  ultimo_creditos_finais=EXCLUDED.ultimo_creditos_finais,
-  ultima_execucao_status=EXCLUDED.ultima_execucao_status,
-  ultima_execucao_id=EXCLUDED.ultima_execucao_id,
-  atualizado_em=EXCLUDED.atualizado_em;
-
--- Auto-preencher conta_id por email
-CREATE OR REPLACE FUNCTION public.tg_set_conta_id_execucoes()
-RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-BEGIN
-  IF NEW.conta_id IS NULL AND NEW.email_lovable IS NOT NULL THEN
-    SELECT id INTO NEW.conta_id
-    FROM contas_lovable
-    WHERE id_do_usuario = NEW.id_do_usuario
-      AND lower(email_lovable) = lower(NEW.email_lovable)
-    LIMIT 1;
-  END IF;
-  RETURN NEW;
-END $$;
-CREATE TRIGGER trg_set_conta_id BEFORE INSERT OR UPDATE ON execucoes_lovable
-FOR EACH ROW EXECUTE FUNCTION tg_set_conta_id_execucoes();
-
-UPDATE execucoes_lovable e SET conta_id = c.id
-  FROM contas_lovable c
- WHERE e.conta_id IS NULL AND e.id_do_usuario=c.id_do_usuario
-   AND lower(e.email_lovable)=lower(c.email_lovable);
-
--- Índices
-CREATE INDEX IF NOT EXISTS idx_exec_user_email_ws ON execucoes_lovable(id_do_usuario,email_lovable,workspace_nome);
-CREATE INDEX IF NOT EXISTS idx_resumo_email ON resumo_lovable_workspace(lower(email_lovable));
+public.parceiro_ativo(uuid) returns boolean  -- usada em RLS de inserts
 ```
 
-### B. Frontend — alinhar status (`Workspaces.tsx`, `Overview.tsx`)
+**Bloqueio no front também** (rápido + UX): adicionar à RLS de INSERT em `contas_lovable`/`execucoes_lovable` o predicado `AND public.parceiro_ativo(auth.uid())`.
 
-Aceitar tanto `falha` quanto `erro` (mesma cor vermelha) e tanto `concluido` quanto `sucesso`. Fica:
+## Mudanças no frontend
 
+### Hook `useAuth`
+Buscar também o registro `parceiros` e expor:
 ```ts
-const statusMeta = {
-  em_andamento: { label: "Em andamento", cls: "amber...", Icon: Activity },
-  concluido:    { label: "Sucesso",      cls: "primary...", Icon: CheckCircle2 },
-  sucesso:      { label: "Sucesso",      cls: "primary...", Icon: CheckCircle2 },
-  limite:       { label: "Limite",       cls: "blue...", Icon: AlertCircle },
-  erro:         { label: "Erro",         cls: "destructive...", Icon: AlertTriangle },
-  falha:        { label: "Falha",        cls: "destructive...", Icon: AlertTriangle },
-};
+{ session, user, isAdmin, parceiro: { status, limites, creditos_consumidos }, loading }
 ```
 
-E o filtro "Erro" passa a usar `IN ('erro','falha')` em memória. Idem para "Sucesso".
+### Telas novas / alteradas
 
-### C. Não muda
-- Schema das outras tabelas, RLS, auth, sidebar, página de Usuários.
-- O app desktop pode continuar gravando direto no resumo se quiser — a trigger faz UPSERT idempotente, não conflita.
+1. **`/dashboard/parceiros`** (nova, admin-only)
+   - Lista todos os parceiros com: nome, email, status, clientes (count), workspaces (count), créditos consumidos / limite (barra de progresso), botão "Ver como".
+   - Ações: Aprovar (pendente→ativo), Suspender, Reativar, Excluir, Editar cotas.
+   - Cards no topo: Total / Pendentes / Ativos / Suspensos.
 
----
+2. **`/dashboard/parceiros/:id`** (admin-only)
+   - Detalhes de um parceiro: cotas editáveis, KPIs, atalho "Ver dados deste parceiro" (vai para Overview com `?as=<user_id>`).
 
-## Resumo do que o usuário ganha
+3. **Sidebar**: nova entrada "Parceiros" só aparece se `isAdmin`. A entrada "Usuários" fica para gestão de roles (já existe).
 
-- **Painel sempre correto**: créditos, contagens e status no CRM passam a refletir a realidade do banco automaticamente, mesmo que o agente externo falhe.
-- **Badges e filtros funcionam**: `falha` deixa de aparecer como texto cru, ganha cor vermelha e o filtro "Erro" passa a achá-lo.
-- **Link cliente↔execução firme**: `conta_id` deixa de ser NULL, abrindo caminho para JOINs server-side no futuro (sem mudar nada agora).
+4. **Modo "Ver como" (admin)**
+   - Query param `?as=<user_id>` em qualquer página do dashboard.
+   - Banner amarelo no topo: "Vendo como Fulano · sair desse modo".
+   - As queries de admin filtram por `id_do_usuario = paramAs`. Não muda permissão real, só ponto de vista.
 
-Posso aplicar as 3 correções (migration + trigger + ajustes no frontend) numa única passada após sua aprovação.
+5. **Tela de bloqueio para parceiro**
+   - Se `parceiro.status === 'pendente'`: mostra "Aguardando aprovação do administrador" em vez do dashboard.
+   - Se `parceiro.status === 'suspenso'`: mostra "Conta suspensa — limite de créditos atingido / contate admin".
+   - Aplicado no `ProtectedRoute` (ou novo wrapper `PartnerGate`).
+
+6. **Indicador de cota no header**
+   - Pequena barra "Créditos: 320 / 1000" sempre visível para parceiro. Vermelha quando >80%.
+
+7. **Bloqueio de criação**
+   - Botão "Novo cliente" desabilitado se atingiu `limite_clientes`. Idem para criar workspace/execução.
+
+### Auth (`/auth`)
+- Já tem signup. Após `signUp`, mostra mensagem: "Cadastro recebido. Aguardando aprovação do administrador. Você receberá acesso assim que aprovado."
+- Login funciona normalmente, mas o gate decide o que mostrar.
+
+## Nomenclatura
+- Tabela: `parceiros`. Texto na UI: **"Parceiro"** / "Parceiros".
+- A página atual `/dashboard/users` continua existindo só para gestão de **roles do sistema** (admin/user). Renomear visualmente para "Administradores" para evitar confusão.
+
+## Não muda
+- Estrutura de `contas_lovable`, `execucoes_lovable`, `resumo_lovable_workspace`, `user_roles`, `profiles`.
+- RLS existente continua válido (parceiros já só viam o próprio por `id_do_usuario`).
+- App desktop não precisa mudar — ele continua escrevendo execuções, e a trigger de bloqueio o impede automaticamente quando o parceiro estourar a cota.
+
+## Ordem de execução
+1. Migration: tabela `parceiros` + função `parceiro_ativo` + triggers + RLS + backfill (criar linha pendente para usuários existentes; **você fica `ativo` automaticamente por ser admin**).
+2. Hook `useAuth` retorna `parceiro`.
+3. `PartnerGate` (bloqueia pendente/suspenso).
+4. Página `/dashboard/parceiros` (admin) + sidebar item.
+5. Modo "Ver como" + banner.
+6. Indicador de cota + bloqueios de criação no front.
+
+Posso seguir direto após sua aprovação.

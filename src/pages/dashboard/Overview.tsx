@@ -209,8 +209,14 @@ export default function Overview() {
             {workspaces.slice(0, 5).map((w) => {
               const conta = contasByEmail.get(w.email_lovable.toLowerCase());
               const variant =
-                w.ultima_execucao_status === "concluido" ? "default" :
-                w.ultima_execucao_status === "erro" ? "destructive" : "secondary";
+                (w.ultima_execucao_status === "concluido" || w.ultima_execucao_status === "sucesso") ? "default" :
+                (w.ultima_execucao_status === "erro" || w.ultima_execucao_status === "falha") ? "destructive" : "secondary";
+              const label =
+                w.ultima_execucao_status === "concluido" || w.ultima_execucao_status === "sucesso" ? "Sucesso" :
+                w.ultima_execucao_status === "erro" || w.ultima_execucao_status === "falha" ? "Falha" :
+                w.ultima_execucao_status === "limite" ? "Limite" :
+                w.ultima_execucao_status === "em_andamento" ? "Em andamento" :
+                (w.ultima_execucao_status ?? "—");
               return (
                 <li key={w.id} className="py-3 flex items-center justify-between text-sm gap-3">
                   <div className="min-w-0">
@@ -219,7 +225,7 @@ export default function Overview() {
                       {conta?.nome ?? w.email_lovable}
                     </div>
                   </div>
-                  <Badge variant={variant as any}>{w.ultima_execucao_status ?? "—"}</Badge>
+                  <Badge variant={variant as any}>{label}</Badge>
                 </li>
               );
             })}

@@ -9,6 +9,7 @@ import Index from "./pages/Index.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import Auth from "./pages/Auth.tsx";
 import Vendas from "./pages/Vendas.tsx";
+import Ativar from "./pages/Ativar.tsx";
 import DashboardLayout from "./components/dashboard/DashboardLayout.tsx";
 import Overview from "./pages/dashboard/Overview.tsx";
 import Accounts from "./pages/dashboard/Accounts.tsx";
@@ -35,6 +36,7 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/auth" element={<Auth />} />
           <Route path="/vendas" element={<Vendas />} />
+          <Route path="/ativar" element={<Ativar />} />
           <Route
             path="/dashboard"
             element={

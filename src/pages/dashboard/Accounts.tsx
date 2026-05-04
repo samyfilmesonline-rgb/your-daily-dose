@@ -7,6 +7,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from "@/components/ui/card";
@@ -26,7 +28,7 @@ import {
 } from "@/components/ui/form";
 import {
   Copy, Eye, EyeOff, MessageCircle, Pencil, Plus, RefreshCw, Search,
-  Trash2, Users, Sparkles, Activity, Boxes,
+  Trash2, Users, Sparkles, Activity, Boxes, CalendarClock, AlertCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -36,6 +38,13 @@ type Cliente = {
   whatsapp: string | null;
   email_lovable: string;
   senha_lovable: string;
+  farm_auto_ativo: boolean;
+  meta_creditos_total: number;
+  creditos_farmados_total: number;
+  ultimo_farm_sucesso_em: string | null;
+  proximo_farm_em: string | null;
+  ultimo_erro_farm: string | null;
+  workspace_padrao: string | null;
   criado_em: string | null;
   atualizado_em: string | null;
 };
@@ -45,6 +54,9 @@ const schema = z.object({
   whatsapp: z.string().trim().min(8, "WhatsApp inválido").max(20, "Máximo 20 caracteres"),
   email_lovable: z.string().trim().email("Email inválido").max(255),
   senha_lovable: z.string().min(4, "Mínimo 4 caracteres").max(200),
+  farm_auto_ativo: z.boolean(),
+  meta_creditos_total: z.coerce.number().min(0, "Meta inválida").max(10_000_000),
+  workspace_padrao: z.string().trim().max(120, "Máximo 120 caracteres").optional().or(z.literal("")),
 });
 type FormValues = z.infer<typeof schema>;
 
@@ -60,6 +72,15 @@ function formatWhats(v: string | null) {
   return d;
 }
 
+function fmtNum(n: number | null | undefined) {
+  return (Number(n) || 0).toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+}
+
+function fmtDateTime(value: string | null) {
+  if (!value) return null;
+  return new Date(value).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
 export default function Accounts() {
   const { user, viewAs } = useAuth();
   const [items, setItems] = useState<Cliente[]>([]);
@@ -71,14 +92,22 @@ export default function Accounts() {
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { nome: "", whatsapp: "", email_lovable: "", senha_lovable: "" },
+    defaultValues: {
+      nome: "",
+      whatsapp: "",
+      email_lovable: "",
+      senha_lovable: "",
+      farm_auto_ativo: true,
+      meta_creditos_total: 200,
+      workspace_padrao: "",
+    },
   });
 
   const load = async () => {
     setLoading(true);
     let q = supabase
       .from("contas_lovable")
-      .select("id,nome,whatsapp,email_lovable,senha_lovable,criado_em,atualizado_em")
+      .select("id,nome,whatsapp,email_lovable,senha_lovable,farm_auto_ativo,meta_creditos_total,creditos_farmados_total,ultimo_farm_sucesso_em,proximo_farm_em,ultimo_erro_farm,workspace_padrao,criado_em,atualizado_em")
       .order("criado_em", { ascending: false });
     if (viewAs) q = q.eq("id_do_usuario", viewAs);
     const { data, error } = await q;
@@ -119,10 +148,24 @@ export default function Accounts() {
     const now = Date.now();
     const weekAgo = now - 7 * 86400000;
     const last7 = items.filter((c) => c.criado_em && new Date(c.criado_em).getTime() >= weekAgo).length;
-    return { total: items.length, last7 };
+    const autoOn = items.filter((c) => c.farm_auto_ativo).length;
+    const due = items.filter((c) => c.farm_auto_ativo && c.proximo_farm_em && new Date(c.proximo_farm_em).getTime() <= now).length;
+    return { total: items.length, last7, autoOn, due };
   }, [items]);
 
-  const openNew = () => { setEditing(null); form.reset({ nome: "", whatsapp: "", email_lovable: "", senha_lovable: "" }); setOpenForm(true); };
+  const openNew = () => {
+    setEditing(null);
+    form.reset({
+      nome: "",
+      whatsapp: "",
+      email_lovable: "",
+      senha_lovable: "",
+      farm_auto_ativo: true,
+      meta_creditos_total: 200,
+      workspace_padrao: "",
+    });
+    setOpenForm(true);
+  };
   const openEdit = (c: Cliente) => {
     setEditing(c);
     form.reset({
@@ -130,6 +173,9 @@ export default function Accounts() {
       whatsapp: c.whatsapp ?? "",
       email_lovable: c.email_lovable,
       senha_lovable: c.senha_lovable,
+      farm_auto_ativo: c.farm_auto_ativo,
+      meta_creditos_total: Number(c.meta_creditos_total) || 200,
+      workspace_padrao: c.workspace_padrao ?? "",
     });
     setOpenForm(true);
   };
@@ -140,6 +186,9 @@ export default function Accounts() {
       whatsapp: onlyDigits(values.whatsapp),
       email_lovable: values.email_lovable,
       senha_lovable: values.senha_lovable,
+      farm_auto_ativo: values.farm_auto_ativo,
+      meta_creditos_total: values.meta_creditos_total,
+      workspace_padrao: values.workspace_padrao?.trim() || null,
     };
     if (editing) {
       const { error } = await supabase.from("contas_lovable").update(payload).eq("id", editing.id);
@@ -194,7 +243,7 @@ export default function Accounts() {
         </div>
       </div>
 
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="glass-card">
           <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
             <CardTitle className="text-sm font-medium text-muted-foreground">Total de clientes</CardTitle>
@@ -215,6 +264,16 @@ export default function Accounts() {
             <Search className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent><div className="text-3xl font-semibold tracking-tight">{filtered.length}</div></CardContent>
+        </Card>
+        <Card className="glass-card">
+          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Automático ativo</CardTitle>
+            <CalendarClock className="h-4 w-4 text-primary" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-semibold tracking-tight">{stats.autoOn}</div>
+            {stats.due > 0 && <div className="text-xs text-amber-500 mt-1">{stats.due} aguardando execução</div>}
+          </CardContent>
         </Card>
       </div>
 
@@ -245,6 +304,8 @@ export default function Accounts() {
                   <TableHead>WhatsApp</TableHead>
                   <TableHead>Email Lovable</TableHead>
                   <TableHead>Senha</TableHead>
+                  <TableHead>Agenda</TableHead>
+                  <TableHead>Meta</TableHead>
                   <TableHead>Workspaces</TableHead>
                   <TableHead>Criado em</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
@@ -252,10 +313,10 @@ export default function Accounts() {
               </TableHeader>
               <TableBody>
                 {loading && (
-                  <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Carregando...</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">Carregando...</TableCell></TableRow>
                 )}
                 {!loading && filtered.length === 0 && (
-                  <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Nenhum cliente encontrado.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">Nenhum cliente encontrado.</TableCell></TableRow>
                 )}
                 {filtered.map((c) => {
                   const wa = onlyDigits(c.whatsapp ?? "");
@@ -294,6 +355,42 @@ export default function Accounts() {
                           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => copy(c.senha_lovable, "Senha")}>
                             <Copy className="h-3.5 w-3.5" />
                           </Button>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-1 min-w-[170px]">
+                          <Badge variant="outline" className={c.farm_auto_ativo ? "border-primary/40 text-primary" : "text-muted-foreground"}>
+                            {c.farm_auto_ativo ? "Auto 24h" : "Manual"}
+                          </Badge>
+                          <div className="text-xs text-muted-foreground">
+                            {c.proximo_farm_em
+                              ? `Próx. ${fmtDateTime(c.proximo_farm_em)}`
+                              : c.ultimo_farm_sucesso_em
+                                ? `Últ. ${fmtDateTime(c.ultimo_farm_sucesso_em)}`
+                                : "Aguardando 1º sucesso"}
+                          </div>
+                          {c.ultimo_erro_farm && (
+                            <div className="text-xs text-destructive flex items-start gap-1">
+                              <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                              <span className="line-clamp-2">{c.ultimo_erro_farm}</span>
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-1 min-w-[150px]">
+                          <div className="text-xs font-mono">
+                            +{fmtNum(c.creditos_farmados_total)} / {fmtNum(c.meta_creditos_total)}
+                          </div>
+                          <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-primary"
+                              style={{ width: `${Math.min(100, ((Number(c.creditos_farmados_total) || 0) / Math.max(Number(c.meta_creditos_total) || 1, 1)) * 100)}%` }}
+                            />
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {c.workspace_padrao ? `Workspace: ${c.workspace_padrao}` : "Sem workspace padrão"}
+                          </div>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -379,6 +476,34 @@ export default function Accounts() {
                 <FormItem>
                   <FormLabel>Senha Lovable</FormLabel>
                   <FormControl><Input placeholder="••••••••" type="text" {...field} /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <FormField control={form.control} name="meta_creditos_total" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Meta total de créditos</FormLabel>
+                    <FormControl><Input type="number" min={0} step="1" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <FormField control={form.control} name="workspace_padrao" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Workspace padrão</FormLabel>
+                    <FormControl><Input placeholder="Opcional" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              </div>
+              <FormField control={form.control} name="farm_auto_ativo" render={({ field }) => (
+                <FormItem className="flex items-center justify-between rounded-md border p-3">
+                  <div className="space-y-0.5">
+                    <FormLabel>Farm automático</FormLabel>
+                    <p className="text-xs text-muted-foreground">Repete a cada 24h depois da última recarga confirmada.</p>
+                  </div>
+                  <FormControl>
+                    <Switch checked={field.value} onCheckedChange={field.onChange} />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )} />

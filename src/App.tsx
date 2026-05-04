@@ -18,6 +18,7 @@ import Users from "./pages/dashboard/Users.tsx";
 import Partners from "./pages/dashboard/Partners.tsx";
 import Licenses from "./pages/dashboard/Licenses.tsx";
 import Loja from "./pages/dashboard/Loja.tsx";
+import MinhaConta from "./pages/dashboard/MinhaConta.tsx";
 import ProtectedRoute from "./components/auth/ProtectedRoute.tsx";
 import AdminRoute from "./components/auth/AdminRoute.tsx";
 import ActivePartnerRoute from "./components/auth/ActivePartnerRoute.tsx";
@@ -47,6 +48,7 @@ const App = () => (
           >
             <Route index element={<Overview />} />
             <Route path="loja" element={<Loja />} />
+            <Route path="minha-conta" element={<MinhaConta />} />
             <Route path="accounts" element={<Accounts />} />
             <Route path="workspaces" element={<Workspaces />} />
             <Route path="licencas" element={<ActivePartnerRoute><Licenses /></ActivePartnerRoute>} />

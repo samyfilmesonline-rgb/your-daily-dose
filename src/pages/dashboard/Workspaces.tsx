@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -78,6 +79,7 @@ function fmtNum(n: number | null | undefined) {
 }
 
 export default function Workspaces() {
+  const { viewAs } = useAuth();
   const [params, setParams] = useSearchParams();
   const [items, setItems] = useState<Resumo[]>([]);
   const [contas, setContas] = useState<Conta[]>([]);
@@ -93,16 +95,19 @@ export default function Workspaces() {
 
   const load = async () => {
     setLoading(true);
-    const [rRes, cRes] = await Promise.all([
-      supabase
-        .from("resumo_lovable_workspace")
-        .select("*")
-        .order("atualizado_em", { ascending: false }),
-      supabase
-        .from("contas_lovable")
-        .select("id,nome,email_lovable")
-        .order("nome", { ascending: true }),
-    ]);
+    let rQ = supabase
+      .from("resumo_lovable_workspace")
+      .select("*")
+      .order("atualizado_em", { ascending: false });
+    let cQ = supabase
+      .from("contas_lovable")
+      .select("id,nome,email_lovable")
+      .order("nome", { ascending: true });
+    if (viewAs) {
+      rQ = rQ.eq("id_do_usuario", viewAs);
+      cQ = cQ.eq("id_do_usuario", viewAs);
+    }
+    const [rRes, cRes] = await Promise.all([rQ, cQ]);
     if (rRes.error) toast.error(rRes.error.message);
     if (cRes.error) toast.error(cRes.error.message);
     setItems((rRes.data as Resumo[]) ?? []);
@@ -110,7 +115,7 @@ export default function Workspaces() {
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [viewAs]);
 
   const contasByEmail = useMemo(() => {
     const m = new Map<string, Conta>();

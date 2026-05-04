@@ -8,7 +8,7 @@ type: feature
 
 Admins podem liberar QUALQUER aba do sidebar para qualquer usuário, individualmente. Toda aba nova adicionada ao app deve ser registrada no catálogo único `src/lib/sidebar-tabs.ts` — assim aparece automaticamente no painel de permissões do admin sem código adicional.
 
-Usuários comuns só veem a aba "Visão geral" por padrão. Parceiros ativos veem o conjunto padrão de parceiro (Clientes, Workspaces, Licenças). Admins veem tudo. Qualquer usuário pode receber abas extras via permissão explícita.
+**Permissões em `tab_permissions` são autoritativas para usuários não-admin.** Ser parceiro ativo NÃO concede abas automaticamente. Apenas admin vê tudo. Todo usuário (parceiro ativo ou não) só vê "Visão geral" por padrão; qualquer outra aba exige linha em `tab_permissions`.
 
 ## Componentes
 
@@ -17,17 +17,12 @@ Usuários comuns só veem a aba "Visão geral" por padrão. Parceiros ativos vee
 - **Catálogo `src/lib/sidebar-tabs.ts`**: define `SIDEBAR_TABS` (key, title, url, icon, defaultVisibility, alwaysOn) e helper `canAccessTab`.
 - **`useAuth`**: expõe `tabPermissions: Set<string>`, `refreshTabPermissions()` e `isActivePartner`.
 - **`AppSidebar`**: renderiza a partir do catálogo via `canAccessTab`.
-- **`ActivePartnerRoute`**: aceita admin, parceiro ativo OU usuário com permissão explícita `licencas`.
+- **`ActivePartnerRoute`**: aceita admin OU usuário com permissão explícita `licencas`. Ser parceiro ativo não basta.
 - **Painel admin**: em `/dashboard/users`, botão "Permissões" abre `TabPermissionsDialog` com checkboxes para cada aba do catálogo (exceto `alwaysOn`).
 
 ## defaultVisibility
 
-- `always` — todo autenticado
-- `partnerOrAdmin` — parceiro ativo ou admin
-- `adminOrActivePartner` — parceiro ativo ou admin (Licenças)
-- `adminOnly` — só admin
-
-Em todos os casos, uma linha em `tab_permissions` libera o acesso para o usuário, independente do default.
+Campo apenas informativo no catálogo — não é mais usado para conceder acesso. A lógica real em `canAccessTab` é: `alwaysOn` → libera; `isAdmin` → libera; senão exige `tabPermissions.has(key)`.
 
 ## Como adicionar uma aba nova
 

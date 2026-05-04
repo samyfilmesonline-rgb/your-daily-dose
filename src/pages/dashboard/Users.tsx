@@ -94,9 +94,16 @@ export default function Users() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Usuários</h1>
-        <p className="text-sm text-muted-foreground">Gerencie quem tem acesso administrativo ao CRM.</p>
+      <div className="relative overflow-hidden rounded-xl border neon-border cyber-grid p-6">
+        <div className="inline-flex items-center gap-2 text-xs font-mono uppercase tracking-widest text-primary/80">
+          Admin • Usuários
+        </div>
+        <h1 className="text-3xl font-semibold tracking-tight mt-2">
+          <span className="neon-text">Usuários</span>
+        </h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Gerencie quem tem acesso administrativo ao CRM.
+        </p>
       </div>
 
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">

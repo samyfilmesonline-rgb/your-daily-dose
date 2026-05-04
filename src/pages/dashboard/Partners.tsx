@@ -232,12 +232,14 @@ export default function Partners() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-xl border p-6 flex items-start justify-between gap-4 flex-wrap">
+      <div className="relative overflow-hidden rounded-xl border neon-border cyber-grid p-6 flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div className="inline-flex items-center gap-2 text-xs font-mono uppercase tracking-widest text-primary/80">
             <Handshake className="h-3.5 w-3.5" /> Admin • Parceiros
           </div>
-          <h1 className="text-3xl font-semibold tracking-tight mt-2">Parceiros</h1>
+          <h1 className="text-3xl font-semibold tracking-tight mt-2">
+            <span className="neon-text">Parceiros</span>
+          </h1>
           <p className="text-sm text-muted-foreground mt-1 max-w-xl">
             Aprove novos parceiros, defina cotas e acompanhe o consumo de cada um.
           </p>

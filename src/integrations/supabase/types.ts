@@ -84,32 +84,53 @@ export type Database = {
         Row: {
           atualizado_em: string | null
           criado_em: string | null
+          creditos_farmados_total: number
           email_lovable: string
+          farm_auto_ativo: boolean
           id: string
           id_do_usuario: string
+          meta_creditos_total: number
           nome: string | null
+          proximo_farm_em: string | null
           senha_lovable: string
+          ultimo_erro_farm: string | null
+          ultimo_farm_sucesso_em: string | null
           whatsapp: string | null
+          workspace_padrao: string | null
         }
         Insert: {
           atualizado_em?: string | null
           criado_em?: string | null
+          creditos_farmados_total?: number
           email_lovable: string
+          farm_auto_ativo?: boolean
           id?: string
           id_do_usuario: string
+          meta_creditos_total?: number
           nome?: string | null
+          proximo_farm_em?: string | null
           senha_lovable: string
+          ultimo_erro_farm?: string | null
+          ultimo_farm_sucesso_em?: string | null
           whatsapp?: string | null
+          workspace_padrao?: string | null
         }
         Update: {
           atualizado_em?: string | null
           criado_em?: string | null
+          creditos_farmados_total?: number
           email_lovable?: string
+          farm_auto_ativo?: boolean
           id?: string
           id_do_usuario?: string
+          meta_creditos_total?: number
           nome?: string | null
+          proximo_farm_em?: string | null
           senha_lovable?: string
+          ultimo_erro_farm?: string | null
+          ultimo_farm_sucesso_em?: string | null
           whatsapp?: string | null
+          workspace_padrao?: string | null
         }
         Relationships: []
       }

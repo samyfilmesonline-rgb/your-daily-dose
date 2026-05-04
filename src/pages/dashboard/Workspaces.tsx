@@ -62,8 +62,10 @@ type Execucao = {
 const statusMeta: Record<string, { label: string; cls: string; Icon: typeof Activity }> = {
   em_andamento: { label: "Em andamento", cls: "bg-amber-500/15 text-amber-400 border-amber-500/30", Icon: Activity },
   concluido: { label: "Sucesso", cls: "bg-primary/15 text-primary border-primary/40", Icon: CheckCircle2 },
+  sucesso: { label: "Sucesso", cls: "bg-primary/15 text-primary border-primary/40", Icon: CheckCircle2 },
   limite: { label: "Limite", cls: "bg-blue-500/15 text-blue-400 border-blue-500/30", Icon: AlertCircle },
   erro: { label: "Erro", cls: "bg-destructive/15 text-destructive border-destructive/40", Icon: AlertTriangle },
+  falha: { label: "Falha", cls: "bg-destructive/15 text-destructive border-destructive/40", Icon: AlertTriangle },
 };
 
 function statusInfo(s: string | null) {
@@ -118,8 +120,15 @@ export default function Workspaces() {
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
+    const matchStatus = (s: string | null) => {
+      if (statusFilter === "todos") return true;
+      const cur = s ?? "";
+      if (statusFilter === "erro") return cur === "erro" || cur === "falha";
+      if (statusFilter === "concluido") return cur === "concluido" || cur === "sucesso";
+      return cur === statusFilter;
+    };
     return items.filter((w) => {
-      if (statusFilter !== "todos" && (w.ultima_execucao_status ?? "") !== statusFilter) return false;
+      if (!matchStatus(w.ultima_execucao_status)) return false;
       if (contaFilter !== "todas") {
         const c = contasByEmail.get(w.email_lovable.toLowerCase());
         if (!c || c.id !== contaFilter) return false;
@@ -134,7 +143,7 @@ export default function Workspaces() {
 
   const stats = useMemo(() => {
     const total = items.length;
-    const comErro = items.filter((i) => i.ultima_execucao_status === "erro").length;
+    const comErro = items.filter((i) => i.ultima_execucao_status === "erro" || i.ultima_execucao_status === "falha").length;
     const execucoes = items.reduce((s, i) => s + (Number(i.total_execucoes) || 0), 0);
     const creditos = items.reduce((s, i) => s + (Number(i.total_creditos_farmados) || 0), 0);
     return { total, comErro, execucoes, creditos };

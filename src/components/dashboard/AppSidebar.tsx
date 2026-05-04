@@ -1,4 +1,4 @@
-import { LayoutDashboard, Users, LogOut, Boxes, Shield, Crown, Handshake, KeyRound } from "lucide-react";
+import { LogOut, Crown } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   Sidebar,
@@ -14,24 +14,16 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/hooks/useAuth";
-
-const baseItems = [
-  { title: "Visão geral", url: "/dashboard", icon: LayoutDashboard, end: true },
-  { title: "Clientes", url: "/dashboard/accounts", icon: Users, end: false },
-  { title: "Workspaces", url: "/dashboard/workspaces", icon: Boxes, end: false },
-  { title: "Licenças", url: "/dashboard/licencas", icon: KeyRound, end: false },
-];
-const adminItems = [
-  { title: "Parceiros", url: "/dashboard/parceiros", icon: Handshake, end: false },
-  { title: "Usuários", url: "/dashboard/users", icon: Shield, end: false },
-];
+import { SIDEBAR_TABS, canAccessTab } from "@/lib/sidebar-tabs";
 
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const { pathname } = useLocation();
-  const { signOut, user, isAdmin } = useAuth();
-  const items = isAdmin ? [...baseItems, ...adminItems] : baseItems;
+  const { signOut, user, isAdmin, isActivePartner, tabPermissions } = useAuth();
+  const items = SIDEBAR_TABS.filter((t) =>
+    canAccessTab(t, { isAdmin, isActivePartner, tabPermissions })
+  );
 
   return (
     <Sidebar collapsible="icon">

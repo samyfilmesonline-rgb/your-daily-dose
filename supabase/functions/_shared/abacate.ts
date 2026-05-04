@@ -1,7 +1,7 @@
 // Helpers compartilhados para a integração AbacatePay.
 // Docs: https://docs.abacatepay.com
 
-export const ABACATE_BASE = "https://api.abacatepay.com/v1";
+export const ABACATE_BASE = "https://api.abacatepay.com/v2";
 
 export function authHeaders() {
   const key = Deno.env.get("ABACATEPAY_API_KEY");

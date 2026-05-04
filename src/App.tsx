@@ -14,8 +14,10 @@ import Accounts from "./pages/dashboard/Accounts.tsx";
 import Workspaces from "./pages/dashboard/Workspaces.tsx";
 import Users from "./pages/dashboard/Users.tsx";
 import Partners from "./pages/dashboard/Partners.tsx";
+import Licenses from "./pages/dashboard/Licenses.tsx";
 import ProtectedRoute from "./components/auth/ProtectedRoute.tsx";
 import AdminRoute from "./components/auth/AdminRoute.tsx";
+import ActivePartnerRoute from "./components/auth/ActivePartnerRoute.tsx";
 
 const queryClient = new QueryClient();
 
@@ -41,6 +43,7 @@ const App = () => (
             <Route index element={<Overview />} />
             <Route path="accounts" element={<Accounts />} />
             <Route path="workspaces" element={<Workspaces />} />
+            <Route path="licencas" element={<ActivePartnerRoute><Licenses /></ActivePartnerRoute>} />
             <Route path="users" element={<AdminRoute><Users /></AdminRoute>} />
             <Route path="parceiros" element={<AdminRoute><Partners /></AdminRoute>} />
           </Route>

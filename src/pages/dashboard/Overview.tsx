@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Users, CalendarDays, Boxes, Coins, TrendingUp } from "lucide-react";
 import {
@@ -14,6 +13,48 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import GlitchText from "@/components/landing/GlitchText";
+
+// Wrappers de card no estilo Matrix (referência: matrix-farm Dashboard).
+function MatrixCard({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div
+      className={`relative backdrop-blur-md bg-card/50 border border-primary/30 rounded-2xl transition-all duration-500 hover:border-primary/60 hover:shadow-[0_0_40px_hsl(var(--primary)/0.15)] ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+function KpiCard({
+  label,
+  value,
+  icon: Icon,
+  loading,
+}: {
+  label: string;
+  value: number;
+  icon: React.ElementType;
+  loading?: boolean;
+}) {
+  return (
+    <MatrixCard className="p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
+            {label}
+          </p>
+          <p className="text-3xl font-bold text-foreground font-mono">
+            {loading ? "—" : value.toLocaleString("pt-BR")}
+          </p>
+        </div>
+        <div className="w-11 h-11 rounded-xl bg-primary/15 border border-primary/40 flex items-center justify-center shrink-0">
+          <Icon className="h-5 w-5 text-primary" />
+        </div>
+      </div>
+    </MatrixCard>
+  );
+}
 
 type Conta = {
   id: string;

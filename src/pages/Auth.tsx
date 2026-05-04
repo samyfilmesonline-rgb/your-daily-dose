@@ -40,7 +40,7 @@ export default function Auth() {
     });
     setLoading(false);
     if (error) toast.error(error.message);
-    else toast.success("Conta criada! Verifique seu email.");
+    else toast.success("Cadastro recebido! Aguardando aprovação do administrador.");
   };
 
   return (

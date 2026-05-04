@@ -23,29 +23,7 @@ import Marquee from "@/components/landing/Marquee";
 import PricingCard from "@/components/landing/PricingCard";
 import CheckoutPixDialog from "@/components/landing/CheckoutPixDialog";
 import { CreditPack } from "@/lib/credit-packs";
-
-// Theme override Matrix-green aplicado apenas nesta página.
-const matrixThemeStyle = `
-  .matrix-theme {
-    --background: 120 10% 2%;
-    --foreground: 120 80% 90%;
-    --card: 120 10% 5%;
-    --card-foreground: 120 80% 90%;
-    --popover: 120 10% 6%;
-    --popover-foreground: 120 80% 90%;
-    --primary: 120 100% 45%;
-    --primary-foreground: 120 10% 4%;
-    --secondary: 120 50% 20%;
-    --secondary-foreground: 120 80% 90%;
-    --muted: 120 10% 15%;
-    --muted-foreground: 120 20% 65%;
-    --accent: 120 80% 35%;
-    --accent-foreground: 120 10% 4%;
-    --border: 120 30% 18%;
-    --input: 120 10% 12%;
-    --ring: 120 100% 45%;
-  }
-`;
+import { matrixThemeStyle } from "@/lib/matrix-theme";
 
 export default function Vendas() {
   const [selectedPack, setSelectedPack] = useState<CreditPack | null>(null);

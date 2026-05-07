@@ -283,6 +283,7 @@ export default function ComprarParceiro() {
   useEffect(() => {
     if (!pix?.orderId) return;
     if (step !== "pix" && step !== "paid") return;
+    try { (window as unknown as { __mf_tracking_id?: string }).__mf_tracking_id = pix.orderId; } catch { /* ignore */ }
     // Se o pedido já chegou em estado terminal, paramos.
     if (
       step === "paid" &&

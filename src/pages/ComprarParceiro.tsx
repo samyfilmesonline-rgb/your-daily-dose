@@ -1330,6 +1330,8 @@ function OrderTrackingInline({
   const { toast } = useToast();
   const [confirming, setConfirming] = useState(false);
   const [localConfirmedAt, setLocalConfirmedAt] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [confirmStop, setConfirmStop] = useState(false);
   const status = order?.status;
   const botEmail = order?.botEmail ?? null;
   const workspace = order?.targetWorkspace ?? fallbackWorkspace ?? null;
@@ -1348,6 +1350,9 @@ function OrderTrackingInline({
   const showProgress =
     !!inviteConfirmedAt &&
     (status === "paid" || status === "queued" || status === "processing");
+  const canStop =
+    (status === "paid" || status === "queued" || status === "processing") &&
+    !order?.stopRequestedAt;
 
   const confirmInvite = async () => {
     if (!order) return;

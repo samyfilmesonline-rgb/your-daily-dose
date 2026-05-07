@@ -17,6 +17,7 @@ const Body = z.object({
   customerTaxId: z.string().min(11).max(20),
   targetWorkspace: z.string().trim().min(2).max(200),
   clientFingerprint: z.string().min(8).max(80).optional(),
+  useBalance: z.boolean().optional(),
 });
 
 Deno.serve(async (req) => {
@@ -64,13 +65,92 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // Saldo do cliente
+    const useBalance = b.useBalance !== false;
+    const customerEmail = b.customerEmail.toLowerCase();
+    let availableBalance = 0;
+    if (useBalance) {
+      const { data: bal } = await sb
+        .from("partner_customer_balances")
+        .select("credits")
+        .eq("partner_id", b.partnerId)
+        .eq("customer_email", customerEmail)
+        .maybeSingle();
+      availableBalance = Math.max(0, Number(bal?.credits ?? 0));
+    }
+    const balanceToApply = Math.min(availableBalance, pack.credits);
+    const creditsToCharge = pack.credits - balanceToApply;
+    const pricePerCredit = pack.price_cents / pack.credits;
+    const amountToCharge = Math.round(pricePerCredit * creditsToCharge);
+    const balanceCentsValue = pack.price_cents - amountToCharge;
+
+    // Caso saldo cobre 100% — não precisa de Pix
+    if (creditsToCharge === 0 && balanceToApply > 0) {
+      const { data: order, error: insErr } = await sb
+        .from("partner_credit_orders")
+        .insert({
+          partner_id: b.partnerId,
+          pack_id: pack.id,
+          customer_name: b.customerName,
+          customer_email: customerEmail,
+          customer_whatsapp: b.customerWhatsapp ?? null,
+          customer_tax_id: taxIdDigits,
+          target_workspace: b.targetWorkspace ?? null,
+          client_fingerprint: b.clientFingerprint ?? null,
+          credits: pack.credits,
+          amount_cents: 0,
+          status: "paid",
+          paid_at: new Date().toISOString(),
+          balance_applied_credits: balanceToApply,
+          balance_applied_cents: pack.price_cents,
+        })
+        .select("id")
+        .single();
+      if (insErr || !order) {
+        return new Response(JSON.stringify({ error: insErr?.message ?? "Falha ao criar pedido" }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      // Debita o saldo de fato
+      const { data: applied } = await sb.rpc("apply_balance_to_order", {
+        _partner_id: b.partnerId,
+        _customer_email: customerEmail,
+        _amount: balanceToApply,
+        _order_id: order.id,
+      });
+      if (!applied || Number(applied) === 0) {
+        // Saldo sumiu (corrida) — marca como pending sem Pix; cliente precisa repetir
+        await sb.from("partner_credit_orders")
+          .update({ status: "expired", failed_reason: "Saldo insuficiente no momento da aplicação", balance_applied_credits: 0, balance_applied_cents: 0 })
+          .eq("id", order.id);
+        return new Response(JSON.stringify({ error: "Saldo já foi usado em outro pedido. Tente novamente." }), {
+          status: 409,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      await sb.rpc("assign_bot_to_order", { _order_id: order.id });
+      return new Response(
+        JSON.stringify({
+          orderId: order.id,
+          paidWithBalance: true,
+          balanceAppliedCredits: balanceToApply,
+          amountCents: 0,
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const charge = await createPixCharge({
-      amount: pack.price_cents,
+      amount: amountToCharge,
       expiresIn: 60 * 30,
-      description: `${pack.name} - ${pack.credits} créditos`,
+      description: balanceToApply > 0
+        ? `${pack.name} - ${pack.credits} créditos (${balanceToApply} via saldo)`
+        : `${pack.name} - ${pack.credits} créditos`,
       customer: {
         name: b.customerName,
-        email: b.customerEmail.toLowerCase(),
+        email: customerEmail,
         taxId: taxIdDigits,
         cellphone,
       },
@@ -82,18 +162,20 @@ Deno.serve(async (req) => {
         partner_id: b.partnerId,
         pack_id: pack.id,
         customer_name: b.customerName,
-        customer_email: b.customerEmail.toLowerCase(),
+        customer_email: customerEmail,
         customer_whatsapp: b.customerWhatsapp ?? null,
         customer_tax_id: taxIdDigits,
         target_workspace: b.targetWorkspace ?? null,
         client_fingerprint: b.clientFingerprint ?? null,
         credits: pack.credits,
-        amount_cents: pack.price_cents,
+        amount_cents: amountToCharge,
         tx_id: charge.id,
         pix_qrcode: normalizeQrImage(charge.brCodeBase64),
         pix_copy_paste: charge.brCode,
         pix_expires_at: charge.expiresAt ?? null,
         status: "pending",
+        balance_applied_credits: balanceToApply,
+        balance_applied_cents: balanceCentsValue,
         raw_payload: charge as unknown as Record<string, unknown>,
       })
       .select("id")
@@ -112,7 +194,8 @@ Deno.serve(async (req) => {
         txId: charge.id,
         qrCodeImage: normalizeQrImage(charge.brCodeBase64),
         copiaECola: charge.brCode,
-        amountCents: pack.price_cents,
+        amountCents: amountToCharge,
+        balanceAppliedCredits: balanceToApply,
         expiresAt: charge.expiresAt ?? null,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }

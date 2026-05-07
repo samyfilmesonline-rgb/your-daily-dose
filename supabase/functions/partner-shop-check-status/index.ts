@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
     );
     const { data: order } = await sb
       .from("partner_credit_orders")
-      .select("id, status, tx_id, assigned_bot_id, paid_at, target_workspace, credits, amount_cents, delivered_at, failed_reason, customer_email, partner_id, assigned_at, bot_invite_confirmed_at")
+      .select("id, status, tx_id, assigned_bot_id, paid_at, target_workspace, credits, amount_cents, delivered_at, failed_reason, customer_email, partner_id, assigned_at, bot_invite_confirmed_at, stop_requested_at, balance_applied_credits, balance_applied_cents, refunded_credits")
       .eq("id", parsed.data.orderId)
       .maybeSingle();
     if (!order) {
@@ -192,6 +192,10 @@ Deno.serve(async (req) => {
         failedReason: order.failed_reason ?? null,
         paidAt: order.paid_at ?? null,
         botInviteConfirmedAt: order.bot_invite_confirmed_at ?? null,
+        stopRequestedAt: (order as { stop_requested_at?: string | null }).stop_requested_at ?? null,
+        balanceAppliedCredits: (order as { balance_applied_credits?: number }).balance_applied_credits ?? 0,
+        balanceAppliedCents: (order as { balance_applied_cents?: number }).balance_applied_cents ?? 0,
+        refundedCredits: (order as { refunded_credits?: number }).refunded_credits ?? 0,
         progress,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }

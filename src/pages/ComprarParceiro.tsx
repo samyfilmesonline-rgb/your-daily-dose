@@ -15,7 +15,7 @@ import { matrixThemeStyle } from "@/lib/matrix-theme";
 import {
   Sparkles, ShieldCheck, AlertTriangle, Ban, Clock, Coins,
   CheckCircle2, Copy, Loader2, QrCode, Mail, ExternalLink, XCircle, Hourglass, Bot,
-  History, ShoppingCart, RefreshCw, Trash2, Eye,
+  History, ShoppingCart, RefreshCw, Trash2, Eye, Wallet, StopCircle,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
@@ -41,7 +41,15 @@ function brl(cents: number) {
 }
 
 type Step = "browse" | "form" | "pix" | "paid";
-type PixData = { orderId: string; txId: string; qrCodeImage: string; copiaECola: string };
+type PixData = {
+  orderId: string;
+  txId?: string;
+  qrCodeImage?: string;
+  copiaECola?: string;
+  paidWithBalance?: boolean;
+  balanceAppliedCredits?: number;
+  amountCents?: number;
+};
 type OrderStatus =
   | "pending" | "paid" | "queued" | "processing"
   | "delivered" | "failed" | "expired" | "refunded";
@@ -58,6 +66,9 @@ type OrderState = {
   botInviteConfirmedAt?: string | null;
   botStatus?: string | null;
   botHeartbeatAt?: string | null;
+  stopRequestedAt?: string | null;
+  balanceAppliedCredits?: number;
+  refundedCredits?: number;
   progress?: {
     farmed: number;
     target: number;
@@ -103,6 +114,10 @@ type OrderHistoryItem = {
   customerEmail: string;
   ownDevice: boolean;
   botInviteConfirmedAt?: string | null;
+  stopRequestedAt?: string | null;
+  balanceAppliedCredits?: number;
+  balanceAppliedCents?: number;
+  refundedCredits?: number;
   progress?: {
     farmed: number;
     percent: number;
@@ -112,6 +127,8 @@ type OrderHistoryItem = {
     lastEventAt?: string | null;
   };
 };
+
+type CustomerBalance = { credits: number; email: string | null };
 
 const FP_KEY = "mf_client_fp";
 const LAST_EMAIL_KEY = "mf_last_email";
@@ -187,6 +204,10 @@ export default function ComprarParceiro() {
   const [trackingItem, setTrackingItem] = useState<OrderHistoryItem | null>(null);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
+  const [customerBalance, setCustomerBalance] = useState<CustomerBalance>({ credits: 0, email: null });
+  const [useBalance, setUseBalance] = useState<boolean>(true);
+  const [confirmStopId, setConfirmStopId] = useState<string | null>(null);
+  const [stoppingId, setStoppingId] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = "Comprar créditos · Matrix";
@@ -214,7 +235,9 @@ export default function ComprarParceiro() {
           }
         );
         if (error) throw error;
-        setHistory(((data as { orders?: OrderHistoryItem[] })?.orders) ?? []);
+        const d = data as { orders?: OrderHistoryItem[]; customerBalance?: CustomerBalance } | null;
+        setHistory(d?.orders ?? []);
+        if (d?.customerBalance) setCustomerBalance(d.customerBalance);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Erro ao carregar pedidos";
         toast({ title: "Falha", description: msg, variant: "destructive" });
@@ -237,6 +260,13 @@ export default function ComprarParceiro() {
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [tab, fetchHistory]);
+
+  // Carrega saldo do cliente uma vez ao montar (para mostrar no checkout)
+  useEffect(() => {
+    if (!isValidPartnerId) return;
+    fetchHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isValidPartnerId]);
 
   // Auto-detecta pedido em aberto ao abrir página
   useEffect(() => {
@@ -385,6 +415,7 @@ export default function ComprarParceiro() {
           customerTaxId: taxDigits,
           targetWorkspace: workspace.trim(),
           clientFingerprint: fingerprint,
+          useBalance,
         },
       });
       if (error) {
@@ -406,11 +437,19 @@ export default function ComprarParceiro() {
         throw error;
       }
       if (!data?.orderId) throw new Error("Resposta inválida");
-      setPix(data as PixData);
-      setStep("pix");
+      const pd = data as PixData;
+      setPix(pd);
+      // Se foi pago totalmente com saldo, pula a tela de Pix
+      setStep(pd.paidWithBalance ? "paid" : "pix");
+      if (pd.paidWithBalance) {
+        toast({
+          title: "Pedido criado com saldo",
+          description: `Usamos ${pd.balanceAppliedCredits} créditos do seu saldo. Sem cobrança.`,
+        });
+      }
       try {
         localStorage.setItem(LAST_EMAIL_KEY, email.trim().toLowerCase());
-        localStorage.setItem(ACTIVE_ORDER_KEY, (data as PixData).orderId);
+        localStorage.setItem(ACTIVE_ORDER_KEY, pd.orderId);
       } catch { /* ignore */ }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro ao gerar Pix";
@@ -609,6 +648,25 @@ export default function ComprarParceiro() {
           </TabsContent>
 
           <TabsContent value="pedidos" className="space-y-4 mt-6">
+            {customerBalance.credits > 0 && (
+              <div className="rounded-2xl border-2 border-emerald-500/40 bg-emerald-500/5 p-4 flex items-center gap-3">
+                <Wallet className="w-6 h-6 text-emerald-400 flex-none" />
+                <div className="flex-1">
+                  <div className="text-xs font-mono uppercase tracking-widest text-emerald-400">
+                    Saldo disponível
+                  </div>
+                  <div className="text-2xl font-black font-mono text-emerald-400">
+                    {customerBalance.credits} créditos
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Crédito gerado por pedidos não entregues integralmente. Use em um novo pedido para o mesmo e-mail ({customerBalance.email ?? "—"}) sem pagar de novo.
+                  </div>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => setTab("comprar")}>
+                  Usar saldo
+                </Button>
+              </div>
+            )}
             <OrdersHistorySection
               history={history}
               loading={historyLoading}
@@ -620,6 +678,7 @@ export default function ComprarParceiro() {
                 setTrackingOrderId(item.id);
               }}
               onCancel={(id) => setConfirmCancelId(id)}
+              onStop={(id) => setConfirmStopId(id)}
               partnerWhatsapp={partner?.whatsapp ?? null}
             />
           </TabsContent>
@@ -666,6 +725,27 @@ export default function ComprarParceiro() {
               <Button className="w-full" size="lg" onClick={handleConfirm}>
                 <Sparkles className="w-4 h-4 mr-2" /> Confirmar e gerar pedido
               </Button>
+              {customerBalance.credits > 0 && (
+                <label className="flex items-start gap-2 text-xs text-muted-foreground rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={useBalance}
+                    onChange={(e) => setUseBalance(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <strong className="text-emerald-400">Usar meu saldo ({customerBalance.credits} créditos)</strong>
+                    {customerBalance.credits >= selected.credits ? (
+                      <span className="block">Saldo cobre o pedido — você não paga nada via Pix.</span>
+                    ) : (
+                      <span className="block">
+                        Aplicado: {customerBalance.credits} créditos.
+                        Pix gerado só pelo restante ({selected.credits - customerBalance.credits} créditos).
+                      </span>
+                    )}
+                  </span>
+                </label>
+              )}
               <p className="text-[10px] text-center text-muted-foreground">
                 Cobrança proporcional · reembolso automático
               </p>
@@ -834,6 +914,55 @@ export default function ComprarParceiro() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Confirmação de parar farm */}
+      <AlertDialog
+        open={!!confirmStopId}
+        onOpenChange={(o) => !o && setConfirmStopId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Parar farm e receber saldo?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O que já foi farmado fica entregue na sua workspace. Os créditos restantes
+              voltam como <strong>saldo</strong> e você pode usar em um novo pedido sem pagar de novo.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!!stoppingId}
+              onClick={async () => {
+                if (!confirmStopId) return;
+                setStoppingId(confirmStopId);
+                try {
+                  const { data, error } = await supabase.functions.invoke(
+                    "partner-shop-stop-order",
+                    { body: { orderId: confirmStopId, fingerprint } }
+                  );
+                  if (error) throw error;
+                  const refunded = (data as { refundedCredits?: number })?.refundedCredits ?? 0;
+                  toast({
+                    title: "Farm parado",
+                    description: refunded > 0
+                      ? `${refunded} créditos voltaram para o seu saldo.`
+                      : "Pedido encerrado.",
+                  });
+                  setConfirmStopId(null);
+                  fetchHistory();
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : "Erro";
+                  toast({ title: "Falha", description: msg, variant: "destructive" });
+                } finally {
+                  setStoppingId(null);
+                }
+              }}
+            >
+              {stoppingId ? "Parando..." : "Sim, parar e receber saldo"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -897,7 +1026,7 @@ function OrderTrackingDialog({
 
 function OrdersHistorySection({
   history, loading, email, onEmailChange, onRefresh,
-  onTrack, onCancel, partnerWhatsapp,
+  onTrack, onCancel, onStop, partnerWhatsapp,
 }: {
   history: OrderHistoryItem[] | null;
   loading: boolean;
@@ -906,6 +1035,7 @@ function OrdersHistorySection({
   onRefresh: () => void;
   onTrack: (item: OrderHistoryItem) => void;
   onCancel: (id: string) => void;
+  onStop: (id: string) => void;
   partnerWhatsapp: string | null;
 }) {
   return (
@@ -1003,6 +1133,17 @@ function OrdersHistorySection({
                   {o.status === "failed" && o.failedReason && (
                     <div className="text-xs text-destructive mt-1">{o.failedReason}</div>
                   )}
+                  {o.status === "refunded" && (
+                    <div className="text-xs text-emerald-400 mt-1">
+                      {o.refundedCredits ?? 0} créditos voltaram como saldo
+                      {o.failedReason ? ` · ${o.failedReason}` : ""}
+                    </div>
+                  )}
+                  {(o.balanceAppliedCredits ?? 0) > 0 && (
+                    <div className="text-[11px] text-emerald-400/80 mt-1">
+                      Pago com {o.balanceAppliedCredits} créditos do seu saldo
+                    </div>
+                  )}
                   {o.status === "delivered" && o.deliveredAt && (
                     <div className="text-xs text-emerald-400 mt-1">
                       Entregue em {new Date(o.deliveredAt).toLocaleString("pt-BR")}
@@ -1025,6 +1166,12 @@ function OrdersHistorySection({
                     <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
                       onClick={() => onCancel(o.id)}>
                       <Trash2 className="w-4 h-4 mr-1.5" /> Cancelar
+                    </Button>
+                  )}
+                  {["paid","queued","processing"].includes(o.status) && o.ownDevice && !o.stopRequestedAt && (
+                    <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
+                      onClick={() => onStop(o.id)}>
+                      <StopCircle className="w-4 h-4 mr-1.5" /> Parar farm
                     </Button>
                   )}
                   {(o.status === "failed" || o.status === "expired" || o.status === "refunded") && partnerWhatsapp && (
@@ -1183,6 +1330,8 @@ function OrderTrackingInline({
   const { toast } = useToast();
   const [confirming, setConfirming] = useState(false);
   const [localConfirmedAt, setLocalConfirmedAt] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [confirmStop, setConfirmStop] = useState(false);
   const status = order?.status;
   const botEmail = order?.botEmail ?? null;
   const workspace = order?.targetWorkspace ?? fallbackWorkspace ?? null;
@@ -1201,6 +1350,9 @@ function OrderTrackingInline({
   const showProgress =
     !!inviteConfirmedAt &&
     (status === "paid" || status === "queued" || status === "processing");
+  const canStop =
+    (status === "paid" || status === "queued" || status === "processing") &&
+    !order?.stopRequestedAt;
 
   const confirmInvite = async () => {
     if (!order) return;
@@ -1427,9 +1579,84 @@ function OrderTrackingInline({
             <XCircle className="w-4 h-4" /> {STATUS_LABEL[status]}
           </div>
           {order?.failedReason && <div className="text-xs text-muted-foreground">{order.failedReason}</div>}
-          <div className="text-xs text-muted-foreground">Em caso de pagamento confirmado, o reembolso é automático.</div>
+          {status === "refunded" && (order?.refundedCredits ?? 0) > 0 && (
+            <div className="text-xs text-emerald-400">
+              {order?.refundedCredits} créditos voltaram como saldo. Use no próximo pedido sem pagar de novo.
+            </div>
+          )}
+          {status !== "refunded" && (
+            <div className="text-xs text-muted-foreground">Em caso de pagamento confirmado, o reembolso é automático.</div>
+          )}
         </div>
       )}
+      {canStop && (
+        <div className="mt-3">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full text-destructive hover:text-destructive"
+            onClick={() => setConfirmStop(true)}
+          >
+            <StopCircle className="w-4 h-4 mr-1.5" /> Parar farm e receber saldo
+          </Button>
+        </div>
+      )}
+      <AlertDialog open={confirmStop} onOpenChange={(o) => !o && setConfirmStop(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Parar farm agora?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {progress ? (
+                <>
+                  Você já farmou <strong>{progress.farmed}</strong> de <strong>{progress.target}</strong> créditos.
+                  Os <strong>{Math.max(0, progress.target - progress.farmed)}</strong> restantes voltam como saldo
+                  para usar em outro pedido sem pagar de novo.
+                </>
+              ) : (
+                <>O que faltar volta como saldo para o seu próximo pedido.</>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={stopping}
+              onClick={async () => {
+                let orderId: string | null = null;
+                try { orderId = localStorage.getItem("mf_active_order_id"); } catch { /* ignore */ }
+                const winId = (window as unknown as { __mf_tracking_id?: string }).__mf_tracking_id;
+                if (winId) orderId = winId;
+                let fp = "";
+                try { fp = localStorage.getItem("mf_client_fp") ?? ""; } catch { /* ignore */ }
+                if (!orderId) {
+                  toast({ title: "Não foi possível identificar o pedido", variant: "destructive" });
+                  return;
+                }
+                setStopping(true);
+                try {
+                  const { data, error } = await supabase.functions.invoke("partner-shop-stop-order", {
+                    body: { orderId, fingerprint: fp },
+                  });
+                  if (error) throw error;
+                  const refunded = (data as { refundedCredits?: number })?.refundedCredits ?? 0;
+                  toast({
+                    title: "Farm parado",
+                    description: refunded > 0 ? `${refunded} créditos voltaram para o saldo.` : "Pedido encerrado.",
+                  });
+                  setConfirmStop(false);
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : "Erro";
+                  toast({ title: "Falha", description: msg, variant: "destructive" });
+                } finally {
+                  setStopping(false);
+                }
+              }}
+            >
+              {stopping ? "Parando..." : "Sim, parar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

@@ -103,7 +103,14 @@ type OrderHistoryItem = {
   customerEmail: string;
   ownDevice: boolean;
   botInviteConfirmedAt?: string | null;
-  progress?: { farmed: number; percent: number };
+  progress?: {
+    farmed: number;
+    percent: number;
+    attempts?: number;
+    lastStatus?: string | null;
+    lastMessage?: string | null;
+    lastEventAt?: string | null;
+  };
 };
 
 const FP_KEY = "mf_client_fp";
@@ -968,13 +975,29 @@ function OrdersHistorySection({
                       Bot: <span className="font-mono text-primary">{o.botEmail}</span>
                     </div>
                   )}
-                  {o.progress && o.progress.farmed > 0 && ["paid","queued","processing"].includes(o.status) && (
-                    <div className="mt-2">
+                  {o.progress && ["paid","queued","processing"].includes(o.status) && (o.progress.farmed > 0 || o.progress.lastMessage) && (
+                    <div className="mt-2 space-y-1">
                       <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
                         <span>{o.progress.farmed} / {o.credits} créditos</span>
                         <span>{o.progress.percent}%</span>
                       </div>
-                      <Progress value={o.progress.percent} className="h-1.5 mt-1" />
+                      <Progress value={o.progress.percent} className="h-1.5" />
+                      {o.progress.lastMessage && (
+                        <div
+                          className={`text-[11px] line-clamp-2 ${
+                            o.progress.lastStatus === "limite"
+                              ? "text-amber-400"
+                              : o.progress.lastStatus === "falha" || o.progress.lastStatus === "erro"
+                              ? "text-destructive"
+                              : o.progress.lastStatus === "sucesso" || o.progress.lastStatus === "concluido"
+                              ? "text-emerald-400"
+                              : "text-primary"
+                          }`}
+                          title={o.progress.lastMessage}
+                        >
+                          Bot: {o.progress.lastMessage}
+                        </div>
+                      )}
                     </div>
                   )}
                   {o.status === "failed" && o.failedReason && (
@@ -1298,6 +1321,11 @@ function OrderTrackingInline({
                   <span className="text-destructive">Falhou: {progress.currentExecution.erro ?? "erro"}</span>
                 )}
               </div>
+              {progress.currentExecution.erro && progress.currentExecution.status !== "falha" && progress.currentExecution.status !== "erro" && (
+                <div className="mt-1 text-[11px] text-muted-foreground break-words">
+                  {progress.currentExecution.erro}
+                </div>
+              )}
             </div>
           )}
           {progress.recent.length > 1 && (
@@ -1305,18 +1333,27 @@ function OrderTrackingInline({
               <summary className="cursor-pointer text-muted-foreground">Ver últimas tentativas</summary>
               <ul className="mt-2 space-y-1">
                 {progress.recent.map((r) => (
-                  <li key={r.id} className="flex items-center gap-2 font-mono">
-                    {r.status === "sucesso" || r.status === "concluido" ? (
-                      <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                    ) : r.status === "limite" ? (
-                      <Clock className="w-3 h-3 text-amber-400" />
-                    ) : r.status === "em_andamento" ? (
-                      <Loader2 className="w-3 h-3 text-primary animate-spin" />
-                    ) : (
-                      <XCircle className="w-3 h-3 text-destructive" />
-                    )}
-                    <span>+{r.creditosAdicionados ?? 0}</span>
-                    <span className="text-muted-foreground">{timeAgo(r.atualizadoEm)}</span>
+                  <li key={r.id} className="flex items-start gap-2 font-mono">
+                    <span className="mt-0.5">
+                      {r.status === "sucesso" || r.status === "concluido" ? (
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                      ) : r.status === "limite" ? (
+                        <Clock className="w-3 h-3 text-amber-400" />
+                      ) : r.status === "em_andamento" ? (
+                        <Loader2 className="w-3 h-3 text-primary animate-spin" />
+                      ) : (
+                        <XCircle className="w-3 h-3 text-destructive" />
+                      )}
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="text-foreground">+{r.creditosAdicionados ?? 0}</span>
+                      <span className="text-muted-foreground ml-1">{timeAgo(r.atualizadoEm)}</span>
+                      {r.erro && (
+                        <span className="block text-[11px] text-muted-foreground/90 break-words whitespace-normal">
+                          {r.erro}
+                        </span>
+                      )}
+                    </span>
                   </li>
                 ))}
               </ul>

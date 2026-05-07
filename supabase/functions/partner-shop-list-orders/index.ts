@@ -87,7 +87,17 @@ Deno.serve(async (req) => {
     }
 
     // Pré-calcula progresso para pedidos em andamento
-    const progressMap: Record<string, { farmed: number; percent: number }> = {};
+    const progressMap: Record<
+      string,
+      {
+        farmed: number;
+        percent: number;
+        attempts: number;
+        lastStatus: string | null;
+        lastMessage: string | null;
+        lastEventAt: string | null;
+      }
+    > = {};
     const inProgress = (orders ?? []).filter(
       (o) => o.assigned_bot_id && o.target_workspace && ["paid", "queued", "processing"].includes(o.status)
     );
@@ -98,20 +108,33 @@ Deno.serve(async (req) => {
         const sinceIso = o.assigned_at ?? o.paid_at ?? null;
         let q = sb
           .from("execucoes_lovable")
-          .select("creditos_adicionados")
+          .select("status, creditos_adicionados, erro, atualizado_em, iniciado_em")
           .eq("id_do_usuario", o.partner_id)
           .eq("email_lovable", botEmail)
-          .eq("workspace_nome", o.target_workspace);
+          .eq("workspace_nome", o.target_workspace)
+          .order("iniciado_em", { ascending: false })
+          .limit(20);
         if (sinceIso) q = q.gte("iniciado_em", sinceIso);
         const { data: rows } = await q;
-        const farmed = (rows ?? []).reduce(
+        const list = rows ?? [];
+        const farmed = list.reduce(
           (acc: number, r: { creditos_adicionados: number | string | null }) =>
             acc + (Number(r.creditos_adicionados) || 0),
           0
         );
         const percent =
           o.credits > 0 ? Math.min(100, Math.round((farmed / o.credits) * 100)) : 0;
-        progressMap[o.id] = { farmed, percent };
+        const last = list[0] as
+          | { status: string; erro: string | null; atualizado_em: string | null }
+          | undefined;
+        progressMap[o.id] = {
+          farmed,
+          percent,
+          attempts: list.length,
+          lastStatus: last?.status ?? null,
+          lastMessage: last?.erro ?? null,
+          lastEventAt: last?.atualizado_em ?? null,
+        };
       })
     );
 
@@ -138,7 +161,15 @@ Deno.serve(async (req) => {
         customerEmail: o.customer_email,
         ownDevice,
         botInviteConfirmedAt: o.bot_invite_confirmed_at ?? null,
-        progress: progressMap[o.id] ?? { farmed: 0, percent: 0 },
+        progress:
+          progressMap[o.id] ?? {
+            farmed: 0,
+            percent: 0,
+            attempts: 0,
+            lastStatus: null,
+            lastMessage: null,
+            lastEventAt: null,
+          },
       };
     });
 

@@ -67,7 +67,6 @@ Deno.serve(async (req) => {
         taxId: taxIdDigits,
         ...(cellphone ? { cellphone } : {}),
       },
-      metadata: { partnerId: b.partnerId, packId: pack.id },
     });
 
     const { data: order, error: insErr } = await sb

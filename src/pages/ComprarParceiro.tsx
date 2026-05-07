@@ -15,7 +15,7 @@ import { matrixThemeStyle } from "@/lib/matrix-theme";
 import {
   Sparkles, ShieldCheck, AlertTriangle, Ban, Clock, Coins,
   CheckCircle2, Copy, Loader2, QrCode, Mail, ExternalLink, XCircle, Hourglass, Bot,
-  History, ShoppingCart, RefreshCw, Trash2, Eye,
+  History, ShoppingCart, RefreshCw, Trash2, Eye, Wallet, StopCircle,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
@@ -41,7 +41,15 @@ function brl(cents: number) {
 }
 
 type Step = "browse" | "form" | "pix" | "paid";
-type PixData = { orderId: string; txId: string; qrCodeImage: string; copiaECola: string };
+type PixData = {
+  orderId: string;
+  txId?: string;
+  qrCodeImage?: string;
+  copiaECola?: string;
+  paidWithBalance?: boolean;
+  balanceAppliedCredits?: number;
+  amountCents?: number;
+};
 type OrderStatus =
   | "pending" | "paid" | "queued" | "processing"
   | "delivered" | "failed" | "expired" | "refunded";
@@ -58,6 +66,9 @@ type OrderState = {
   botInviteConfirmedAt?: string | null;
   botStatus?: string | null;
   botHeartbeatAt?: string | null;
+  stopRequestedAt?: string | null;
+  balanceAppliedCredits?: number;
+  refundedCredits?: number;
   progress?: {
     farmed: number;
     target: number;
@@ -103,6 +114,10 @@ type OrderHistoryItem = {
   customerEmail: string;
   ownDevice: boolean;
   botInviteConfirmedAt?: string | null;
+  stopRequestedAt?: string | null;
+  balanceAppliedCredits?: number;
+  balanceAppliedCents?: number;
+  refundedCredits?: number;
   progress?: {
     farmed: number;
     percent: number;
@@ -112,6 +127,8 @@ type OrderHistoryItem = {
     lastEventAt?: string | null;
   };
 };
+
+type CustomerBalance = { credits: number; email: string | null };
 
 const FP_KEY = "mf_client_fp";
 const LAST_EMAIL_KEY = "mf_last_email";
@@ -187,6 +204,10 @@ export default function ComprarParceiro() {
   const [trackingItem, setTrackingItem] = useState<OrderHistoryItem | null>(null);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
+  const [customerBalance, setCustomerBalance] = useState<CustomerBalance>({ credits: 0, email: null });
+  const [useBalance, setUseBalance] = useState<boolean>(true);
+  const [confirmStopId, setConfirmStopId] = useState<string | null>(null);
+  const [stoppingId, setStoppingId] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = "Comprar créditos · Matrix";
@@ -214,7 +235,9 @@ export default function ComprarParceiro() {
           }
         );
         if (error) throw error;
-        setHistory(((data as { orders?: OrderHistoryItem[] })?.orders) ?? []);
+        const d = data as { orders?: OrderHistoryItem[]; customerBalance?: CustomerBalance } | null;
+        setHistory(d?.orders ?? []);
+        if (d?.customerBalance) setCustomerBalance(d.customerBalance);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Erro ao carregar pedidos";
         toast({ title: "Falha", description: msg, variant: "destructive" });

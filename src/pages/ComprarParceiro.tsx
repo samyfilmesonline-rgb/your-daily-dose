@@ -103,7 +103,14 @@ type OrderHistoryItem = {
   customerEmail: string;
   ownDevice: boolean;
   botInviteConfirmedAt?: string | null;
-  progress?: { farmed: number; percent: number };
+  progress?: {
+    farmed: number;
+    percent: number;
+    attempts?: number;
+    lastStatus?: string | null;
+    lastMessage?: string | null;
+    lastEventAt?: string | null;
+  };
 };
 
 const FP_KEY = "mf_client_fp";

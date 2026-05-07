@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
     );
     const { data: order } = await sb
       .from("partner_credit_orders")
-      .select("id, status, tx_id, assigned_bot_id")
+      .select("id, status, tx_id, assigned_bot_id, paid_at")
       .eq("id", parsed.data.orderId)
       .maybeSingle();
     if (!order) {
@@ -38,6 +38,7 @@ Deno.serve(async (req) => {
 
     let status = order.status;
     let botEmail: string | null = null;
+    let assignedBotId: string | null = order.assigned_bot_id ?? null;
 
     // Sync com gateway se ainda pendente
     if (status === "pending" && order.tx_id) {
@@ -54,24 +55,44 @@ Deno.serve(async (req) => {
             .eq("id", order.id)
             .eq("status", "pending");
           await sb.rpc("assign_bot_to_order", { _order_id: order.id });
-          status = "processing";
         }
       } catch (e) {
         console.warn("status check remote err", e);
       }
     }
 
-    if (order.assigned_bot_id) {
+    // Se ficou 'paid' ou 'queued' sem bot atribuído, tenta atribuir agora
+    // (ex.: webhook chegou antes mas não havia bot idle no momento).
+    if ((status === "paid" || status === "queued") && !assignedBotId) {
+      try {
+        await sb.rpc("assign_bot_to_order", { _order_id: order.id });
+      } catch (e) {
+        console.warn("assign_bot_to_order err", e);
+      }
+    }
+
+    // Recarrega o estado atualizado após eventuais atribuições
+    const { data: fresh } = await sb
+      .from("partner_credit_orders")
+      .select("status, assigned_bot_id")
+      .eq("id", order.id)
+      .maybeSingle();
+    if (fresh) {
+      status = fresh.status;
+      assignedBotId = fresh.assigned_bot_id ?? null;
+    }
+
+    if (assignedBotId) {
       const { data: bot } = await sb
         .from("farm_bots")
         .select("email_lovable")
-        .eq("id", order.assigned_bot_id)
+        .eq("id", assignedBotId)
         .maybeSingle();
       botEmail = bot?.email_lovable ?? null;
     }
 
     return new Response(
-      JSON.stringify({ status, botEmail }),
+      JSON.stringify({ status, botEmail, assignedBotId }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {

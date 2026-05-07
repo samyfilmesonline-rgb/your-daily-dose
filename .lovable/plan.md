@@ -1,23 +1,25 @@
-Diagnóstico:
-- O erro real nos logs da Edge Function `partner-shop-create-pix` é: `AbacatePay create [422]: {"success":false,"data":null,"error":"Value should be one of 'object', 'object'"}`.
-- A função da loja que já funciona (`abacatepay-create-pix` / `loja-create-pix`) chama o helper `createPixCharge` sem `metadata`.
-- O checkout do parceiro chama a mesma API v2, mas adiciona `metadata: { partnerId, packId }`. Pela mensagem 422, o gateway está rejeitando algum campo extra/estrutura da payload v2. Como o pedido já salva `partner_id`, `pack_id` e `tx_id` no Supabase, esse `metadata` não é necessário.
-- Nova evidência após remover `metadata`: o 422 continuou com payload contendo `customer` sem `cellphone`. A documentação da AbacatePay indica que `customer` é opcional, mas quando enviado pode exigir todos os campos. O formulário do parceiro deixa WhatsApp opcional, então a payload precisava omitir `customer` quando ele estiver incompleto.
+## Plano
 
-Plano de correção:
-1. Alterar `supabase/functions/partner-shop-create-pix/index.ts` para usar a mesma payload enviada pela loja:
-   - `amount`
-   - `expiresIn`
-   - `description`
-   - `customer: { name, email, taxId, cellphone? }`
-   - remover `metadata` completamente.
-2. Manter o insert em `partner_credit_orders` igual ao schema real existente:
-   - `partner_id`, `pack_id`, dados do cliente, créditos, valor, `tx_id`, QR Code, copia-e-cola, expiração, `status: pending`, `raw_payload`.
-3. Melhorar a mensagem de erro retornada pela Edge Function sem expor segredos:
-   - continuar logando o erro técnico no Supabase.
-   - retornar uma mensagem clara para o frontend quando o gateway recusar a criação do Pix.
-4. Não alterar tabelas, RLS, nomes de colunas, nem fluxo de atribuição de bot.
-5. Validação aplicada:
-   - checado que não há `metadata` na criação Pix do parceiro.
-   - helper `createPixCharge` ajustado para não enviar `customer` parcial.
-   - teste local confirmou payload equivalente ao formulário: `{ method: "PIX", data: { amount, expiresIn, description } }`.
+1. **Corrigir a tela do cliente final**
+   - Ajustar `ComprarParceiro.tsx` para não encerrar o polling quando o pedido muda apenas para `paid`/`queued`.
+   - Só mostrar a tela final com o e-mail do bot quando o backend retornar `botEmail` ou quando o pedido estiver realmente `processing`/`delivered` com bot atribuído.
+   - Se estiver pago mas sem bot, manter uma mensagem de fila e continuar consultando até o bot aparecer.
+
+2. **Corrigir o endpoint de status**
+   - Ajustar `partner-shop-check-status` para recarregar o pedido após chamar `assign_bot_to_order`, porque hoje ele consulta o `assigned_bot_id` antigo e pode responder sem o bot mesmo depois de atribuir.
+   - Retornar também um estado claro para o frontend: `paid_without_bot`, `queued`, `processing`, `delivered`, e `botEmail` quando existir.
+
+3. **Blindar o fluxo do webhook**
+   - Melhorar logs/retorno do `abacatepay-webhook` quando chama `assign_bot_to_order`, para ficar claro se encontrou bot, colocou em fila ou falhou.
+   - Garantir que pedidos já `paid`, `queued` ou `processing` possam ser reprocessados de forma idempotente sem perder atribuição.
+
+4. **Validar com teste direto**
+   - Testar o endpoint `partner-shop-check-status` com um pedido recente/pago para confirmar que, havendo bot idle, retorna o `botEmail`.
+   - Se não houver bot idle, confirmar que o cliente continua vendo “na fila” em vez de parar o fluxo sem receber o bot.
+
+## Detalhes técnicos
+
+O bug provável está em dois pontos combinados:
+
+- O frontend avança para `paid` assim que recebe qualquer update `paid/queued/processing/delivered`, mas busca o bot só uma vez. Se o primeiro update for `paid`, o bot ainda pode não ter sido atribuído.
+- O endpoint `partner-shop-check-status` chama `assign_bot_to_order`, mas continua usando o objeto `order` carregado antes da atribuição; por isso `assigned_bot_id` ainda vem vazio nessa resposta.

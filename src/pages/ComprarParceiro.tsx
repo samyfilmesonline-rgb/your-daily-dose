@@ -87,25 +87,29 @@ export default function ComprarParceiro() {
     },
   });
 
-  // Polling de status quando estamos na etapa pix
+  // Polling de status enquanto pedido está em andamento (pix → paid → bot atribuído)
   useEffect(() => {
-    if (step !== "pix" || !pix?.orderId) return;
-    // Realtime: avança imediatamente quando o status muda
+    if (!pix?.orderId) return;
+    if (step !== "pix" && step !== "paid") return;
+    if (step === "paid" && botEmail) return; // já temos o bot, nada a fazer
+    // Realtime: dispara checagem quando o status muda
     const ch = supabase
       .channel(`order-rt-${pix.orderId}`)
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "partner_credit_orders", filter: `id=eq.${pix.orderId}` },
-        (payload) => {
-          const next = payload.new as { status?: string };
-          if (next?.status && ["paid", "queued", "processing", "delivered"].includes(next.status)) {
-            supabase.functions
-              .invoke("partner-shop-check-status", { body: { orderId: pix.orderId } })
-              .then(({ data }) => {
-                setBotEmail((data as { botEmail?: string | null })?.botEmail ?? null);
-              });
-            setStep("paid");
-          }
+        () => {
+          // Pede ao backend o estado consolidado (com botEmail).
+          supabase.functions
+            .invoke("partner-shop-check-status", { body: { orderId: pix.orderId } })
+            .then(({ data }) => {
+              const d = data as { status?: string; botEmail?: string | null } | null;
+              if (!d?.status) return;
+              if (["paid", "queued", "processing", "delivered"].includes(d.status)) {
+                setBotEmail(d.botEmail ?? null);
+                setStep("paid");
+              }
+            });
         }
       )
       .subscribe();
@@ -114,14 +118,16 @@ export default function ComprarParceiro() {
         body: { orderId: pix.orderId },
       });
       if (!data) return;
-      const s = (data as { status?: string; botEmail?: string | null }).status;
+      const d = data as { status?: string; botEmail?: string | null };
+      const s = d.status;
       if (s && ["paid", "queued", "processing", "delivered"].includes(s)) {
-        setBotEmail((data as { botEmail?: string | null }).botEmail ?? null);
-        if (pollRef.current) {
+        setBotEmail(d.botEmail ?? null);
+        setStep("paid");
+        // Só para o polling depois que o bot foi entregue ao cliente.
+        if (d.botEmail && pollRef.current) {
           window.clearInterval(pollRef.current);
           pollRef.current = null;
         }
-        setStep("paid");
       }
     }, 4000);
     return () => {
@@ -131,7 +137,7 @@ export default function ComprarParceiro() {
       }
       supabase.removeChannel(ch);
     };
-  }, [step, pix?.orderId]);
+  }, [step, pix?.orderId, botEmail]);
 
   const handleConfirm = () => {
     if (!selected) return;

@@ -1,0 +1,281 @@
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Activity, Search, AlertTriangle, Clock, Loader2 } from "lucide-react";
+import GlitchText from "@/components/landing/GlitchText";
+
+type OrderStatus = "pending" | "paid" | "queued" | "processing" | "delivered" | "failed" | "expired" | "refunded";
+
+type Order = {
+  id: string;
+  partner_id: string;
+  pack_id: string | null;
+  customer_name: string;
+  customer_email: string;
+  customer_whatsapp: string | null;
+  target_workspace: string | null;
+  credits: number;
+  amount_cents: number;
+  status: OrderStatus;
+  tx_id: string | null;
+  pix_qrcode: string | null;
+  pix_copy_paste: string | null;
+  pix_expires_at: string | null;
+  paid_at: string | null;
+  assigned_bot_id: string | null;
+  delivered_at: string | null;
+  failed_reason: string | null;
+  created_at: string;
+};
+
+type BotMini = { id: string; nickname: string | null; email_lovable: string };
+
+const statusMeta: Record<OrderStatus, { label: string; cls: string }> = {
+  pending:    { label: "Aguardando pagamento", cls: "bg-muted text-muted-foreground border-muted-foreground/30" },
+  paid:       { label: "Pago",                 cls: "bg-primary/10 text-primary border-primary/40" },
+  queued:     { label: "Na fila",              cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" },
+  processing: { label: "Processando",          cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" },
+  delivered:  { label: "Entregue",             cls: "bg-primary/15 text-primary border-primary/40" },
+  failed:     { label: "Falhou",               cls: "bg-destructive/15 text-destructive border-destructive/40" },
+  expired:    { label: "Expirado",             cls: "bg-muted text-muted-foreground border-muted-foreground/30" },
+  refunded:   { label: "Reembolsado",          cls: "bg-muted text-muted-foreground border-muted-foreground/30" },
+};
+
+const STATUSES: OrderStatus[] = ["pending", "paid", "queued", "processing", "delivered", "failed", "expired", "refunded"];
+
+function brl(c: number) {
+  return (c / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+export default function Pedidos() {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  useEffect(() => { document.title = "Pedidos · Matrix"; }, []);
+
+  const [statusFilter, setStatusFilter] = useState<OrderStatus | "all">("all");
+  const [search, setSearch] = useState("");
+  const [detail, setDetail] = useState<Order | null>(null);
+
+  const { data: orders = [] } = useQuery({
+    queryKey: ["my-orders", user?.id],
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("partner_credit_orders")
+        .select("*")
+        .eq("partner_id", user!.id)
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return (data ?? []) as Order[];
+    },
+  });
+
+  const { data: bots = [] } = useQuery({
+    queryKey: ["my-bots-mini", user?.id],
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("farm_bots_partner_view")
+        .select("id, nickname, email_lovable")
+        .eq("partner_id", user!.id);
+      if (error) throw error;
+      return (data ?? []) as BotMini[];
+    },
+  });
+
+  const botById = useMemo(() => {
+    const m = new Map<string, BotMini>();
+    bots.forEach((b) => m.set(b.id, b));
+    return m;
+  }, [bots]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const ch = supabase
+      .channel(`orders-rt-${user.id}`)
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "partner_credit_orders", filter: `partner_id=eq.${user.id}` },
+        () => qc.invalidateQueries({ queryKey: ["my-orders", user.id] }))
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [user?.id, qc]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return orders.filter((o) => {
+      if (statusFilter !== "all" && o.status !== statusFilter) return false;
+      if (q && ![o.customer_name, o.customer_email, o.target_workspace ?? ""].some((v) => v.toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [orders, statusFilter, search]);
+
+  const stats = useMemo(() => {
+    const oneDayAgo = Date.now() - 24 * 3600 * 1000;
+    return {
+      queued: orders.filter((o) => o.status === "queued").length,
+      processing: orders.filter((o) => o.status === "processing").length,
+      failed24h: orders.filter((o) => o.status === "failed" && new Date(o.created_at).getTime() > oneDayAgo).length,
+    };
+  }, [orders]);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.3em] text-primary/70">
+          <Activity className="w-3.5 h-3.5" /> Console / Pedidos
+        </div>
+        <h1 className="text-3xl sm:text-4xl font-black font-mono">
+          <GlitchText>PEDIDOS</GlitchText>
+        </h1>
+        <p className="text-sm text-muted-foreground max-w-2xl">
+          Pedidos dos seus clientes em tempo real. A atribuição de bot é automática.
+        </p>
+      </div>
+
+      {(stats.queued > 0 || stats.processing > 0 || stats.failed24h > 0) && (
+        <div className="grid sm:grid-cols-3 gap-3">
+          {stats.queued > 0 && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm flex items-center gap-2">
+              <Clock className="w-4 h-4 text-amber-400" />
+              <span><strong>{stats.queued}</strong> aguardando bot</span>
+            </div>
+          )}
+          {stats.processing > 0 && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm flex items-center gap-2">
+              <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
+              <span><strong>{stats.processing}</strong> em processamento</span>
+            </div>
+          )}
+          {stats.failed24h > 0 && (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-destructive" />
+              <span><strong>{stats.failed24h}</strong> falharam nas últimas 24h</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      <Card>
+        <CardHeader className="pb-3 flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <CardTitle className="text-base">Lista de pedidos</CardTitle>
+            <div className="relative w-full sm:w-72">
+              <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar cliente, email, workspace..." className="pl-9" />
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <Button size="sm" variant={statusFilter === "all" ? "default" : "outline"} onClick={() => setStatusFilter("all")}>
+              Todos ({orders.length})
+            </Button>
+            {STATUSES.map((s) => {
+              const count = orders.filter((o) => o.status === s).length;
+              if (count === 0) return null;
+              return (
+                <Button key={s} size="sm" variant={statusFilter === s ? "default" : "outline"} onClick={() => setStatusFilter(s)}>
+                  {statusMeta[s].label} ({count})
+                </Button>
+              );
+            })}
+          </div>
+        </CardHeader>
+        <CardContent className="p-0 overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Cliente</TableHead>
+                <TableHead>Workspace</TableHead>
+                <TableHead>Pacote</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Bot</TableHead>
+                <TableHead>Criado</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.length === 0 && (
+                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Nenhum pedido.</TableCell></TableRow>
+              )}
+              {filtered.map((o) => {
+                const meta = statusMeta[o.status];
+                const bot = o.assigned_bot_id ? botById.get(o.assigned_bot_id) : null;
+                return (
+                  <TableRow key={o.id} className="cursor-pointer" onClick={() => setDetail(o)}>
+                    <TableCell>
+                      <div className="font-medium">{o.customer_name}</div>
+                      <div className="text-xs text-muted-foreground font-mono">{o.customer_email}</div>
+                      {o.customer_whatsapp && (
+                        <div className="text-xs text-muted-foreground font-mono">{o.customer_whatsapp}</div>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs font-mono">{o.target_workspace ?? "—"}</TableCell>
+                    <TableCell className="font-mono text-sm">{o.credits} cr · {brl(o.amount_cents)}</TableCell>
+                    <TableCell>
+                      <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${meta.cls}`}>
+                        {meta.label}
+                      </span>
+                      {o.status === "failed" && o.failed_reason && (
+                        <div className="text-[10px] text-destructive mt-1 max-w-[180px] truncate" title={o.failed_reason}>
+                          {o.failed_reason}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs font-mono">
+                      {bot ? (bot.nickname ?? bot.email_lovable) : (o.assigned_bot_id ? o.assigned_bot_id.slice(0, 8) + "…" : "—")}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {new Date(o.created_at).toLocaleString("pt-BR")}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Dialog open={!!detail} onOpenChange={(o) => !o && setDetail(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Pedido {detail?.id.slice(0, 8)}…</DialogTitle>
+          </DialogHeader>
+          {detail && (
+            <div className="space-y-2 text-sm">
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div><span className="text-muted-foreground">Cliente:</span> {detail.customer_name}</div>
+                <div><span className="text-muted-foreground">Email:</span> {detail.customer_email}</div>
+                <div><span className="text-muted-foreground">WhatsApp:</span> {detail.customer_whatsapp ?? "—"}</div>
+                <div><span className="text-muted-foreground">Workspace:</span> {detail.target_workspace ?? "—"}</div>
+                <div><span className="text-muted-foreground">Créditos:</span> {detail.credits}</div>
+                <div><span className="text-muted-foreground">Valor:</span> {brl(detail.amount_cents)}</div>
+                <div><span className="text-muted-foreground">Tx:</span> <span className="font-mono">{detail.tx_id ?? "—"}</span></div>
+                <div><span className="text-muted-foreground">Status:</span> {statusMeta[detail.status].label}</div>
+                <div><span className="text-muted-foreground">Pago em:</span> {detail.paid_at ? new Date(detail.paid_at).toLocaleString("pt-BR") : "—"}</div>
+                <div><span className="text-muted-foreground">Entregue em:</span> {detail.delivered_at ? new Date(detail.delivered_at).toLocaleString("pt-BR") : "—"}</div>
+                <div><span className="text-muted-foreground">Pix expira:</span> {detail.pix_expires_at ? new Date(detail.pix_expires_at).toLocaleString("pt-BR") : "—"}</div>
+                <div><span className="text-muted-foreground">Bot:</span> {detail.assigned_bot_id ? (botById.get(detail.assigned_bot_id)?.email_lovable ?? detail.assigned_bot_id) : "—"}</div>
+              </div>
+              {detail.status === "failed" && detail.failed_reason && (
+                <div className="rounded border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+                  <strong>Motivo da falha:</strong> {detail.failed_reason}
+                </div>
+              )}
+              {detail.status === "pending" && detail.pix_copy_paste && (
+                <div className="rounded border border-primary/30 bg-primary/5 p-2 space-y-1">
+                  <div className="text-xs text-muted-foreground">Pix copia e cola (reenvie ao cliente):</div>
+                  <Input readOnly value={detail.pix_copy_paste} className="font-mono text-xs" />
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

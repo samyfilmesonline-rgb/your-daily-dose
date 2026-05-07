@@ -5,23 +5,13 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import {
-  Card, CardContent, CardHeader, CardTitle,
-} from "@/components/ui/card";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
-import {
-  Tabs, TabsContent, TabsList, TabsTrigger,
-} from "@/components/ui/tabs";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
-} from "@/components/ui/dialog";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import {
-  Bot as BotIcon, Activity, Coins, Plus, Copy, ExternalLink, Trash2, Pencil,
-} from "lucide-react";
+import { Bot as BotIcon, Plus, Copy, ExternalLink, Trash2, Pencil, AlertTriangle } from "lucide-react";
 import GlitchText from "@/components/landing/GlitchText";
 
 type BotRow = {
@@ -32,43 +22,22 @@ type BotRow = {
   status: "idle" | "busy" | "offline" | "disabled";
   current_order_id: string | null;
   last_heartbeat_at: string | null;
+  notes: string | null;
 };
 
-type Order = {
-  id: string;
-  customer_name: string;
-  customer_email: string;
-  credits: number;
-  amount_cents: number;
-  status: string;
-  assigned_bot_id: string | null;
-  paid_at: string | null;
-  delivered_at: string | null;
-  created_at: string;
+const statusMeta: Record<BotRow["status"], { label: string; cls: string }> = {
+  idle:     { label: "Disponível",  cls: "bg-primary/10 text-primary border-primary/40" },
+  busy:     { label: "Processando", cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" },
+  offline:  { label: "Offline",     cls: "bg-muted text-muted-foreground border-muted-foreground/30" },
+  disabled: { label: "Desativado",  cls: "bg-destructive/10 text-destructive border-destructive/40" },
 };
 
-type Pack = {
-  id: string;
-  partner_id: string;
-  name: string;
-  credits: number;
-  price_cents: number;
-  original_price_cents: number | null;
-  badge_label: string | null;
-  description: string | null;
-  display_order: number;
-  is_active: boolean;
-};
-
-const statusColor: Record<BotRow["status"], string> = {
-  idle: "bg-primary/10 text-primary border-primary/40",
-  busy: "bg-amber-500/15 text-amber-400 border-amber-500/40",
-  offline: "bg-muted text-muted-foreground border-muted-foreground/30",
-  disabled: "bg-destructive/10 text-destructive border-destructive/40",
-};
-
-function brl(c: number) {
-  return (c / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+function heartbeatLabel(ts: string | null): { label: string; cls: string } {
+  if (!ts) return { label: "sem heartbeat", cls: "text-muted-foreground" };
+  const ageSec = (Date.now() - new Date(ts).getTime()) / 1000;
+  if (ageSec < 60) return { label: `online (há ${Math.floor(ageSec)}s)`, cls: "text-primary" };
+  if (ageSec < 300) return { label: `há ${Math.floor(ageSec / 60)} min`, cls: "text-amber-400" };
+  return { label: "sem sinal recente", cls: "text-destructive" };
 }
 
 export default function Bots() {
@@ -84,52 +53,30 @@ export default function Bots() {
       const { data, error } = await supabase
         .from("farm_bots_partner_view")
         .select("*")
+        .eq("partner_id", user!.id)
         .order("created_at", { ascending: true });
       if (error) throw error;
       return (data ?? []) as BotRow[];
     },
   });
 
-  const { data: orders = [] } = useQuery({
-    queryKey: ["my-orders", user?.id],
-    enabled: !!user?.id,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("partner_credit_orders")
-        .select("id, customer_name, customer_email, credits, amount_cents, status, assigned_bot_id, paid_at, delivered_at, created_at")
-        .order("created_at", { ascending: false })
-        .limit(50);
-      if (error) throw error;
-      return (data ?? []) as Order[];
-    },
-  });
-
-  const { data: packs = [], refetch: refetchPacks } = useQuery({
-    queryKey: ["my-packs", user?.id],
-    enabled: !!user?.id,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("partner_credit_packs")
-        .select("*")
-        .eq("partner_id", user!.id)
-        .order("display_order", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as Pack[];
-    },
-  });
-
-  // Realtime
   useEffect(() => {
     if (!user?.id) return;
     const ch = supabase
-      .channel(`bots-${user.id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "farm_bots", filter: `partner_id=eq.${user.id}` },
+      .channel(`bots-rt-${user.id}`)
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "farm_bots", filter: `partner_id=eq.${user.id}` },
         () => qc.invalidateQueries({ queryKey: ["my-bots", user.id] }))
-      .on("postgres_changes", { event: "*", schema: "public", table: "partner_credit_orders", filter: `partner_id=eq.${user.id}` },
-        () => qc.invalidateQueries({ queryKey: ["my-orders", user.id] }))
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [user?.id, qc]);
+
+  // tick para atualizar labels de heartbeat a cada 15s
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const i = setInterval(() => setTick((t) => t + 1), 15000);
+    return () => clearInterval(i);
+  }, []);
 
   const stats = useMemo(() => ({
     total: bots.length,
@@ -138,7 +85,89 @@ export default function Bots() {
     offline: bots.filter((b) => b.status === "offline" || b.status === "disabled").length,
   }), [bots]);
 
+  const heartbeatStale = bots.length > 0 && bots.every((b) => {
+    if (!b.last_heartbeat_at) return true;
+    return (Date.now() - new Date(b.last_heartbeat_at).getTime()) / 1000 > 300;
+  });
+
   const checkoutUrl = `${window.location.origin}/comprar/${user?.id ?? ""}`;
+
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<BotRow | null>(null);
+  const [form, setForm] = useState({
+    email_lovable: "",
+    senha_lovable: "",
+    nickname: "",
+    notes: "",
+  });
+
+  const openNew = () => {
+    setEditing(null);
+    setForm({ email_lovable: "", senha_lovable: "", nickname: "", notes: "" });
+    setOpen(true);
+  };
+  const openEdit = (b: BotRow) => {
+    setEditing(b);
+    setForm({
+      email_lovable: b.email_lovable,
+      senha_lovable: "",
+      nickname: b.nickname ?? "",
+      notes: b.notes ?? "",
+    });
+    setOpen(true);
+  };
+
+  const save = async () => {
+    if (!user?.id) return;
+    const email = form.email_lovable.trim().toLowerCase();
+    if (!email) return toast.error("Informe o e-mail");
+    if (!editing && !form.senha_lovable) return toast.error("Informe a senha");
+
+    if (editing) {
+      const patch: Record<string, unknown> = {
+        email_lovable: email,
+        nickname: form.nickname.trim() || null,
+        notes: form.notes.trim() || null,
+      };
+      if (form.senha_lovable) patch.senha_lovable = form.senha_lovable;
+      const { error } = await supabase.from("farm_bots").update(patch).eq("id", editing.id);
+      if (error) return toast.error(error.message);
+    } else {
+      const { error } = await supabase.from("farm_bots").insert({
+        partner_id: user.id,
+        email_lovable: email,
+        senha_lovable: form.senha_lovable,
+        nickname: form.nickname.trim() || null,
+        notes: form.notes.trim() || null,
+        status: "idle",
+      });
+      if (error) return toast.error(error.message);
+    }
+    toast.success("Bot salvo");
+    setOpen(false);
+    qc.invalidateQueries({ queryKey: ["my-bots", user.id] });
+  };
+
+  const toggleActive = async (b: BotRow, active: boolean) => {
+    if (b.status !== "idle" && b.status !== "disabled") {
+      return toast.error("Bot ocupado/offline. Aguarde o worker liberar.");
+    }
+    const { error } = await supabase
+      .from("farm_bots")
+      .update({ status: active ? "idle" : "disabled" })
+      .eq("id", b.id);
+    if (error) return toast.error(error.message);
+    qc.invalidateQueries({ queryKey: ["my-bots", user!.id] });
+  };
+
+  const remove = async (b: BotRow) => {
+    if (b.status === "busy") return toast.error("Bot está processando, não pode ser removido.");
+    if (!confirm(`Remover bot ${b.nickname ?? b.email_lovable}?`)) return;
+    const { error } = await supabase.from("farm_bots").delete().eq("id", b.id);
+    if (error) return toast.error(error.message);
+    toast.success("Removido");
+    qc.invalidateQueries({ queryKey: ["my-bots", user!.id] });
+  };
 
   return (
     <div className="space-y-6">
@@ -150,17 +179,17 @@ export default function Bots() {
           <GlitchText>BOTS DE FARM</GlitchText>
         </h1>
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Cada bot é uma conta Lovable que entrega créditos para um cliente. Quando um pedido é pago,
-          um bot ocioso é selecionado automaticamente. Se nenhum estiver livre, o pedido fica na fila.
+          Cada bot é uma conta Lovable. Quando um pedido é pago, o sistema escolhe automaticamente um bot
+          disponível. Você não precisa atribuir manualmente.
         </p>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           { l: "Total", v: stats.total, c: "text-foreground" },
-          { l: "Ociosos", v: stats.idle, c: "text-primary" },
-          { l: "Em uso", v: stats.busy, c: "text-amber-400" },
-          { l: "Offline", v: stats.offline, c: "text-muted-foreground" },
+          { l: "Disponíveis", v: stats.idle, c: "text-primary" },
+          { l: "Processando", v: stats.busy, c: "text-amber-400" },
+          { l: "Offline / Desativados", v: stats.offline, c: "text-muted-foreground" },
         ].map((s) => (
           <Card key={s.l}>
             <CardHeader className="pb-2">
@@ -171,7 +200,25 @@ export default function Bots() {
         ))}
       </div>
 
-      {/* Link público */}
+      {bots.length === 0 && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 text-sm flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-400" />
+          Nenhum bot cadastrado. Adicione ao menos um bot para receber pedidos.
+        </div>
+      )}
+      {bots.length > 0 && stats.idle === 0 && stats.busy === 0 && (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-destructive" />
+          Nenhum bot disponível no momento. Pedidos novos vão para a fila até um bot ficar livre.
+        </div>
+      )}
+      {heartbeatStale && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 text-sm flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-400" />
+          Worker offline: nenhum bot enviou heartbeat nos últimos 5 min.
+        </div>
+      )}
+
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
@@ -189,213 +236,61 @@ export default function Bots() {
         </CardContent>
       </Card>
 
-      <Tabs defaultValue="bots">
-        <TabsList>
-          <TabsTrigger value="bots"><BotIcon className="w-3.5 h-3.5 mr-1.5" /> Bots</TabsTrigger>
-          <TabsTrigger value="orders"><Activity className="w-3.5 h-3.5 mr-1.5" /> Pedidos</TabsTrigger>
-          <TabsTrigger value="packs"><Coins className="w-3.5 h-3.5 mr-1.5" /> Meus pacotes</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="bots" className="mt-4">
-          {bots.length === 0 ? (
-            <Card><CardContent className="p-6 text-sm text-muted-foreground text-center">
-              Você ainda não tem bots cadastrados. Solicite ao administrador a liberação dos seus bots.
-            </CardContent></Card>
-          ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {bots.map((b) => (
-                <Card key={b.id} className="border-primary/20">
-                  <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
-                    <CardTitle className="text-sm font-mono">
-                      {b.nickname ?? `Bot ${b.id.slice(0, 6)}`}
-                    </CardTitle>
-                    <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${statusColor[b.status]}`}>
-                      {b.status}
-                    </span>
-                  </CardHeader>
-                  <CardContent className="space-y-1">
-                    <div className="text-xs text-muted-foreground font-mono break-all">{b.email_lovable}</div>
-                    {b.current_order_id && (
-                      <div className="text-[11px] text-amber-400">Processando pedido {b.current_order_id.slice(0, 8)}…</div>
-                    )}
-                    <div className="text-[10px] text-muted-foreground">
-                      Último sinal: {b.last_heartbeat_at ? new Date(b.last_heartbeat_at).toLocaleString("pt-BR") : "—"}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="orders" className="mt-4">
-          <Card>
-            <CardContent className="p-0 overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Cliente</TableHead>
-                    <TableHead>Pacote</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Bot</TableHead>
-                    <TableHead>Data</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {orders.length === 0 && (
-                    <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">Nenhum pedido ainda.</TableCell></TableRow>
-                  )}
-                  {orders.map((o) => (
-                    <TableRow key={o.id}>
-                      <TableCell>
-                        <div className="font-medium">{o.customer_name}</div>
-                        <div className="text-xs text-muted-foreground font-mono">{o.customer_email}</div>
-                      </TableCell>
-                      <TableCell className="font-mono text-sm">{o.credits} cr · {brl(o.amount_cents)}</TableCell>
-                      <TableCell>
-                        <span className="text-[10px] font-mono uppercase tracking-wider border border-primary/30 bg-primary/5 px-2 py-0.5 rounded">
-                          {o.status}
-                        </span>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {o.assigned_bot_id ? (bots.find((b) => b.id === o.assigned_bot_id)?.nickname ?? o.assigned_bot_id.slice(0, 8)) : "—"}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {new Date(o.created_at).toLocaleString("pt-BR")}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="packs" className="mt-4">
-          <PacksManager packs={packs} partnerId={user?.id ?? ""} onChange={refetchPacks} />
-        </TabsContent>
-      </Tabs>
-    </div>
-  );
-}
-
-function PacksManager({ packs, partnerId, onChange }: { packs: Pack[]; partnerId: string; onChange: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState<Pack | null>(null);
-  const [form, setForm] = useState({
-    name: "",
-    credits: 200,
-    price_cents: 2700,
-    original_price_cents: 5700,
-    badge_label: "OFERTA DE LANÇAMENTO",
-    description: "",
-    is_active: true,
-    display_order: 0,
-  });
-
-  const openNew = () => {
-    setEditing(null);
-    setForm({
-      name: "Pacote 200 créditos",
-      credits: 200,
-      price_cents: 2700,
-      original_price_cents: 5700,
-      badge_label: "OFERTA DE LANÇAMENTO",
-      description: "",
-      is_active: true,
-      display_order: 0,
-    });
-    setOpen(true);
-  };
-  const openEdit = (p: Pack) => {
-    setEditing(p);
-    setForm({
-      name: p.name,
-      credits: p.credits,
-      price_cents: p.price_cents,
-      original_price_cents: p.original_price_cents ?? 0,
-      badge_label: p.badge_label ?? "",
-      description: p.description ?? "",
-      is_active: p.is_active,
-      display_order: p.display_order,
-    });
-    setOpen(true);
-  };
-
-  const save = async () => {
-    const payload = {
-      partner_id: partnerId,
-      name: form.name.trim(),
-      credits: Math.max(1, Math.floor(form.credits)),
-      price_cents: Math.max(1, Math.floor(form.price_cents)),
-      original_price_cents: form.original_price_cents > 0 ? Math.floor(form.original_price_cents) : null,
-      badge_label: form.badge_label.trim() || null,
-      description: form.description.trim() || null,
-      is_active: form.is_active,
-      display_order: form.display_order,
-    };
-    const res = editing
-      ? await supabase.from("partner_credit_packs").update(payload).eq("id", editing.id)
-      : await supabase.from("partner_credit_packs").insert(payload);
-    if (res.error) return toast.error(res.error.message);
-    toast.success("Pacote salvo");
-    setOpen(false);
-    onChange();
-  };
-
-  const del = async (id: string) => {
-    if (!confirm("Excluir pacote?")) return;
-    const { error } = await supabase.from("partner_credit_packs").delete().eq("id", id);
-    if (error) return toast.error(error.message);
-    toast.success("Removido");
-    onChange();
-  };
-
-  return (
-    <div className="space-y-3">
       <div className="flex justify-end">
-        <Button onClick={openNew}><Plus className="w-4 h-4 mr-1.5" /> Novo pacote</Button>
+        <Button onClick={openNew}><Plus className="w-4 h-4 mr-1.5" /> Novo bot</Button>
       </div>
+
       <Card>
         <CardContent className="p-0 overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Nome</TableHead>
-                <TableHead>Créditos</TableHead>
-                <TableHead>Preço</TableHead>
+                <TableHead>Bot</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Heartbeat</TableHead>
+                <TableHead>Pedido em curso</TableHead>
                 <TableHead>Ativo</TableHead>
                 <TableHead className="text-right">Ações</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {packs.length === 0 && (
-                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">Nenhum pacote ainda.</TableCell></TableRow>
+              {bots.length === 0 && (
+                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Nenhum bot ainda.</TableCell></TableRow>
               )}
-              {packs.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell className="font-medium">{p.name}</TableCell>
-                  <TableCell className="font-mono">{p.credits}</TableCell>
-                  <TableCell className="font-mono">
-                    {brl(p.price_cents)}
-                    {p.original_price_cents && (
-                      <span className="text-xs text-muted-foreground line-through ml-2">{brl(p.original_price_cents)}</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Switch checked={p.is_active} onCheckedChange={async (v) => {
-                      await supabase.from("partner_credit_packs").update({ is_active: v }).eq("id", p.id);
-                      onChange();
-                    }} />
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button size="icon" variant="ghost" onClick={() => openEdit(p)}><Pencil className="w-4 h-4" /></Button>
-                    <Button size="icon" variant="ghost" className="text-destructive" onClick={() => del(p.id)}>
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {bots.map((b) => {
+                const meta = statusMeta[b.status];
+                const hb = heartbeatLabel(b.last_heartbeat_at);
+                return (
+                  <TableRow key={b.id}>
+                    <TableCell>
+                      <div className="font-medium">{b.nickname ?? `Bot ${b.id.slice(0, 6)}`}</div>
+                      <div className="text-xs text-muted-foreground font-mono break-all">{b.email_lovable}</div>
+                    </TableCell>
+                    <TableCell>
+                      <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${meta.cls}`}>
+                        {meta.label}
+                      </span>
+                    </TableCell>
+                    <TableCell className={`text-xs font-mono ${hb.cls}`}>{hb.label}</TableCell>
+                    <TableCell className="text-xs font-mono text-muted-foreground">
+                      {b.current_order_id ? b.current_order_id.slice(0, 8) + "…" : "—"}
+                    </TableCell>
+                    <TableCell>
+                      <Switch
+                        checked={b.status !== "disabled"}
+                        disabled={b.status === "busy" || b.status === "offline"}
+                        onCheckedChange={(v) => toggleActive(b, v)}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button size="icon" variant="ghost" onClick={() => openEdit(b)}><Pencil className="w-4 h-4" /></Button>
+                      <Button size="icon" variant="ghost" className="text-destructive" onClick={() => remove(b)}>
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </CardContent>
@@ -404,23 +299,29 @@ function PacksManager({ packs, partnerId, onChange }: { packs: Pack[]; partnerId
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{editing ? "Editar pacote" : "Novo pacote"}</DialogTitle>
+            <DialogTitle>{editing ? "Editar bot" : "Novo bot"}</DialogTitle>
+            <DialogDescription>
+              {editing ? "A senha não é exibida. Preencha apenas se quiser alterá-la." : "Conta Lovable que será usada para entregar créditos."}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <div><Label>Nome</Label><Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} /></div>
-            <div className="grid grid-cols-2 gap-2">
-              <div><Label>Créditos</Label><Input type="number" value={form.credits} onChange={(e) => setForm((f) => ({ ...f, credits: Number(e.target.value) }))} /></div>
-              <div><Label>Ordem</Label><Input type="number" value={form.display_order} onChange={(e) => setForm((f) => ({ ...f, display_order: Number(e.target.value) }))} /></div>
+            <div>
+              <Label>E-mail Lovable</Label>
+              <Input type="email" value={form.email_lovable}
+                onChange={(e) => setForm((f) => ({ ...f, email_lovable: e.target.value }))} />
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div><Label>Preço (centavos)</Label><Input type="number" value={form.price_cents} onChange={(e) => setForm((f) => ({ ...f, price_cents: Number(e.target.value) }))} /></div>
-              <div><Label>Preço original (centavos)</Label><Input type="number" value={form.original_price_cents} onChange={(e) => setForm((f) => ({ ...f, original_price_cents: Number(e.target.value) }))} /></div>
+            <div>
+              <Label>{editing ? "Nova senha (opcional)" : "Senha"}</Label>
+              <Input type="password" value={form.senha_lovable} autoComplete="new-password"
+                onChange={(e) => setForm((f) => ({ ...f, senha_lovable: e.target.value }))} />
             </div>
-            <div><Label>Etiqueta de oferta</Label><Input value={form.badge_label} onChange={(e) => setForm((f) => ({ ...f, badge_label: e.target.value }))} /></div>
-            <div><Label>Descrição</Label><Input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} /></div>
-            <div className="flex items-center gap-2">
-              <Switch checked={form.is_active} onCheckedChange={(v) => setForm((f) => ({ ...f, is_active: v }))} />
-              <Label>Ativo (visível para clientes)</Label>
+            <div>
+              <Label>Apelido</Label>
+              <Input value={form.nickname} onChange={(e) => setForm((f) => ({ ...f, nickname: e.target.value }))} />
+            </div>
+            <div>
+              <Label>Notas</Label>
+              <Textarea value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
             </div>
             <Button onClick={save} className="w-full">Salvar</Button>
           </div>

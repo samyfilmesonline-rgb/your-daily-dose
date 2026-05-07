@@ -225,6 +225,32 @@ export default function ComprarParceiro() {
   const [confirmStopId, setConfirmStopId] = useState<string | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
 
+  // Prefill / "Refazer pedido" — quando vier do card de pedido reembolsado
+  const [prefillOrderId, setPrefillOrderId] = useState<string | null>(null);
+  const packsListRef = useRef<HTMLDivElement | null>(null);
+
+  const totalAvailableBalance =
+    customerBalance.credits +
+    (crossAuth && crossAuth.expiresAt > Date.now() ? crossAuth.credits : 0);
+
+  const reorderFromHistory = (item: OrderHistoryItem) => {
+    if (!packs?.length) return;
+    // Mesmo número de créditos, ou pacote mais próximo
+    const samePack =
+      packs.find((p) => p.credits === item.credits) ??
+      [...packs].sort(
+        (a, b) => Math.abs(a.credits - item.credits) - Math.abs(b.credits - item.credits),
+      )[0];
+    if (!samePack) return;
+    setSelected(samePack);
+    setEmail(item.customerEmail || "");
+    if (item.targetWorkspace) setWorkspace(item.targetWorkspace);
+    setUseBalance(true);
+    setPrefillOrderId(item.id);
+    setTab("comprar");
+    setStep("form");
+  };
+
   // Saldo de outro e-mail (Plano C) — só fingerprint
   const [crossOpen, setCrossOpen] = useState(false);
   const [crossEmail, setCrossEmail] = useState("");

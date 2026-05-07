@@ -1056,6 +1056,17 @@ function OrdersHistorySection({
                   {o.status === "failed" && o.failedReason && (
                     <div className="text-xs text-destructive mt-1">{o.failedReason}</div>
                   )}
+                  {o.status === "refunded" && (
+                    <div className="text-xs text-emerald-400 mt-1">
+                      {o.refundedCredits ?? 0} créditos voltaram como saldo
+                      {o.failedReason ? ` · ${o.failedReason}` : ""}
+                    </div>
+                  )}
+                  {(o.balanceAppliedCredits ?? 0) > 0 && (
+                    <div className="text-[11px] text-emerald-400/80 mt-1">
+                      Pago com {o.balanceAppliedCredits} créditos do seu saldo
+                    </div>
+                  )}
                   {o.status === "delivered" && o.deliveredAt && (
                     <div className="text-xs text-emerald-400 mt-1">
                       Entregue em {new Date(o.deliveredAt).toLocaleString("pt-BR")}
@@ -1078,6 +1089,12 @@ function OrdersHistorySection({
                     <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
                       onClick={() => onCancel(o.id)}>
                       <Trash2 className="w-4 h-4 mr-1.5" /> Cancelar
+                    </Button>
+                  )}
+                  {["paid","queued","processing"].includes(o.status) && o.ownDevice && !o.stopRequestedAt && (
+                    <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
+                      onClick={() => onStop(o.id)}>
+                      <StopCircle className="w-4 h-4 mr-1.5" /> Parar farm
                     </Button>
                   )}
                   {(o.status === "failed" || o.status === "expired" || o.status === "refunded") && partnerWhatsapp && (

@@ -20,6 +20,8 @@ import Licenses from "./pages/dashboard/Licenses.tsx";
 import Loja from "./pages/dashboard/Loja.tsx";
 import MinhaConta from "./pages/dashboard/MinhaConta.tsx";
 import Atualizacoes from "./pages/dashboard/Atualizacoes.tsx";
+import Bots from "./pages/dashboard/Bots.tsx";
+import ComprarParceiro from "./pages/ComprarParceiro.tsx";
 import ProtectedRoute from "./components/auth/ProtectedRoute.tsx";
 import AdminRoute from "./components/auth/AdminRoute.tsx";
 import ActivePartnerRoute from "./components/auth/ActivePartnerRoute.tsx";
@@ -39,6 +41,7 @@ const App = () => (
           <Route path="/auth" element={<Auth />} />
           <Route path="/vendas" element={<Vendas />} />
           <Route path="/ativar" element={<Ativar />} />
+          <Route path="/comprar/:partnerId" element={<ComprarParceiro />} />
           <Route
             path="/dashboard"
             element={
@@ -56,6 +59,7 @@ const App = () => (
             <Route path="users" element={<AdminRoute><Users /></AdminRoute>} />
             <Route path="parceiros" element={<AdminRoute><Partners /></AdminRoute>} />
             <Route path="atualizacoes" element={<AdminRoute><Atualizacoes /></AdminRoute>} />
+            <Route path="bots" element={<ActivePartnerRoute><Bots /></ActivePartnerRoute>} />
           </Route>
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />

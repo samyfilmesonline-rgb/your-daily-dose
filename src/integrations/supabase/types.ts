@@ -426,11 +426,43 @@ export type Database = {
         }
         Relationships: []
       }
+      partner_credit_ledger: {
+        Row: {
+          created_at: string
+          customer_email: string
+          delta: number
+          id: string
+          order_id: string | null
+          partner_id: string
+          reason: string
+        }
+        Insert: {
+          created_at?: string
+          customer_email: string
+          delta: number
+          id?: string
+          order_id?: string | null
+          partner_id: string
+          reason: string
+        }
+        Update: {
+          created_at?: string
+          customer_email?: string
+          delta?: number
+          id?: string
+          order_id?: string | null
+          partner_id?: string
+          reason?: string
+        }
+        Relationships: []
+      }
       partner_credit_orders: {
         Row: {
           amount_cents: number
           assigned_at: string | null
           assigned_bot_id: string | null
+          balance_applied_cents: number
+          balance_applied_credits: number
           bot_invite_confirmed_at: string | null
           bot_invite_confirmed_fingerprint: string | null
           client_fingerprint: string | null
@@ -450,7 +482,9 @@ export type Database = {
           pix_expires_at: string | null
           pix_qrcode: string | null
           raw_payload: Json | null
+          refunded_credits: number
           status: Database["public"]["Enums"]["partner_order_status"]
+          stop_requested_at: string | null
           target_workspace: string | null
           tx_id: string | null
           updated_at: string
@@ -459,6 +493,8 @@ export type Database = {
           amount_cents: number
           assigned_at?: string | null
           assigned_bot_id?: string | null
+          balance_applied_cents?: number
+          balance_applied_credits?: number
           bot_invite_confirmed_at?: string | null
           bot_invite_confirmed_fingerprint?: string | null
           client_fingerprint?: string | null
@@ -478,7 +514,9 @@ export type Database = {
           pix_expires_at?: string | null
           pix_qrcode?: string | null
           raw_payload?: Json | null
+          refunded_credits?: number
           status?: Database["public"]["Enums"]["partner_order_status"]
+          stop_requested_at?: string | null
           target_workspace?: string | null
           tx_id?: string | null
           updated_at?: string
@@ -487,6 +525,8 @@ export type Database = {
           amount_cents?: number
           assigned_at?: string | null
           assigned_bot_id?: string | null
+          balance_applied_cents?: number
+          balance_applied_credits?: number
           bot_invite_confirmed_at?: string | null
           bot_invite_confirmed_fingerprint?: string | null
           client_fingerprint?: string | null
@@ -506,7 +546,9 @@ export type Database = {
           pix_expires_at?: string | null
           pix_qrcode?: string | null
           raw_payload?: Json | null
+          refunded_credits?: number
           status?: Database["public"]["Enums"]["partner_order_status"]
+          stop_requested_at?: string | null
           target_workspace?: string | null
           tx_id?: string | null
           updated_at?: string
@@ -576,6 +618,36 @@ export type Database = {
           original_price_cents?: number | null
           partner_id?: string
           price_cents?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      partner_customer_balances: {
+        Row: {
+          client_fingerprint: string | null
+          created_at: string
+          credits: number
+          customer_email: string
+          id: string
+          partner_id: string
+          updated_at: string
+        }
+        Insert: {
+          client_fingerprint?: string | null
+          created_at?: string
+          credits?: number
+          customer_email: string
+          id?: string
+          partner_id: string
+          updated_at?: string
+        }
+        Update: {
+          client_fingerprint?: string | null
+          created_at?: string
+          credits?: number
+          customer_email?: string
+          id?: string
+          partner_id?: string
           updated_at?: string
         }
         Relationships: []
@@ -891,6 +963,15 @@ export type Database = {
       }
     }
     Functions: {
+      apply_balance_to_order: {
+        Args: {
+          _amount: number
+          _customer_email: string
+          _order_id: string
+          _partner_id: string
+        }
+        Returns: number
+      }
       assign_bot_to_order: { Args: { _order_id: string }; Returns: string }
       assign_next_queued_order: {
         Args: { _partner_id: string }
@@ -902,6 +983,8 @@ export type Database = {
           amount_cents: number
           assigned_at: string | null
           assigned_bot_id: string | null
+          balance_applied_cents: number
+          balance_applied_credits: number
           bot_invite_confirmed_at: string | null
           bot_invite_confirmed_fingerprint: string | null
           client_fingerprint: string | null
@@ -921,7 +1004,9 @@ export type Database = {
           pix_expires_at: string | null
           pix_qrcode: string | null
           raw_payload: Json | null
+          refunded_credits: number
           status: Database["public"]["Enums"]["partner_order_status"]
+          stop_requested_at: string | null
           target_workspace: string | null
           tx_id: string | null
           updated_at: string
@@ -956,6 +1041,10 @@ export type Database = {
         Args: { p_email: string; p_id_do_usuario: string; p_workspace: string }
         Returns: undefined
       }
+      refund_order_remainder: {
+        Args: { _order_id: string; _reason: string }
+        Returns: number
+      }
       release_bot: {
         Args: {
           _bot_id: string
@@ -964,6 +1053,10 @@ export type Database = {
           _success: boolean
         }
         Returns: undefined
+      }
+      stop_order_partial: {
+        Args: { _fingerprint: string; _order_id: string }
+        Returns: number
       }
     }
     Enums: {

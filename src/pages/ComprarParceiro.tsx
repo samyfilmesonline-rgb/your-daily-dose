@@ -985,3 +985,344 @@ function OrderTrackingDialog({
     </Dialog>
   );
 }
+// ============================================================
+// Histórico de pedidos (tab "Meus pedidos")
+// ============================================================
+
+function OrdersHistorySection({
+  history, loading, email, onEmailChange, onRefresh,
+  onTrack, onCancel, partnerWhatsapp,
+}: {
+  history: OrderHistoryItem[] | null;
+  loading: boolean;
+  email: string;
+  onEmailChange: (v: string) => void;
+  onRefresh: () => void;
+  onTrack: (item: OrderHistoryItem) => void;
+  onCancel: (id: string) => void;
+  partnerWhatsapp: string | null;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border-2 border-primary/30 bg-card/60 backdrop-blur p-5">
+        <div className="flex flex-col md:flex-row md:items-end gap-3">
+          <div className="flex-1">
+            <Label className="text-xs">Ver pedidos por e-mail (opcional)</Label>
+            <Input
+              type="email"
+              placeholder="seu@email.com"
+              value={email}
+              onChange={(e) => onEmailChange(e.target.value)}
+              onBlur={onRefresh}
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Pedidos feitos neste navegador aparecem automaticamente. Use o e-mail
+              se trocou de dispositivo.
+            </p>
+          </div>
+          <Button variant="outline" onClick={onRefresh} disabled={loading}>
+            <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+            Atualizar
+          </Button>
+        </div>
+      </div>
+
+      {loading && !history ? (
+        <div className="text-center text-muted-foreground font-mono py-10">
+          Carregando seus pedidos...
+        </div>
+      ) : !history?.length ? (
+        <div className="text-center text-muted-foreground font-mono py-10 rounded-2xl border border-dashed border-primary/20 bg-card/40">
+          Nenhum pedido encontrado neste dispositivo.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {history.map((o) => {
+            const badge = STATUS_BADGE[o.status];
+            const canCancel = o.status === "pending" && o.ownDevice;
+            const canTrack = ["pending", "paid", "queued", "processing"].includes(o.status);
+            return (
+              <div
+                key={o.id}
+                className="rounded-xl border border-primary/20 bg-card/60 p-4 flex flex-col md:flex-row md:items-center gap-3"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[10px] font-mono uppercase tracking-wider border px-2 py-0.5 rounded ${badge.cls}`}>
+                      {badge.label}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{timeAgo(o.createdAt)}</span>
+                    {!o.ownDevice && (
+                      <span className="text-[10px] font-mono uppercase tracking-wider border border-muted text-muted-foreground px-2 py-0.5 rounded">
+                        outro dispositivo
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1.5 font-bold">
+                    {o.credits} créditos · {brl(o.amountCents)}
+                  </div>
+                  <div className="text-xs text-muted-foreground break-all">
+                    Workspace: <span className="font-mono text-foreground">{o.targetWorkspace ?? "—"}</span>
+                  </div>
+                  {o.botEmail && (
+                    <div className="text-xs text-muted-foreground break-all">
+                      Bot: <span className="font-mono text-primary">{o.botEmail}</span>
+                    </div>
+                  )}
+                  {o.status === "failed" && o.failedReason && (
+                    <div className="text-xs text-destructive mt-1">{o.failedReason}</div>
+                  )}
+                  {o.status === "delivered" && o.deliveredAt && (
+                    <div className="text-xs text-emerald-400 mt-1">
+                      Entregue em {new Date(o.deliveredAt).toLocaleString("pt-BR")}
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2 md:flex-col md:items-stretch md:w-44">
+                  {canTrack && (
+                    <Button size="sm" onClick={() => onTrack(o)}>
+                      <Eye className="w-4 h-4 mr-1.5" />
+                      {o.status === "pending" ? "Ver Pix" : "Acompanhar"}
+                    </Button>
+                  )}
+                  {!canTrack && (
+                    <Button size="sm" variant="outline" onClick={() => onTrack(o)}>
+                      <Eye className="w-4 h-4 mr-1.5" /> Detalhes
+                    </Button>
+                  )}
+                  {canCancel && (
+                    <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
+                      onClick={() => onCancel(o.id)}>
+                      <Trash2 className="w-4 h-4 mr-1.5" /> Cancelar
+                    </Button>
+                  )}
+                  {(o.status === "failed" || o.status === "expired" || o.status === "refunded") && partnerWhatsapp && (
+                    <a
+                      href={`https://wa.me/${partnerWhatsapp.replace(/\D/g, "")}?text=${encodeURIComponent(`Olá! Preciso de ajuda com o pedido ${o.id}.`)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center text-xs underline text-primary"
+                    >
+                      Falar com suporte
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Tracking de pedido vindo do histórico (recupera Pix em aberto)
+// ============================================================
+
+function HistoryTrackingDialog({
+  orderId, initialItem, onOpenChange,
+}: {
+  orderId: string | null;
+  initialItem: OrderHistoryItem | null;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const [state, setState] = useState<OrderState | null>(null);
+  const [pix, setPix] = useState<{ qr: string | null; copy: string | null } | null>(null);
+
+  useEffect(() => {
+    if (!orderId) {
+      setState(null);
+      setPix(null);
+      return;
+    }
+    if (initialItem) {
+      setPix({ qr: initialItem.pixQrcode, copy: initialItem.pixCopyPaste });
+    }
+    const fetchStatus = async () => {
+      const { data } = await supabase.functions.invoke("partner-shop-check-status", {
+        body: { orderId },
+      });
+      const d = data as OrderState | null;
+      if (d?.status) setState(d);
+    };
+    fetchStatus();
+    const ch = supabase
+      .channel(`hist-rt-${orderId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "partner_credit_orders", filter: `id=eq.${orderId}` },
+        () => fetchStatus()
+      )
+      .subscribe();
+    const id = window.setInterval(fetchStatus, 6000);
+    return () => {
+      window.clearInterval(id);
+      supabase.removeChannel(ch);
+    };
+  }, [orderId, initialItem]);
+
+  const status = state?.status ?? initialItem?.status ?? null;
+  const showPix = status === "pending" && pix?.copy;
+
+  if (!orderId) return null;
+
+  return (
+    <Dialog open={!!orderId} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        {showPix ? (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <QrCode className="w-5 h-5 text-primary" /> Pague via Pix
+              </DialogTitle>
+              <DialogDescription>
+                Escaneie o QR Code ou copie o código abaixo. Liberação automática após o pagamento.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col items-center gap-4 mt-2">
+              {pix?.qr && (
+                <div className="bg-white p-3 rounded-lg">
+                  <img src={pix.qr} alt="QR Code Pix" className="w-56 h-56 object-contain" />
+                </div>
+              )}
+              {pix?.copy && (
+                <div className="w-full">
+                  <Label className="text-xs">Pix Copia e Cola</Label>
+                  <div className="flex gap-2 mt-1">
+                    <Input readOnly value={pix.copy} className="font-mono text-xs" />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(pix.copy!);
+                        toast({ title: "Copiado!" });
+                      }}
+                    >
+                      <Copy className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" /> Aguardando pagamento...
+              </div>
+            </div>
+          </>
+        ) : (
+          <OrderTrackingInline
+            order={state}
+            fallbackWorkspace={initialItem?.targetWorkspace ?? null}
+            fallbackCredits={initialItem?.credits ?? null}
+            fallbackAmountCents={initialItem?.amountCents ?? null}
+            onCopyEmail={async (e) => {
+              await navigator.clipboard.writeText(e);
+              toast({ title: "E-mail copiado!" });
+            }}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Versão "inline" (sem Dialog próprio) do tracking, reaproveitando o body
+function OrderTrackingInline({
+  order, fallbackWorkspace, fallbackCredits, fallbackAmountCents, onCopyEmail,
+}: {
+  order: OrderState | null;
+  fallbackWorkspace: string | null;
+  fallbackCredits: number | null;
+  fallbackAmountCents: number | null;
+  onCopyEmail: (email: string) => void;
+}) {
+  const status = order?.status;
+  const botEmail = order?.botEmail ?? null;
+  const workspace = order?.targetWorkspace ?? fallbackWorkspace ?? null;
+  const credits = order?.credits ?? fallbackCredits ?? null;
+  const amount = order?.amountCents ?? fallbackAmountCents ?? null;
+  const isTerminalSuccess = status === "delivered";
+  const isTerminalFailure = status === "failed" || status === "expired" || status === "refunded";
+  const showBotBlock = !!botEmail && (status === "processing" || status === "paid" || status === "queued");
+  const headerIcon = isTerminalSuccess ? <CheckCircle2 className="w-6 h-6" />
+    : isTerminalFailure ? <XCircle className="w-6 h-6" />
+    : showBotBlock ? <Bot className="w-6 h-6" />
+    : <Hourglass className="w-6 h-6 animate-pulse" />;
+  const headerTone = isTerminalFailure ? "text-destructive" : "text-primary";
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className={`flex items-center gap-2 ${headerTone}`}>
+          {headerIcon} {statusHeadline(order)}
+        </DialogTitle>
+        <DialogDescription>
+          {isTerminalSuccess
+            ? "Seus créditos já foram adicionados ao workspace informado."
+            : isTerminalFailure
+            ? "Veja os detalhes abaixo. Em caso de cobrança, o reembolso é automático."
+            : showBotBlock
+            ? "Falta um passo manual: convide o bot abaixo como Owner do seu workspace Lovable."
+            : "Estamos preparando seu pedido. Esta tela atualiza sozinha."}
+        </DialogDescription>
+      </DialogHeader>
+      <div className="rounded-lg border border-primary/20 bg-card/60 p-3 text-xs grid grid-cols-2 gap-2">
+        <div><div className="text-muted-foreground">Workspace</div><div className="font-mono font-semibold break-all">{workspace ?? "—"}</div></div>
+        <div><div className="text-muted-foreground">Créditos</div><div className="font-mono font-semibold">{credits ?? "—"}</div></div>
+        <div><div className="text-muted-foreground">Valor</div><div className="font-mono font-semibold">{amount != null ? brl(amount) : "—"}</div></div>
+        <div><div className="text-muted-foreground">Status</div><div className="font-mono font-semibold">{status ? STATUS_LABEL[status] : "—"}</div></div>
+      </div>
+      {showBotBlock && botEmail && (
+        <div className="rounded-lg border-2 border-primary/40 bg-primary/5 p-4 space-y-3 mt-3">
+          <div className="text-xs font-mono uppercase tracking-widest text-primary flex items-center gap-1.5">
+            <Mail className="w-3.5 h-3.5" /> Próximo passo: convide o bot no seu workspace Lovable
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Entre no Lovable, abra o workspace informado e <strong>convide o e-mail abaixo como Owner</strong>.
+            O sistema <strong>não</strong> envia esse convite automaticamente.
+          </p>
+          <div className="rounded border border-primary/30 bg-background/60 p-3">
+            <div className="text-[10px] font-mono uppercase text-primary/70 mb-1">E-mail do bot</div>
+            <div className="font-mono text-base font-bold text-primary break-all">{botEmail}</div>
+            <Button size="sm" variant="outline" className="mt-2" onClick={() => onCopyEmail(botEmail)}>
+              <Copy className="w-3.5 h-3.5 mr-1.5" /> Copiar e-mail do bot
+            </Button>
+          </div>
+          <ol className="list-decimal pl-5 space-y-1 text-xs text-muted-foreground">
+            <li>Acesse <a href="https://lovable.dev" target="_blank" rel="noopener noreferrer" className="text-primary underline inline-flex items-center gap-1">lovable.dev <ExternalLink className="w-3 h-3" /></a></li>
+            <li>Abra o workspace informado ({workspace ?? "—"})</li>
+            <li>Vá em <strong>Settings → Members</strong></li>
+            <li>Convide o e-mail do bot como <strong>Owner</strong></li>
+            <li>Volte aqui e aguarde — atualiza sozinho</li>
+          </ol>
+        </div>
+      )}
+      {(status === "paid" || status === "queued" || (status === "processing" && !order?.assignedBotId)) && !showBotBlock && (
+        <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm flex items-center gap-2">
+          <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
+          Estamos preparando seu pedido. Se demorar, fale com o suporte.
+        </div>
+      )}
+      {isTerminalSuccess && (
+        <div className="mt-3 rounded-lg border border-primary/40 bg-primary/5 p-3 text-sm">
+          <div className="flex items-center gap-2 text-primary font-semibold">
+            <CheckCircle2 className="w-4 h-4" /> Créditos entregues!
+          </div>
+          {order?.deliveredAt && (
+            <div className="text-xs text-muted-foreground">Entregue em {new Date(order.deliveredAt).toLocaleString("pt-BR")}</div>
+          )}
+        </div>
+      )}
+      {isTerminalFailure && status && (
+        <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm space-y-1">
+          <div className="flex items-center gap-2 text-destructive font-semibold">
+            <XCircle className="w-4 h-4" /> {STATUS_LABEL[status]}
+          </div>
+          {order?.failedReason && <div className="text-xs text-muted-foreground">{order.failedReason}</div>}
+          <div className="text-xs text-muted-foreground">Em caso de pagamento confirmado, o reembolso é automático.</div>
+        </div>
+      )}
+    </>
+  );
+}

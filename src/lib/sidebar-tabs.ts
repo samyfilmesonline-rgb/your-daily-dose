@@ -1,4 +1,4 @@
-import { LayoutDashboard, Users as UsersIcon, Boxes, Shield, Handshake, KeyRound, ShoppingBag, UserCircle, Package, type LucideIcon } from "lucide-react";
+import { LayoutDashboard, Users as UsersIcon, Boxes, Shield, Handshake, KeyRound, ShoppingBag, UserCircle, Package, Bot, type LucideIcon } from "lucide-react";
 
 export type TabVisibility =
   | "always"
@@ -89,6 +89,13 @@ export const SIDEBAR_TABS: SidebarTab[] = [
     url: "/dashboard/atualizacoes",
     icon: Package,
     defaultVisibility: "adminOnly",
+  },
+  {
+    key: "bots",
+    title: "Bots de Farm",
+    url: "/dashboard/bots",
+    icon: Bot,
+    defaultVisibility: "adminOrActivePartner",
   },
 ];
 

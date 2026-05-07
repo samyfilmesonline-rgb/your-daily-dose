@@ -124,12 +124,14 @@ export default function Bots() {
     if (!editing && !form.senha_lovable) return toast.error("Informe a senha");
 
     if (editing) {
-      const patch: Record<string, unknown> = {
+      const basePatch = {
         email_lovable: email,
         nickname: form.nickname.trim() || null,
         notes: form.notes.trim() || null,
       };
-      if (form.senha_lovable) patch.senha_lovable = form.senha_lovable;
+      const patch = form.senha_lovable
+        ? { ...basePatch, senha_lovable: form.senha_lovable }
+        : basePatch;
       const { error } = await supabase.from("farm_bots").update(patch).eq("id", editing.id);
       if (error) return toast.error(error.message);
     } else {

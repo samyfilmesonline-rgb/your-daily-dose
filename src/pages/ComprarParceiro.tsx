@@ -90,6 +90,25 @@ export default function ComprarParceiro() {
   // Polling de status quando estamos na etapa pix
   useEffect(() => {
     if (step !== "pix" || !pix?.orderId) return;
+    // Realtime: avança imediatamente quando o status muda
+    const ch = supabase
+      .channel(`order-rt-${pix.orderId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "partner_credit_orders", filter: `id=eq.${pix.orderId}` },
+        (payload) => {
+          const next = payload.new as { status?: string };
+          if (next?.status && ["paid", "queued", "processing", "delivered"].includes(next.status)) {
+            supabase.functions
+              .invoke("partner-shop-check-status", { body: { orderId: pix.orderId } })
+              .then(({ data }) => {
+                setBotEmail((data as { botEmail?: string | null })?.botEmail ?? null);
+              });
+            setStep("paid");
+          }
+        }
+      )
+      .subscribe();
     pollRef.current = window.setInterval(async () => {
       const { data } = await supabase.functions.invoke("partner-shop-check-status", {
         body: { orderId: pix.orderId },
@@ -110,6 +129,7 @@ export default function ComprarParceiro() {
         window.clearInterval(pollRef.current);
         pollRef.current = null;
       }
+      supabase.removeChannel(ch);
     };
   }, [step, pix?.orderId]);
 

@@ -687,6 +687,17 @@ export default function ComprarParceiro() {
                 </Button>
               </div>
             )}
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-xs text-emerald-400 hover:text-emerald-300"
+                onClick={() => setCrossOpen(true)}
+              >
+                <Wallet className="w-3.5 h-3.5 mr-1.5" />
+                Tenho saldo em outro e-mail
+              </Button>
+            </div>
             <OrdersHistorySection
               history={history}
               loading={historyLoading}

@@ -1579,9 +1579,84 @@ function OrderTrackingInline({
             <XCircle className="w-4 h-4" /> {STATUS_LABEL[status]}
           </div>
           {order?.failedReason && <div className="text-xs text-muted-foreground">{order.failedReason}</div>}
-          <div className="text-xs text-muted-foreground">Em caso de pagamento confirmado, o reembolso é automático.</div>
+          {status === "refunded" && (order?.refundedCredits ?? 0) > 0 && (
+            <div className="text-xs text-emerald-400">
+              {order?.refundedCredits} créditos voltaram como saldo. Use no próximo pedido sem pagar de novo.
+            </div>
+          )}
+          {status !== "refunded" && (
+            <div className="text-xs text-muted-foreground">Em caso de pagamento confirmado, o reembolso é automático.</div>
+          )}
         </div>
       )}
+      {canStop && (
+        <div className="mt-3">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full text-destructive hover:text-destructive"
+            onClick={() => setConfirmStop(true)}
+          >
+            <StopCircle className="w-4 h-4 mr-1.5" /> Parar farm e receber saldo
+          </Button>
+        </div>
+      )}
+      <AlertDialog open={confirmStop} onOpenChange={(o) => !o && setConfirmStop(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Parar farm agora?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {progress ? (
+                <>
+                  Você já farmou <strong>{progress.farmed}</strong> de <strong>{progress.target}</strong> créditos.
+                  Os <strong>{Math.max(0, progress.target - progress.farmed)}</strong> restantes voltam como saldo
+                  para usar em outro pedido sem pagar de novo.
+                </>
+              ) : (
+                <>O que faltar volta como saldo para o seu próximo pedido.</>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={stopping}
+              onClick={async () => {
+                let orderId: string | null = null;
+                try { orderId = localStorage.getItem("mf_active_order_id"); } catch { /* ignore */ }
+                const winId = (window as unknown as { __mf_tracking_id?: string }).__mf_tracking_id;
+                if (winId) orderId = winId;
+                let fp = "";
+                try { fp = localStorage.getItem("mf_client_fp") ?? ""; } catch { /* ignore */ }
+                if (!orderId) {
+                  toast({ title: "Não foi possível identificar o pedido", variant: "destructive" });
+                  return;
+                }
+                setStopping(true);
+                try {
+                  const { data, error } = await supabase.functions.invoke("partner-shop-stop-order", {
+                    body: { orderId, fingerprint: fp },
+                  });
+                  if (error) throw error;
+                  const refunded = (data as { refundedCredits?: number })?.refundedCredits ?? 0;
+                  toast({
+                    title: "Farm parado",
+                    description: refunded > 0 ? `${refunded} créditos voltaram para o saldo.` : "Pedido encerrado.",
+                  });
+                  setConfirmStop(false);
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : "Erro";
+                  toast({ title: "Falha", description: msg, variant: "destructive" });
+                } finally {
+                  setStopping(false);
+                }
+              }}
+            >
+              {stopping ? "Parando..." : "Sim, parar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

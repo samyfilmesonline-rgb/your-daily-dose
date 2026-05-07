@@ -1321,6 +1321,11 @@ function OrderTrackingInline({
                   <span className="text-destructive">Falhou: {progress.currentExecution.erro ?? "erro"}</span>
                 )}
               </div>
+              {progress.currentExecution.erro && progress.currentExecution.status !== "falha" && progress.currentExecution.status !== "erro" && (
+                <div className="mt-1 text-[11px] text-muted-foreground break-words">
+                  {progress.currentExecution.erro}
+                </div>
+              )}
             </div>
           )}
           {progress.recent.length > 1 && (
@@ -1328,18 +1333,27 @@ function OrderTrackingInline({
               <summary className="cursor-pointer text-muted-foreground">Ver últimas tentativas</summary>
               <ul className="mt-2 space-y-1">
                 {progress.recent.map((r) => (
-                  <li key={r.id} className="flex items-center gap-2 font-mono">
-                    {r.status === "sucesso" || r.status === "concluido" ? (
-                      <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                    ) : r.status === "limite" ? (
-                      <Clock className="w-3 h-3 text-amber-400" />
-                    ) : r.status === "em_andamento" ? (
-                      <Loader2 className="w-3 h-3 text-primary animate-spin" />
-                    ) : (
-                      <XCircle className="w-3 h-3 text-destructive" />
-                    )}
-                    <span>+{r.creditosAdicionados ?? 0}</span>
-                    <span className="text-muted-foreground">{timeAgo(r.atualizadoEm)}</span>
+                  <li key={r.id} className="flex items-start gap-2 font-mono">
+                    <span className="mt-0.5">
+                      {r.status === "sucesso" || r.status === "concluido" ? (
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                      ) : r.status === "limite" ? (
+                        <Clock className="w-3 h-3 text-amber-400" />
+                      ) : r.status === "em_andamento" ? (
+                        <Loader2 className="w-3 h-3 text-primary animate-spin" />
+                      ) : (
+                        <XCircle className="w-3 h-3 text-destructive" />
+                      )}
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="text-foreground">+{r.creditosAdicionados ?? 0}</span>
+                      <span className="text-muted-foreground ml-1">{timeAgo(r.atualizadoEm)}</span>
+                      {r.erro && (
+                        <span className="block text-[11px] text-muted-foreground/90 break-words whitespace-normal">
+                          {r.erro}
+                        </span>
+                      )}
+                    </span>
                   </li>
                 ))}
               </ul>

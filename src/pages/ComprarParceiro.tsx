@@ -725,6 +725,27 @@ export default function ComprarParceiro() {
               <Button className="w-full" size="lg" onClick={handleConfirm}>
                 <Sparkles className="w-4 h-4 mr-2" /> Confirmar e gerar pedido
               </Button>
+              {customerBalance.credits > 0 && (
+                <label className="flex items-start gap-2 text-xs text-muted-foreground rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={useBalance}
+                    onChange={(e) => setUseBalance(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <strong className="text-emerald-400">Usar meu saldo ({customerBalance.credits} créditos)</strong>
+                    {customerBalance.credits >= selected.credits ? (
+                      <span className="block">Saldo cobre o pedido — você não paga nada via Pix.</span>
+                    ) : (
+                      <span className="block">
+                        Aplicado: {customerBalance.credits} créditos.
+                        Pix gerado só pelo restante ({selected.credits - customerBalance.credits} créditos).
+                      </span>
+                    )}
+                  </span>
+                </label>
+              )}
               <p className="text-[10px] text-center text-muted-foreground">
                 Cobrança proporcional · reembolso automático
               </p>

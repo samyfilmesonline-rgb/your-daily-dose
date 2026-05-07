@@ -56,6 +56,7 @@ Deno.serve(async (req) => {
       });
     }
 
+    const cellphone = (b.customerWhatsapp ?? "").trim();
     const charge = await createPixCharge({
       amount: pack.price_cents,
       expiresIn: 60 * 30,
@@ -63,9 +64,10 @@ Deno.serve(async (req) => {
       customer: {
         name: b.customerName,
         email: b.customerEmail.toLowerCase(),
-        cellphone: b.customerWhatsapp,
         taxId: taxIdDigits,
+        ...(cellphone ? { cellphone } : {}),
       },
+      metadata: { partnerId: b.partnerId, packId: pack.id },
     });
 
     const { data: order, error: insErr } = await sb

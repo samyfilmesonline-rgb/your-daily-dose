@@ -39,6 +39,7 @@ type PixData = { orderId: string; txId: string; qrCodeImage: string; copiaECola:
 export default function ComprarParceiro() {
   const { partnerId = "" } = useParams();
   const { toast } = useToast();
+  const isValidPartnerId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(partnerId);
 
   const [selected, setSelected] = useState<Pack | null>(null);
   const [step, setStep] = useState<Step>("browse");
@@ -60,7 +61,7 @@ export default function ComprarParceiro() {
 
   const { data: partner } = useQuery({
     queryKey: ["partner-public", partnerId],
-    enabled: !!partnerId,
+    enabled: isValidPartnerId,
     queryFn: async () => {
       const { data } = await supabase
         .from("parceiros")
@@ -73,7 +74,7 @@ export default function ComprarParceiro() {
 
   const { data: packs, isLoading } = useQuery({
     queryKey: ["partner-packs", partnerId],
-    enabled: !!partnerId,
+    enabled: isValidPartnerId,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("partner_credit_packs")
@@ -158,6 +159,19 @@ export default function ComprarParceiro() {
     const d = 1 - main.price_cents / main.original_price_cents;
     return Math.round(d * 100);
   }, [main]);
+
+  if (!isValidPartnerId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background text-foreground p-6">
+        <div className="max-w-md text-center space-y-3">
+          <h1 className="text-2xl font-bold">Link inválido</h1>
+          <p className="text-sm text-muted-foreground">
+            Este link de compra está incorreto ou incompleto. Peça ao parceiro o link correto, no formato <code>/comprar/&lt;ID&gt;</code>.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="matrix-theme min-h-screen bg-background text-foreground relative overflow-x-hidden">

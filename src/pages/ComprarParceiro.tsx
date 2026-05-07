@@ -727,6 +727,65 @@ export default function ComprarParceiro() {
           toast({ title: "E-mail copiado!" });
         }}
       />
+
+      {/* Tracking de pedido vindo do histórico */}
+      <HistoryTrackingDialog
+        orderId={trackingOrderId}
+        initialItem={trackingItem}
+        onOpenChange={(o) => {
+          if (!o) {
+            setTrackingOrderId(null);
+            setTrackingItem(null);
+          }
+        }}
+      />
+
+      {/* Confirmação de cancelamento */}
+      <AlertDialog
+        open={!!confirmCancelId}
+        onOpenChange={(o) => !o && setConfirmCancelId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancelar este pedido?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Só é possível cancelar enquanto o pagamento ainda não foi confirmado.
+              Depois de pago, fale com o suporte para qualquer ajuste.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!!cancelingId}
+              onClick={async () => {
+                if (!confirmCancelId) return;
+                setCancelingId(confirmCancelId);
+                try {
+                  const { error } = await supabase.functions.invoke(
+                    "partner-shop-cancel-order",
+                    { body: { orderId: confirmCancelId, fingerprint } }
+                  );
+                  if (error) throw error;
+                  toast({ title: "Pedido cancelado" });
+                  try {
+                    const active = localStorage.getItem(ACTIVE_ORDER_KEY);
+                    if (active === confirmCancelId) localStorage.removeItem(ACTIVE_ORDER_KEY);
+                  } catch { /* ignore */ }
+                  setConfirmCancelId(null);
+                  fetchHistory();
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : "Erro";
+                  toast({ title: "Falha", description: msg, variant: "destructive" });
+                } finally {
+                  setCancelingId(null);
+                }
+              }}
+            >
+              {cancelingId ? "Cancelando..." : "Sim, cancelar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

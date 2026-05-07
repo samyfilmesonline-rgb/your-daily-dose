@@ -61,9 +61,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Se ainda está paid sem bot (ex.: webhook chegou antes mas não havia bot idle),
-    // tenta atribuir agora — função é idempotente para 'queued'/'paid'.
-    if (status === "paid" || status === "queued" || !assignedBotId) {
+    // Se ficou 'paid' ou 'queued' sem bot atribuído, tenta atribuir agora
+    // (ex.: webhook chegou antes mas não havia bot idle no momento).
+    if ((status === "paid" || status === "queued") && !assignedBotId) {
       try {
         await sb.rpc("assign_bot_to_order", { _order_id: order.id });
       } catch (e) {

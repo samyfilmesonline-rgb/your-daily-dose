@@ -228,12 +228,6 @@ export default function ComprarParceiro() {
   // Prefill / "Refazer pedido" — quando vier do card de pedido reembolsado
   const [prefillOrderId, setPrefillOrderId] = useState<string | null>(null);
   const packsListRef = useRef<HTMLDivElement | null>(null);
-
-  const totalAvailableBalance =
-    customerBalance.credits +
-    (crossAuth && crossAuth.expiresAt > Date.now() ? crossAuth.credits : 0);
-
-  const reorderFromHistory = (item: OrderHistoryItem) => {
     if (!packs?.length) return;
     // Mesmo número de créditos, ou pacote mais próximo
     const samePack =

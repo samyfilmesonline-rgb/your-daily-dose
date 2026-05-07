@@ -660,6 +660,7 @@ export default function ComprarParceiro() {
         </section>
 
         {/* Pacotes */}
+        <div ref={packsListRef} className="space-y-6">
         {isLoading ? (
           <div className="text-center text-muted-foreground font-mono py-10">Carregando pacotes...</div>
         ) : !packs?.length ? (
@@ -670,6 +671,8 @@ export default function ComprarParceiro() {
           packs.map((p) => {
             const orig = p.original_price_cents;
             const discPct = orig ? Math.round((1 - p.price_cents / orig) * 100) : null;
+            const balCalc = computePriceWithBalance(p.credits, p.price_cents, totalAvailableBalance);
+            const hasBal = totalAvailableBalance > 0;
             return (
               <section
                 key={p.id}
@@ -723,19 +726,38 @@ export default function ComprarParceiro() {
                   <div className="text-xs text-muted-foreground mt-1">
                     ≈ {(p.price_cents / p.credits / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 3 })} por crédito
                   </div>
+                  {hasBal && (
+                    <div className="mt-3 rounded-lg border-2 border-emerald-500/40 bg-emerald-500/10 p-3">
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <span className="text-muted-foreground">Seu saldo</span>
+                        <span className="text-emerald-400 font-bold">−{balCalc.balanceUsed} créditos</span>
+                      </div>
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="text-xs font-mono text-muted-foreground">Você paga via Pix</span>
+                        <span className={`text-2xl font-black font-mono ${balCalc.freeWithBalance ? "text-emerald-400" : "text-primary"}`}>
+                          {balCalc.freeWithBalance ? "GRÁTIS" : brl(balCalc.payCents)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                   <Button
                     size="lg"
-                    className="mt-5 w-full text-base"
+                    className={`mt-5 w-full text-base ${balCalc.freeWithBalance ? "bg-emerald-500 hover:bg-emerald-600 text-background" : ""}`}
                     onClick={() => { setSelected(p); setConfirmOpen(true); }}
                   >
                     <Sparkles className="w-4 h-4 mr-2" />
-                    Comprar {p.credits} créditos · {brl(p.price_cents)}
+                    {balCalc.freeWithBalance
+                      ? `Pegar ${p.credits} créditos GRÁTIS com saldo`
+                      : hasBal
+                      ? `Comprar ${p.credits} cr · pague só ${brl(balCalc.payCents)}`
+                      : `Comprar ${p.credits} créditos · ${brl(p.price_cents)}`}
                   </Button>
                 </div>
               </section>
             );
           })
         )}
+        </div>
 
         <div className="flex items-center justify-center gap-2 text-xs font-mono text-muted-foreground pt-4">
           <ShieldCheck className="w-3.5 h-3.5 text-primary" />

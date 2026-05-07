@@ -134,6 +134,22 @@ const FP_KEY = "mf_client_fp";
 const LAST_EMAIL_KEY = "mf_last_email";
 const ACTIVE_ORDER_KEY = "mf_active_order_id";
 
+function computePriceWithBalance(
+  packCredits: number,
+  packPriceCents: number,
+  balanceCredits: number,
+) {
+  const balanceUsed = Math.max(0, Math.min(balanceCredits, packCredits));
+  const remaining = Math.max(0, packCredits - balanceUsed);
+  const payCents =
+    packCredits > 0 ? Math.round((packPriceCents * remaining) / packCredits) : packPriceCents;
+  return {
+    balanceUsed,
+    payCents,
+    freeWithBalance: payCents === 0 && balanceUsed > 0,
+  };
+}
+
 function getOrCreateFingerprint(): string {
   try {
     let fp = localStorage.getItem(FP_KEY);

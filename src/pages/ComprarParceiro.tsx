@@ -160,6 +160,19 @@ export default function ComprarParceiro() {
     return Math.round(d * 100);
   }, [main]);
 
+  if (!isValidPartnerId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background text-foreground p-6">
+        <div className="max-w-md text-center space-y-3">
+          <h1 className="text-2xl font-bold">Link inválido</h1>
+          <p className="text-sm text-muted-foreground">
+            Este link de compra está incorreto ou incompleto. Peça ao parceiro o link correto, no formato <code>/comprar/&lt;ID&gt;</code>.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="matrix-theme min-h-screen bg-background text-foreground relative overflow-x-hidden">
       <style>{matrixThemeStyle}</style>

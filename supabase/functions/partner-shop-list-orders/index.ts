@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
     const { data: orders, error } = await sb
       .from("partner_credit_orders")
       .select(
-        "id, status, credits, amount_cents, target_workspace, created_at, paid_at, delivered_at, failed_reason, assigned_bot_id, pix_qrcode, pix_copy_paste, pix_expires_at, tx_id, customer_email, client_fingerprint"
+        "id, status, credits, amount_cents, target_workspace, created_at, paid_at, delivered_at, failed_reason, assigned_bot_id, pix_qrcode, pix_copy_paste, pix_expires_at, tx_id, customer_email, client_fingerprint, partner_id, assigned_at, bot_invite_confirmed_at"
       )
       .eq("partner_id", partnerId)
       .or(filter)
@@ -86,6 +86,35 @@ Deno.serve(async (req) => {
       for (const b of bots ?? []) botEmailMap[b.id] = b.email_lovable;
     }
 
+    // Pré-calcula progresso para pedidos em andamento
+    const progressMap: Record<string, { farmed: number; percent: number }> = {};
+    const inProgress = (orders ?? []).filter(
+      (o) => o.assigned_bot_id && o.target_workspace && ["paid", "queued", "processing"].includes(o.status)
+    );
+    await Promise.all(
+      inProgress.map(async (o) => {
+        const botEmail = botEmailMap[o.assigned_bot_id as string];
+        if (!botEmail) return;
+        const sinceIso = o.assigned_at ?? o.paid_at ?? null;
+        let q = sb
+          .from("execucoes_lovable")
+          .select("creditos_adicionados")
+          .eq("id_do_usuario", o.partner_id)
+          .eq("email_lovable", botEmail)
+          .eq("workspace_nome", o.target_workspace);
+        if (sinceIso) q = q.gte("iniciado_em", sinceIso);
+        const { data: rows } = await q;
+        const farmed = (rows ?? []).reduce(
+          (acc: number, r: { creditos_adicionados: number | string | null }) =>
+            acc + (Number(r.creditos_adicionados) || 0),
+          0
+        );
+        const percent =
+          o.credits > 0 ? Math.min(100, Math.round((farmed / o.credits) * 100)) : 0;
+        progressMap[o.id] = { farmed, percent };
+      })
+    );
+
     const items = (orders ?? []).map((o) => {
       // Modo reduzido: pedido casou só por email (não bate o fingerprint deste device)
       const ownDevice = o.client_fingerprint === fingerprint;
@@ -108,6 +137,8 @@ Deno.serve(async (req) => {
         txId: ownDevice ? o.tx_id : null,
         customerEmail: o.customer_email,
         ownDevice,
+        botInviteConfirmedAt: o.bot_invite_confirmed_at ?? null,
+        progress: progressMap[o.id] ?? { farmed: 0, percent: 0 },
       };
     });
 

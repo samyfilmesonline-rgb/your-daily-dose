@@ -808,6 +808,8 @@ export default function ComprarParceiro() {
               }}
               onCancel={(id) => setConfirmCancelId(id)}
               onStop={(id) => setConfirmStopId(id)}
+              onReorder={reorderFromHistory}
+              hasBalance={totalAvailableBalance > 0}
               partnerWhatsapp={partner?.whatsapp ?? null}
             />
           </TabsContent>

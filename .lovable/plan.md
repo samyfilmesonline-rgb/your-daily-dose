@@ -1,97 +1,65 @@
+## Goal
 
-## Auditoria — sistema de atualização do app desktop
+Fix the `supabase_lov` finding: partners (and clients) can UPDATE sensitive billing/status fields on `app_licenses` because the existing partner UPDATE policy only checks row ownership, not which columns changed.
 
-### O que já está pronto (verificado)
+## Current state
 
-- **Tabela `public.app_releases`** com colunas `version` (unique), `download_url`, `sha256`, `file_size_bytes`, `changelog`, `is_mandatory`, `min_supported_version`, `is_published`, `published_at`, `created_by`, timestamps.
-- **RLS**: anon + authenticated leem somente `is_published = true`; admin tem CRUD total.
-- **Realtime** ativo: `app_releases` está em `supabase_realtime` com `replica identity full`.
-- **Trigger** `set_app_releases_updated_at` atualiza `updated_at` e seta `published_at = now()` ao publicar.
-- **Painel admin** `/dashboard/atualizacoes` com tabela, badge LATEST, criar/editar/publicar/despublicar/deletar.
-- **Edge function** `app-version-check` (GET, pública) retorna `{ update_available, mandatory, latest_version, download_url, sha256, file_size_bytes, changelog, published_at }`.
-- **Documentação Python** em `docs/desktop-updater.md` com listener Realtime + fallback HTTP + verificação SHA256.
+Three UPDATE policies exist on `app_licenses`:
+- `app_licenses_update_admin` — admins can do anything ✅
+- `app_licenses_update_partner` — `partner_id = auth.uid() AND is_active_partner()` with no field freeze ❌
+- `app_licenses_update_client_machine_only` — already freezes most fields, but the WITH CHECK uses `WHERE app_licenses_1.id = app_licenses_1.id` (self-join bug → matches every row, returns arbitrary row), so the freeze doesn't actually compare against the row being updated ❌
 
-### Gaps encontrados que ainda atrapalham o "100% funcional"
+There is also a trigger `app_licenses_guard_authenticated_updates` that already enforces field-level rules in plpgsql. It works, but defense-in-depth at the RLS layer is what the scanner expects.
 
-1. **Despublicar sem zerar `published_at`** — hoje, ao despublicar uma release o `published_at` é mantido; ao republicar, o trigger não reseta o timestamp porque a coluna não está nula. Resultado: badge "publicada em" mostra data antiga. Ajustar trigger.
-2. **`min_supported_version` no form aceita string vazia, mas zod marca `.optional()` junto com `.refine`** — string vazia entra no caminho do refine e às vezes barra o submit. Validar antes do trim.
-3. **Edge function não valida o param `current`** — se o cliente enviar lixo, `cmp` retorna `NaN`, e a comparação vira `false`. Validar com regex semver e tratar como `0.0.0`.
-4. **Edge function com cache** — desktop pode receber resposta cacheada por proxies/CDN. Adicionar `Cache-Control: no-store`.
-5. **Doc Python desatualizada** — a chamada `channel.on_postgres_changes` da `supabase-py` v2 exige `event` com valor explícito (`INSERT` ou `UPDATE`), não `*`. Também filtramos `is_published = true` no callback para evitar disparar em rascunho.
-6. **Sem feedback visual de "release ativa hoje"** — adicionar destaque do `latest_published` no topo da página com botão "Copiar payload de teste" (útil para validar o fluxo no app desktop).
-7. **Reaproveitar a função para forçar versão mínima** — quando admin sobe `min_supported_version`, qualquer cliente abaixo recebe `mandatory=true`. Já está implementado, apenas documentar no painel para o admin entender.
+## Fix (single migration)
 
-### Mudanças propostas
+1. **Drop & recreate `app_licenses_update_client_machine_only`** with a correct WITH CHECK that compares `NEW.*` to the existing row via `app_licenses_1.id = app_licenses.id` (not `= app_licenses_1.id`). Restrict customer writes to: `machine_hash`, `machine_hashes`, `activated_at`, `last_seen_at`, `id_do_usuario` (claim once), `updated_at`. All other columns (`status`, `expires_at`, `max_machines`, `plan_code`, `plan_name`, `partner_id`, `partner_name`, `partner_whatsapp`, `customer_email`, `customer_name`, `notes`) must equal their old values.
 
-#### Banco (1 migration)
+2. **Drop & recreate `app_licenses_update_partner`** with a WITH CHECK that:
+   - Keeps `partner_id = auth.uid() AND is_active_partner()`
+   - Freezes fields a partner must NOT change without admin: nothing (partners legitimately edit status/expires/plan/etc.) — BUT prevents self-escalation by freezing `partner_id` to `OLD.partner_id` and forbidding partners from reassigning a license to another partner. The scanner specifically calls out billing fields; we mirror the trigger's existing rules and additionally require that partners cannot reduce `max_machines` arbitrarily? → keep parity with the trigger: partners CAN edit status/expires/plan/max_machines/notes (this is their job), they CANNOT edit `customer_email`, `id_do_usuario` once set, or reassign `partner_id`.
+
+   The scanner's concern is real for the *client* path; for partners we document that pricing/payment is handled out-of-band and partners legitimately manage these fields. We'll add the WITH CHECK that locks `partner_id`, `customer_email`, and `id_do_usuario` to their old values to prevent any cross-partner takeover, matching the existing trigger.
+
+3. Mark the finding fixed with an explanation.
+4. Update `mem://security-memory` (create it) noting that partner UPDATEs on `app_licenses` legitimately mutate billing fields and that field-level locks live in both the RLS WITH CHECK and the `app_licenses_guard_authenticated_updates` trigger.
+
+## SQL sketch
 
 ```sql
--- Trigger: ao despublicar, zerar published_at; ao republicar, setar de novo.
-CREATE OR REPLACE FUNCTION public.set_app_releases_updated_at()
-RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
-BEGIN
-  NEW.updated_at = now();
-  IF TG_OP = 'INSERT' THEN
-    IF NEW.is_published = true AND NEW.published_at IS NULL THEN
-      NEW.published_at = now();
-    END IF;
-  ELSIF TG_OP = 'UPDATE' THEN
-    IF NEW.is_published = true AND OLD.is_published = false THEN
-      NEW.published_at = now();
-    ELSIF NEW.is_published = false AND OLD.is_published = true THEN
-      NEW.published_at = NULL;
-    END IF;
-  END IF;
-  RETURN NEW;
-END $$;
+DROP POLICY app_licenses_update_client_machine_only ON public.app_licenses;
+CREATE POLICY app_licenses_update_client_machine_only
+ON public.app_licenses FOR UPDATE TO authenticated
+USING (
+  auth.uid() = id_do_usuario
+  OR lower(customer_email) = lower(coalesce(auth.jwt()->>'email',''))
+)
+WITH CHECK (
+  (auth.uid() = id_do_usuario
+   OR lower(customer_email) = lower(coalesce(auth.jwt()->>'email','')))
+  AND status        = (SELECT status        FROM public.app_licenses o WHERE o.id = app_licenses.id)
+  AND coalesce(expires_at,'epoch') = coalesce((SELECT expires_at FROM public.app_licenses o WHERE o.id = app_licenses.id),'epoch')
+  AND max_machines  = (SELECT max_machines  FROM public.app_licenses o WHERE o.id = app_licenses.id)
+  AND plan_code     = (SELECT plan_code     FROM public.app_licenses o WHERE o.id = app_licenses.id)
+  AND coalesce(plan_name,'') = coalesce((SELECT plan_name FROM public.app_licenses o WHERE o.id = app_licenses.id),'')
+  AND coalesce(partner_id::text,'') = coalesce((SELECT partner_id::text FROM public.app_licenses o WHERE o.id = app_licenses.id),'')
+  AND customer_email = (SELECT customer_email FROM public.app_licenses o WHERE o.id = app_licenses.id)
+  AND coalesce(customer_name,'') = coalesce((SELECT customer_name FROM public.app_licenses o WHERE o.id = app_licenses.id),'')
+  AND coalesce(notes,'')         = coalesce((SELECT notes         FROM public.app_licenses o WHERE o.id = app_licenses.id),'')
+);
+
+DROP POLICY app_licenses_update_partner ON public.app_licenses;
+CREATE POLICY app_licenses_update_partner
+ON public.app_licenses FOR UPDATE TO authenticated
+USING (partner_id = auth.uid() AND is_active_partner())
+WITH CHECK (
+  partner_id = auth.uid() AND is_active_partner()
+  AND partner_id     = (SELECT partner_id     FROM public.app_licenses o WHERE o.id = app_licenses.id)
+  AND customer_email = (SELECT customer_email FROM public.app_licenses o WHERE o.id = app_licenses.id)
+  AND coalesce(id_do_usuario::text,'') = coalesce((SELECT id_do_usuario::text FROM public.app_licenses o WHERE o.id = app_licenses.id),'')
+);
 ```
 
-#### Edge function `app-version-check`
+## Out of scope (other findings)
 
-- Validar `current` com regex semver, fallback `0.0.0`.
-- Adicionar `Cache-Control: no-store, max-age=0` no header da resposta.
-- Retornar `current_version` ecoado para debug.
-
-#### Painel `/dashboard/atualizacoes`
-
-- Card destacado para a release LATEST com:
-  - botão "Copiar payload JSON" (formato igual ao do edge function);
-  - botão "Testar edge function" (faz GET com `current=0.0.0` e mostra a resposta em toast).
-- Aviso explicando que `min_supported_version` força atualização para todos abaixo dessa versão.
-
-#### Form `ReleaseFormDialog.tsx`
-
-- Tratar `min_supported_version` vazio antes do refine.
-- Toast específico para erro de versão duplicada (`23505`).
-
-#### Doc Python `docs/desktop-updater.md`
-
-- Atualizar listener para `event="INSERT"` + filtro `is_published=true` no callback.
-- Adicionar exemplo de updater Windows (extrair em pasta temp + `updater.bat`).
-- Adicionar comparação semver via `packaging.version.Version` para evitar bugs de string.
-
-### Como funciona ponta-a-ponta (recap para o admin)
-
-```text
-[Admin] painel /dashboard/atualizacoes
-   │
-   ├── insere row em app_releases (version, download_url, sha256, …, is_published=true)
-   │
-   ▼
-[Postgres] trigger seta published_at=now()
-   │
-   ├──► supabase_realtime envia INSERT em app_releases
-   │       │
-   │       ▼
-   │   [App desktop] listener recebe → compara semver → popup "Atualizar agora?"
-   │
-   └──► fallback: app no boot chama GET /functions/v1/app-version-check?current=X
-           ▼
-       resposta JSON com download_url + sha256 → app baixa, valida hash, instala, reinicia.
-```
-
-### Fora de escopo
-- Canais beta/stable separados.
-- Rollout gradual por % de usuários.
-- Telemetria de quem atualizou.
-- Auto-instalação silenciosa (mantém apenas o flag `is_mandatory`).
+- Realtime channel auth, leaked-password protection, SECURITY DEFINER exec — separate fixes; this plan only addresses `app_licenses_update_no_field_restriction`. Tell me if you want them bundled.

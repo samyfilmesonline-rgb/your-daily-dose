@@ -569,6 +569,41 @@ export default function ComprarParceiro() {
           </p>
         </header>
 
+        {/* Banner de saldo (visível em ambas as abas) */}
+        {totalAvailableBalance > 0 && (
+          <div className="rounded-2xl border-2 border-emerald-500/50 bg-emerald-500/10 p-5 flex flex-col md:flex-row md:items-center gap-4 shadow-[0_0_30px_hsl(142_70%_50%/0.15)]">
+            <Wallet className="w-10 h-10 text-emerald-400 flex-none" />
+            <div className="flex-1">
+              <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-emerald-400">
+                Crédito disponível pra usar agora
+              </div>
+              <div className="text-3xl font-black font-mono text-emerald-400">
+                {totalAvailableBalance} créditos
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {customerBalance.email
+                  ? <>Vinculado a <strong className="text-foreground">{customerBalance.email}</strong>. </>
+                  : null}
+                Use em qualquer pacote abaixo — abate direto do valor do Pix.
+              </div>
+            </div>
+            <Button
+              size="lg"
+              className="bg-emerald-500 hover:bg-emerald-600 text-background font-bold"
+              onClick={() => {
+                setTab("comprar");
+                setUseBalance(true);
+                setTimeout(() => {
+                  packsListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }, 100);
+              }}
+            >
+              <Sparkles className="w-4 h-4 mr-2" />
+              Usar meu saldo agora
+            </Button>
+          </div>
+        )}
+
         {/* Tabs principais */}
         <Tabs value={tab} onValueChange={(v) => setTab(v as "comprar" | "pedidos")}>
           <TabsList className="grid grid-cols-2 w-full max-w-md mx-auto">

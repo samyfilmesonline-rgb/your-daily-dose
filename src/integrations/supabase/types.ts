@@ -431,6 +431,8 @@ export type Database = {
           amount_cents: number
           assigned_at: string | null
           assigned_bot_id: string | null
+          bot_invite_confirmed_at: string | null
+          bot_invite_confirmed_fingerprint: string | null
           client_fingerprint: string | null
           created_at: string
           credits: number
@@ -457,6 +459,8 @@ export type Database = {
           amount_cents: number
           assigned_at?: string | null
           assigned_bot_id?: string | null
+          bot_invite_confirmed_at?: string | null
+          bot_invite_confirmed_fingerprint?: string | null
           client_fingerprint?: string | null
           created_at?: string
           credits: number
@@ -483,6 +487,8 @@ export type Database = {
           amount_cents?: number
           assigned_at?: string | null
           assigned_bot_id?: string | null
+          bot_invite_confirmed_at?: string | null
+          bot_invite_confirmed_fingerprint?: string | null
           client_fingerprint?: string | null
           created_at?: string
           credits?: number
@@ -889,6 +895,43 @@ export type Database = {
       assign_next_queued_order: {
         Args: { _partner_id: string }
         Returns: string
+      }
+      confirm_bot_invite: {
+        Args: { _fingerprint: string; _order_id: string }
+        Returns: {
+          amount_cents: number
+          assigned_at: string | null
+          assigned_bot_id: string | null
+          bot_invite_confirmed_at: string | null
+          bot_invite_confirmed_fingerprint: string | null
+          client_fingerprint: string | null
+          created_at: string
+          credits: number
+          customer_email: string
+          customer_name: string
+          customer_tax_id: string | null
+          customer_whatsapp: string | null
+          delivered_at: string | null
+          failed_reason: string | null
+          id: string
+          pack_id: string | null
+          paid_at: string | null
+          partner_id: string
+          pix_copy_paste: string | null
+          pix_expires_at: string | null
+          pix_qrcode: string | null
+          raw_payload: Json | null
+          status: Database["public"]["Enums"]["partner_order_status"]
+          target_workspace: string | null
+          tx_id: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "partner_credit_orders"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       current_partner_name: { Args: never; Returns: string }
       current_partner_whatsapp: { Args: never; Returns: string }

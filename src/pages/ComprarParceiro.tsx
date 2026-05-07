@@ -87,9 +87,11 @@ export default function ComprarParceiro() {
     },
   });
 
-  // Polling de status quando estamos na etapa pix
+  // Polling de status enquanto pedido está em andamento (pix → paid → bot atribuído)
   useEffect(() => {
-    if (step !== "pix" || !pix?.orderId) return;
+    if (!pix?.orderId) return;
+    if (step !== "pix" && step !== "paid") return;
+    if (step === "paid" && botEmail) return; // já temos o bot, nada a fazer
     // Realtime: dispara checagem quando o status muda
     const ch = supabase
       .channel(`order-rt-${pix.orderId}`)
@@ -135,7 +137,7 @@ export default function ComprarParceiro() {
       }
       supabase.removeChannel(ch);
     };
-  }, [step, pix?.orderId]);
+  }, [step, pix?.orderId, botEmail]);
 
   const handleConfirm = () => {
     if (!selected) return;

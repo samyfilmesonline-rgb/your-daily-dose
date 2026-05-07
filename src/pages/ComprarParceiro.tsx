@@ -508,6 +508,7 @@ export default function ComprarParceiro() {
       }
       // limpa autorização cross-email após uso (single-use)
       setCrossAuth(null);
+      setPrefillOrderId(null);
       try {
         localStorage.setItem(LAST_EMAIL_KEY, email.trim().toLowerCase());
         localStorage.setItem(ACTIVE_ORDER_KEY, pd.orderId);

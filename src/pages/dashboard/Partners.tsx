@@ -22,7 +22,7 @@ import {
 import { Label } from "@/components/ui/label";
 import {
   Handshake, Search, RefreshCw, Check, Ban, Play, Eye, Pencil, Trash2,
-  Clock, CheckCircle2, AlertTriangle, Plus, Copy,
+  Clock, CheckCircle2, AlertTriangle, Plus, Copy, Bot,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
@@ -30,6 +30,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { z } from "zod";
+import PartnerBotsDialog from "@/components/dashboard/partners/PartnerBotsDialog";
 
 type Parceiro = {
   user_id: string;
@@ -81,6 +82,8 @@ export default function Partners() {
     already_existed: boolean;
     invited: boolean;
   } | null>(null);
+
+  const [botsFor, setBotsFor] = useState<Parceiro | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -363,6 +366,9 @@ export default function Partners() {
                           </Button>
                           <Button size="icon" variant="ghost" title="Editar cotas" onClick={() => openEdit(p)}>
                             <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button size="icon" variant="ghost" title="Bots de farm" onClick={() => setBotsFor(p)}>
+                            <Bot className="h-4 w-4" />
                           </Button>
                           <AlertDialog>
                             <AlertDialogTrigger asChild>

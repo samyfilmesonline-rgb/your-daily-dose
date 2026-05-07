@@ -331,6 +331,56 @@ export type Database = {
           },
         ]
       }
+      farm_bots: {
+        Row: {
+          created_at: string
+          current_order_id: string | null
+          email_lovable: string
+          id: string
+          last_heartbeat_at: string | null
+          nickname: string | null
+          notes: string | null
+          partner_id: string
+          senha_lovable: string
+          status: Database["public"]["Enums"]["farm_bot_status"]
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_order_id?: string | null
+          email_lovable: string
+          id?: string
+          last_heartbeat_at?: string | null
+          nickname?: string | null
+          notes?: string | null
+          partner_id: string
+          senha_lovable: string
+          status?: Database["public"]["Enums"]["farm_bot_status"]
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_order_id?: string | null
+          email_lovable?: string
+          id?: string
+          last_heartbeat_at?: string | null
+          nickname?: string | null
+          notes?: string | null
+          partner_id?: string
+          senha_lovable?: string
+          status?: Database["public"]["Enums"]["farm_bot_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "farm_bots_current_order_fk"
+            columns: ["current_order_id"]
+            isOneToOne: false
+            referencedRelation: "partner_credit_orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       parceiros: {
         Row: {
           aprovado_em: string | null
@@ -373,6 +423,151 @@ export type Database = {
           status?: Database["public"]["Enums"]["parceiro_status"]
           user_id?: string
           whatsapp?: string | null
+        }
+        Relationships: []
+      }
+      partner_credit_orders: {
+        Row: {
+          amount_cents: number
+          assigned_at: string | null
+          assigned_bot_id: string | null
+          created_at: string
+          credits: number
+          customer_email: string
+          customer_name: string
+          customer_tax_id: string | null
+          customer_whatsapp: string | null
+          delivered_at: string | null
+          failed_reason: string | null
+          id: string
+          pack_id: string | null
+          paid_at: string | null
+          partner_id: string
+          pix_copy_paste: string | null
+          pix_expires_at: string | null
+          pix_qrcode: string | null
+          raw_payload: Json | null
+          status: Database["public"]["Enums"]["partner_order_status"]
+          target_workspace: string | null
+          tx_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          amount_cents: number
+          assigned_at?: string | null
+          assigned_bot_id?: string | null
+          created_at?: string
+          credits: number
+          customer_email: string
+          customer_name: string
+          customer_tax_id?: string | null
+          customer_whatsapp?: string | null
+          delivered_at?: string | null
+          failed_reason?: string | null
+          id?: string
+          pack_id?: string | null
+          paid_at?: string | null
+          partner_id: string
+          pix_copy_paste?: string | null
+          pix_expires_at?: string | null
+          pix_qrcode?: string | null
+          raw_payload?: Json | null
+          status?: Database["public"]["Enums"]["partner_order_status"]
+          target_workspace?: string | null
+          tx_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          amount_cents?: number
+          assigned_at?: string | null
+          assigned_bot_id?: string | null
+          created_at?: string
+          credits?: number
+          customer_email?: string
+          customer_name?: string
+          customer_tax_id?: string | null
+          customer_whatsapp?: string | null
+          delivered_at?: string | null
+          failed_reason?: string | null
+          id?: string
+          pack_id?: string | null
+          paid_at?: string | null
+          partner_id?: string
+          pix_copy_paste?: string | null
+          pix_expires_at?: string | null
+          pix_qrcode?: string | null
+          raw_payload?: Json | null
+          status?: Database["public"]["Enums"]["partner_order_status"]
+          target_workspace?: string | null
+          tx_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_credit_orders_assigned_bot_id_fkey"
+            columns: ["assigned_bot_id"]
+            isOneToOne: false
+            referencedRelation: "farm_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_credit_orders_assigned_bot_id_fkey"
+            columns: ["assigned_bot_id"]
+            isOneToOne: false
+            referencedRelation: "farm_bots_partner_view"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_credit_orders_pack_id_fkey"
+            columns: ["pack_id"]
+            isOneToOne: false
+            referencedRelation: "partner_credit_packs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_credit_packs: {
+        Row: {
+          badge_label: string | null
+          created_at: string
+          credits: number
+          description: string | null
+          display_order: number
+          id: string
+          is_active: boolean
+          name: string
+          original_price_cents: number | null
+          partner_id: string
+          price_cents: number
+          updated_at: string
+        }
+        Insert: {
+          badge_label?: string | null
+          created_at?: string
+          credits: number
+          description?: string | null
+          display_order?: number
+          id?: string
+          is_active?: boolean
+          name: string
+          original_price_cents?: number | null
+          partner_id: string
+          price_cents: number
+          updated_at?: string
+        }
+        Update: {
+          badge_label?: string | null
+          created_at?: string
+          credits?: number
+          description?: string | null
+          display_order?: number
+          id?: string
+          is_active?: boolean
+          name?: string
+          original_price_cents?: number | null
+          partner_id?: string
+          price_cents?: number
+          updated_at?: string
         }
         Relationships: []
       }
@@ -638,8 +833,60 @@ export type Database = {
         }
         Relationships: []
       }
+      farm_bots_partner_view: {
+        Row: {
+          created_at: string | null
+          current_order_id: string | null
+          email_lovable: string | null
+          id: string | null
+          last_heartbeat_at: string | null
+          nickname: string | null
+          notes: string | null
+          partner_id: string | null
+          status: Database["public"]["Enums"]["farm_bot_status"] | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          current_order_id?: string | null
+          email_lovable?: string | null
+          id?: string | null
+          last_heartbeat_at?: string | null
+          nickname?: string | null
+          notes?: string | null
+          partner_id?: string | null
+          status?: Database["public"]["Enums"]["farm_bot_status"] | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          current_order_id?: string | null
+          email_lovable?: string | null
+          id?: string | null
+          last_heartbeat_at?: string | null
+          nickname?: string | null
+          notes?: string | null
+          partner_id?: string | null
+          status?: Database["public"]["Enums"]["farm_bot_status"] | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "farm_bots_current_order_fk"
+            columns: ["current_order_id"]
+            isOneToOne: false
+            referencedRelation: "partner_credit_orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
+      assign_bot_to_order: { Args: { _order_id: string }; Returns: string }
+      assign_next_queued_order: {
+        Args: { _partner_id: string }
+        Returns: string
+      }
       current_partner_name: { Args: never; Returns: string }
       current_partner_whatsapp: { Args: never; Returns: string }
       has_role: {
@@ -663,10 +910,29 @@ export type Database = {
         Args: { p_email: string; p_id_do_usuario: string; p_workspace: string }
         Returns: undefined
       }
+      release_bot: {
+        Args: {
+          _bot_id: string
+          _order_id: string
+          _reason?: string
+          _success: boolean
+        }
+        Returns: undefined
+      }
     }
     Enums: {
       app_role: "admin" | "user"
+      farm_bot_status: "idle" | "busy" | "offline" | "disabled"
       parceiro_status: "pendente" | "ativo" | "suspenso"
+      partner_order_status:
+        | "pending"
+        | "paid"
+        | "queued"
+        | "processing"
+        | "delivered"
+        | "failed"
+        | "refunded"
+        | "expired"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -795,7 +1061,18 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "user"],
+      farm_bot_status: ["idle", "busy", "offline", "disabled"],
       parceiro_status: ["pendente", "ativo", "suspenso"],
+      partner_order_status: [
+        "pending",
+        "paid",
+        "queued",
+        "processing",
+        "delivered",
+        "failed",
+        "refunded",
+        "expired",
+      ],
     },
   },
 } as const

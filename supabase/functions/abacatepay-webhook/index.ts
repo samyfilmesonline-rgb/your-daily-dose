@@ -85,6 +85,33 @@ Deno.serve(async (req) => {
       .eq("tx_id", txId)
       .maybeSingle();
     if (!charge) {
+      // Tenta achar como pedido de loja por parceiro
+      const { data: order } = await supabase
+        .from("partner_credit_orders")
+        .select("id, status")
+        .eq("tx_id", txId)
+        .maybeSingle();
+      if (order) {
+        const isPaid =
+          status === "PAID" ||
+          status === "BILLING.PAID" ||
+          status === "PIXQRCODE.PAID";
+        if (isPaid && order.status === "pending") {
+          await supabase
+            .from("partner_credit_orders")
+            .update({
+              status: "paid",
+              paid_at: new Date().toISOString(),
+              raw_payload: payload as unknown as Record<string, unknown>,
+            })
+            .eq("id", order.id);
+          await supabase.rpc("assign_bot_to_order", { _order_id: order.id });
+        }
+        return new Response(JSON.stringify({ ok: true, kind: "partner_order" }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       return new Response(JSON.stringify({ ok: true, skipped: true }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },

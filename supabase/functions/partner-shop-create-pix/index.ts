@@ -13,7 +13,7 @@ const Body = z.object({
   packId: z.string().uuid(),
   customerName: z.string().min(2).max(120),
   customerEmail: z.string().email(),
-  customerWhatsapp: z.string().max(40).optional(),
+  customerWhatsapp: z.string().min(10).max(40),
   customerTaxId: z.string().min(11).max(20),
   targetWorkspace: z.string().max(200).optional(),
 });
@@ -56,7 +56,13 @@ Deno.serve(async (req) => {
       });
     }
 
-    const cellphone = (b.customerWhatsapp ?? "").trim();
+    const cellphone = b.customerWhatsapp.replace(/\D/g, "");
+    if (cellphone.length < 10) {
+      return new Response(JSON.stringify({ error: "WhatsApp inválido" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     const charge = await createPixCharge({
       amount: pack.price_cents,
       expiresIn: 60 * 30,
@@ -65,7 +71,7 @@ Deno.serve(async (req) => {
         name: b.customerName,
         email: b.customerEmail.toLowerCase(),
         taxId: taxIdDigits,
-        ...(cellphone ? { cellphone } : {}),
+        cellphone,
       },
     });
 

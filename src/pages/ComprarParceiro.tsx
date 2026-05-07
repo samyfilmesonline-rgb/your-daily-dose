@@ -473,8 +473,18 @@ export default function ComprarParceiro() {
               </div>
             </div>
             <div>
-              <Label>Workspace alvo (opcional)</Label>
-              <Input value={workspace} onChange={(e) => setWorkspace(e.target.value)} placeholder="nome ou link" />
+              <Label>Workspace Lovable</Label>
+              <Input
+                required
+                minLength={2}
+                maxLength={200}
+                value={workspace}
+                onChange={(e) => setWorkspace(e.target.value)}
+                placeholder="Ex: Minha Empresa, Projeto SaaS, Workspace do João"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Informe o nome <strong>exato</strong> do workspace Lovable onde os créditos devem ser adicionados.
+              </p>
             </div>
             <Button type="submit" className="w-full" size="lg" disabled={submitting}>
               {submitting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Gerando Pix...</> : "Gerar Pix"}

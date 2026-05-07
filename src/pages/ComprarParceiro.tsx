@@ -884,6 +884,13 @@ export default function ComprarParceiro() {
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="w-4 h-4 animate-spin" /> Aguardando pagamento...
               </div>
+              <AlreadyPaidButton
+                orderId={pix.orderId}
+                onResolved={(d) => {
+                  setOrderState(d);
+                  if (d.status !== "pending") setStep("paid");
+                }}
+              />
             </div>
           )}
         </DialogContent>

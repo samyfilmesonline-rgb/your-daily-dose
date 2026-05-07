@@ -39,6 +39,7 @@ type PixData = { orderId: string; txId: string; qrCodeImage: string; copiaECola:
 export default function ComprarParceiro() {
   const { partnerId = "" } = useParams();
   const { toast } = useToast();
+  const isValidPartnerId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(partnerId);
 
   const [selected, setSelected] = useState<Pack | null>(null);
   const [step, setStep] = useState<Step>("browse");
@@ -60,7 +61,7 @@ export default function ComprarParceiro() {
 
   const { data: partner } = useQuery({
     queryKey: ["partner-public", partnerId],
-    enabled: !!partnerId,
+    enabled: isValidPartnerId,
     queryFn: async () => {
       const { data } = await supabase
         .from("parceiros")
@@ -73,7 +74,7 @@ export default function ComprarParceiro() {
 
   const { data: packs, isLoading } = useQuery({
     queryKey: ["partner-packs", partnerId],
-    enabled: !!partnerId,
+    enabled: isValidPartnerId,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("partner_credit_packs")

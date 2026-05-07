@@ -482,6 +482,10 @@ export type Database = {
           email_lovable: string
           id: string
           id_do_usuario: string
+          stripe_downgrade_url: string | null
+          stripe_downgrade_url_atualizado_em: string | null
+          stripe_upgrade_url: string | null
+          stripe_upgrade_url_atualizado_em: string | null
           total_creditos_farmados: number
           total_execucoes: number
           total_falhas: number
@@ -498,6 +502,10 @@ export type Database = {
           email_lovable: string
           id?: string
           id_do_usuario: string
+          stripe_downgrade_url?: string | null
+          stripe_downgrade_url_atualizado_em?: string | null
+          stripe_upgrade_url?: string | null
+          stripe_upgrade_url_atualizado_em?: string | null
           total_creditos_farmados?: number
           total_execucoes?: number
           total_falhas?: number
@@ -514,6 +522,10 @@ export type Database = {
           email_lovable?: string
           id?: string
           id_do_usuario?: string
+          stripe_downgrade_url?: string | null
+          stripe_downgrade_url_atualizado_em?: string | null
+          stripe_upgrade_url?: string | null
+          stripe_upgrade_url_atualizado_em?: string | null
           total_creditos_farmados?: number
           total_execucoes?: number
           total_falhas?: number

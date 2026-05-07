@@ -14,7 +14,7 @@ import MatrixRain from "@/components/landing/MatrixRain";
 import { matrixThemeStyle } from "@/lib/matrix-theme";
 import {
   Sparkles, ShieldCheck, AlertTriangle, Ban, Clock, Coins,
-  CheckCircle2, Copy, Loader2, QrCode, Mail,
+  CheckCircle2, Copy, Loader2, QrCode, Mail, ExternalLink, XCircle, Hourglass, Bot,
 } from "lucide-react";
 
 type Pack = {
@@ -35,6 +35,20 @@ function brl(cents: number) {
 
 type Step = "browse" | "form" | "pix" | "paid";
 type PixData = { orderId: string; txId: string; qrCodeImage: string; copiaECola: string };
+type OrderStatus =
+  | "pending" | "paid" | "queued" | "processing"
+  | "delivered" | "failed" | "expired" | "refunded";
+type OrderState = {
+  status: OrderStatus;
+  botEmail: string | null;
+  assignedBotId: string | null;
+  targetWorkspace: string | null;
+  credits: number;
+  amountCents: number;
+  deliveredAt: string | null;
+  failedReason: string | null;
+  paidAt: string | null;
+};
 
 export default function ComprarParceiro() {
   const { partnerId = "" } = useParams();
@@ -52,7 +66,7 @@ export default function ComprarParceiro() {
   const [workspace, setWorkspace] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [pix, setPix] = useState<PixData | null>(null);
-  const [botEmail, setBotEmail] = useState<string | null>(null);
+  const [orderState, setOrderState] = useState<OrderState | null>(null);
   const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -91,45 +105,34 @@ export default function ComprarParceiro() {
   useEffect(() => {
     if (!pix?.orderId) return;
     if (step !== "pix" && step !== "paid") return;
-    if (step === "paid" && botEmail) return; // já temos o bot, nada a fazer
+    // Se o pedido já chegou em estado terminal, paramos.
+    if (
+      step === "paid" &&
+      orderState &&
+      ["delivered", "failed", "expired", "refunded"].includes(orderState.status)
+    ) {
+      return;
+    }
+    const fetchStatus = async () => {
+      const { data } = await supabase.functions.invoke("partner-shop-check-status", {
+        body: { orderId: pix.orderId },
+      });
+      const d = data as OrderState | null;
+      if (!d?.status) return;
+      setOrderState(d);
+      if (d.status !== "pending" && step === "pix") setStep("paid");
+    };
     // Realtime: dispara checagem quando o status muda
     const ch = supabase
       .channel(`order-rt-${pix.orderId}`)
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "partner_credit_orders", filter: `id=eq.${pix.orderId}` },
-        () => {
-          // Pede ao backend o estado consolidado (com botEmail).
-          supabase.functions
-            .invoke("partner-shop-check-status", { body: { orderId: pix.orderId } })
-            .then(({ data }) => {
-              const d = data as { status?: string; botEmail?: string | null } | null;
-              if (!d?.status) return;
-              if (["paid", "queued", "processing", "delivered"].includes(d.status)) {
-                setBotEmail(d.botEmail ?? null);
-                setStep("paid");
-              }
-            });
-        }
+        () => { fetchStatus(); }
       )
       .subscribe();
-    pollRef.current = window.setInterval(async () => {
-      const { data } = await supabase.functions.invoke("partner-shop-check-status", {
-        body: { orderId: pix.orderId },
-      });
-      if (!data) return;
-      const d = data as { status?: string; botEmail?: string | null };
-      const s = d.status;
-      if (s && ["paid", "queued", "processing", "delivered"].includes(s)) {
-        setBotEmail(d.botEmail ?? null);
-        setStep("paid");
-        // Só para o polling depois que o bot foi entregue ao cliente.
-        if (d.botEmail && pollRef.current) {
-          window.clearInterval(pollRef.current);
-          pollRef.current = null;
-        }
-      }
-    }, 4000);
+    fetchStatus();
+    pollRef.current = window.setInterval(fetchStatus, 5000);
     return () => {
       if (pollRef.current) {
         window.clearInterval(pollRef.current);
@@ -137,7 +140,7 @@ export default function ComprarParceiro() {
       }
       supabase.removeChannel(ch);
     };
-  }, [step, pix?.orderId, botEmail]);
+  }, [step, pix?.orderId, orderState?.status]);
 
   const handleConfirm = () => {
     if (!selected) return;
@@ -148,6 +151,14 @@ export default function ComprarParceiro() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selected) return;
+    if (workspace.trim().length < 2) {
+      toast({
+        title: "Workspace obrigatório",
+        description: "Informe o nome exato do workspace Lovable de destino.",
+        variant: "destructive",
+      });
+      return;
+    }
     const taxDigits = taxId.replace(/\D/g, "");
     if (taxDigits.length !== 11 && taxDigits.length !== 14) {
       toast({
@@ -176,7 +187,7 @@ export default function ComprarParceiro() {
           customerEmail: email.trim().toLowerCase(),
           customerWhatsapp: whatsDigits,
           customerTaxId: taxDigits,
-          targetWorkspace: workspace.trim() || undefined,
+          targetWorkspace: workspace.trim(),
         },
       });
       if (error) {
@@ -462,8 +473,18 @@ export default function ComprarParceiro() {
               </div>
             </div>
             <div>
-              <Label>Workspace alvo (opcional)</Label>
-              <Input value={workspace} onChange={(e) => setWorkspace(e.target.value)} placeholder="nome ou link" />
+              <Label>Workspace Lovable</Label>
+              <Input
+                required
+                minLength={2}
+                maxLength={200}
+                value={workspace}
+                onChange={(e) => setWorkspace(e.target.value)}
+                placeholder="Ex: Minha Empresa, Projeto SaaS, Workspace do João"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Informe o nome <strong>exato</strong> do workspace Lovable onde os créditos devem ser adicionados.
+              </p>
             </div>
             <Button type="submit" className="w-full" size="lg" disabled={submitting}>
               {submitting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Gerando Pix...</> : "Gerar Pix"}
@@ -506,55 +527,214 @@ export default function ComprarParceiro() {
       </Dialog>
 
       {/* Pago */}
-      <Dialog open={step === "paid"} onOpenChange={(o) => !o && setStep("browse")}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-primary">
-              <CheckCircle2 className="w-6 h-6" /> Pagamento confirmado!
-            </DialogTitle>
-            <DialogDescription>
-              Agora convide a conta-mãe abaixo como <strong>Owner</strong> do seu workspace Lovable.
-              Assim que aceitarmos, os créditos caem na sua conta.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            {botEmail ? (
-              <div className="rounded-lg border border-primary/40 bg-primary/5 p-4">
-                <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-primary/70 mb-1">
-                  <Mail className="w-3.5 h-3.5" /> E-mail da conta-mãe
-                </div>
-                <div className="font-mono text-lg font-bold text-primary break-all">{botEmail}</div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mt-3"
-                  onClick={async () => {
-                    await navigator.clipboard.writeText(botEmail);
-                    toast({ title: "Copiado!" });
-                  }}
+      <OrderTrackingDialog
+        open={step === "paid"}
+        onOpenChange={(o) => !o && setStep("browse")}
+        order={orderState}
+        fallbackWorkspace={workspace.trim() || null}
+        fallbackCredits={selected?.credits ?? null}
+        fallbackAmountCents={selected?.price_cents ?? null}
+        onCopyEmail={async (email) => {
+          await navigator.clipboard.writeText(email);
+          toast({ title: "E-mail copiado!" });
+        }}
+      />
+    </div>
+  );
+}
+
+// ============================================================
+// Tela de acompanhamento do pedido (pós-pagamento)
+// ============================================================
+
+const STATUS_LABEL: Record<OrderStatus, string> = {
+  pending: "Aguardando pagamento Pix",
+  paid: "Pagamento confirmado",
+  queued: "Na fila para receber um bot",
+  processing: "Processando seu pedido",
+  delivered: "Créditos entregues",
+  failed: "Não foi possível entregar os créditos",
+  expired: "Pagamento expirado",
+  refunded: "Pedido reembolsado",
+};
+
+function statusHeadline(s: OrderState | null): string {
+  if (!s) return "Carregando status do pedido...";
+  if (s.status === "processing" && s.assignedBotId) {
+    return "Aguardando convite do bot ou processamento";
+  }
+  if (s.status === "processing" && !s.assignedBotId) {
+    return "Aguardando atribuição de bot";
+  }
+  return STATUS_LABEL[s.status];
+}
+
+function OrderTrackingDialog({
+  open, onOpenChange, order,
+  fallbackWorkspace, fallbackCredits, fallbackAmountCents,
+  onCopyEmail,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  order: OrderState | null;
+  fallbackWorkspace: string | null;
+  fallbackCredits: number | null;
+  fallbackAmountCents: number | null;
+  onCopyEmail: (email: string) => void;
+}) {
+  const status = order?.status;
+  const botEmail = order?.botEmail ?? null;
+  const workspace = order?.targetWorkspace ?? fallbackWorkspace ?? null;
+  const credits = order?.credits ?? fallbackCredits ?? null;
+  const amount = order?.amountCents ?? fallbackAmountCents ?? null;
+
+  const isTerminalSuccess = status === "delivered";
+  const isTerminalFailure = status === "failed" || status === "expired" || status === "refunded";
+  const showBotBlock = !!botEmail && (status === "processing" || status === "paid" || status === "queued");
+  const showWorkspaceMissing = !workspace && (status === "processing" || status === "paid" || status === "queued");
+
+  const headerIcon = isTerminalSuccess ? (
+    <CheckCircle2 className="w-6 h-6" />
+  ) : isTerminalFailure ? (
+    <XCircle className="w-6 h-6" />
+  ) : showBotBlock ? (
+    <Bot className="w-6 h-6" />
+  ) : (
+    <Hourglass className="w-6 h-6 animate-pulse" />
+  );
+
+  const headerTone = isTerminalFailure ? "text-destructive" : "text-primary";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className={`flex items-center gap-2 ${headerTone}`}>
+            {headerIcon} {statusHeadline(order)}
+          </DialogTitle>
+          <DialogDescription>
+            {isTerminalSuccess
+              ? "Seus créditos já foram adicionados ao workspace informado."
+              : isTerminalFailure
+              ? "Veja os detalhes abaixo. Em caso de cobrança, o reembolso é automático."
+              : showBotBlock
+              ? "Falta um passo manual: convide o bot abaixo como Owner do seu workspace Lovable."
+              : "Estamos preparando seu pedido. Esta tela atualiza sozinha."}
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Resumo do pedido */}
+        <div className="rounded-lg border border-primary/20 bg-card/60 p-3 text-xs grid grid-cols-2 gap-2">
+          <div>
+            <div className="text-muted-foreground">Workspace informado</div>
+            <div className="font-mono font-semibold text-foreground break-all">{workspace ?? "—"}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground">Créditos</div>
+            <div className="font-mono font-semibold text-foreground">{credits ?? "—"}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground">Valor</div>
+            <div className="font-mono font-semibold text-foreground">{amount != null ? brl(amount) : "—"}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground">Status</div>
+            <div className="font-mono font-semibold text-foreground">{order ? STATUS_LABEL[order.status] : "—"}</div>
+          </div>
+        </div>
+
+        {/* Bloco do bot */}
+        {showBotBlock && botEmail && (
+          <div className="rounded-lg border-2 border-primary/40 bg-primary/5 p-4 space-y-3 mt-3">
+            <div className="text-xs font-mono uppercase tracking-widest text-primary flex items-center gap-1.5">
+              <Mail className="w-3.5 h-3.5" /> Próximo passo: convide o bot no seu workspace Lovable
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Para que possamos adicionar os créditos, entre no seu Lovable, abra o workspace
+              informado e <strong>convide o e-mail abaixo como Owner</strong>. O sistema <strong>não</strong> envia
+              esse convite automaticamente — é uma ação manual sua.
+            </p>
+            <div className="rounded border border-primary/30 bg-background/60 p-3">
+              <div className="text-[10px] font-mono uppercase text-primary/70 mb-1">E-mail do bot</div>
+              <div className="font-mono text-base font-bold text-primary break-all">{botEmail}</div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-2"
+                onClick={() => onCopyEmail(botEmail)}
+              >
+                <Copy className="w-3.5 h-3.5 mr-1.5" /> Copiar e-mail do bot
+              </Button>
+            </div>
+            <ol className="list-decimal pl-5 space-y-1 text-xs text-muted-foreground">
+              <li>
+                Acesse{" "}
+                <a
+                  href="https://lovable.dev"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary underline inline-flex items-center gap-1"
                 >
-                  <Copy className="w-3.5 h-3.5 mr-1.5" /> Copiar e-mail
-                </Button>
-              </div>
-            ) : (
-              <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 text-sm flex items-center gap-2">
-                <Clock className="w-4 h-4 text-amber-400" />
-                Seu pedido entrou na fila. Em instantes te enviaremos o e-mail da conta-mãe por aqui e por e-mail.
-              </div>
-            )}
-            <div className="rounded-lg border border-primary/20 bg-card/60 p-3 text-xs space-y-1">
-              <div className="font-semibold flex items-center gap-1.5">
-                <Coins className="w-3.5 h-3.5 text-primary" /> Próximos passos
-              </div>
-              <ol className="list-decimal pl-4 space-y-1 text-muted-foreground">
-                <li>Abra seu workspace no Lovable.</li>
-                <li>Convide o e-mail acima como <strong>Owner</strong>.</li>
-                <li>Aguarde — vamos aceitar e injetar os créditos automaticamente.</li>
-              </ol>
+                  lovable.dev <ExternalLink className="w-3 h-3" />
+                </a>
+              </li>
+              <li>Abra o workspace informado na compra ({workspace ?? "—"})</li>
+              <li>Vá em <strong>Settings → Members</strong></li>
+              <li>Convide o e-mail do bot acima como <strong>Owner</strong></li>
+              <li>Volte para esta página e aguarde a entrega — atualiza sozinho</li>
+            </ol>
+          </div>
+        )}
+
+        {/* Workspace faltando */}
+        {showWorkspaceMissing && (
+          <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-destructive mt-0.5" />
+            <div>
+              <strong className="text-destructive">Workspace não informado.</strong>{" "}
+              Entre em contato com o suporte para corrigir o pedido.
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
-    </div>
+        )}
+
+        {/* Aguardando atribuição de bot */}
+        {(status === "paid" || status === "queued" || (status === "processing" && !order?.assignedBotId)) &&
+          !showBotBlock && (
+            <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm flex items-center gap-2">
+              <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
+              Estamos preparando seu pedido. Se demorar, fale com o suporte.
+            </div>
+          )}
+
+        {/* Sucesso */}
+        {isTerminalSuccess && (
+          <div className="mt-3 rounded-lg border border-primary/40 bg-primary/5 p-3 text-sm space-y-1">
+            <div className="flex items-center gap-2 text-primary font-semibold">
+              <CheckCircle2 className="w-4 h-4" /> Créditos entregues!
+            </div>
+            {order?.deliveredAt && (
+              <div className="text-xs text-muted-foreground">
+                Entregue em {new Date(order.deliveredAt).toLocaleString("pt-BR")}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Falha */}
+        {isTerminalFailure && status && (
+          <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm space-y-1">
+            <div className="flex items-center gap-2 text-destructive font-semibold">
+              <XCircle className="w-4 h-4" /> {STATUS_LABEL[status]}
+            </div>
+            {order?.failedReason && (
+              <div className="text-xs text-muted-foreground">{order.failedReason}</div>
+            )}
+            <div className="text-xs text-muted-foreground">
+              Em caso de pagamento confirmado, o reembolso é automático. Se precisar, fale com o suporte.
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

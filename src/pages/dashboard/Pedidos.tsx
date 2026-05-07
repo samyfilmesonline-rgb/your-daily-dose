@@ -34,7 +34,13 @@ type Order = {
   created_at: string;
 };
 
-type BotMini = { id: string; nickname: string | null; email_lovable: string };
+type BotMini = {
+  id: string;
+  nickname: string | null;
+  email_lovable: string;
+  status: "idle" | "busy" | "offline" | "disabled" | string;
+  last_heartbeat_at: string | null;
+};
 
 const statusMeta: Record<OrderStatus, { label: string; cls: string }> = {
   pending:    { label: "Aguardando pagamento", cls: "bg-muted text-muted-foreground border-muted-foreground/30" },
@@ -83,7 +89,7 @@ export default function Pedidos() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("farm_bots_partner_view")
-        .select("id, nickname, email_lovable")
+        .select("id, nickname, email_lovable, status, last_heartbeat_at")
         .eq("partner_id", user!.id);
       if (error) throw error;
       return (data ?? []) as BotMini[];
@@ -98,13 +104,22 @@ export default function Pedidos() {
 
   useEffect(() => {
     if (!user?.id) return;
-    const ch = supabase
+    const orders = supabase
       .channel(`orders-rt-${user.id}`)
       .on("postgres_changes",
         { event: "*", schema: "public", table: "partner_credit_orders", filter: `partner_id=eq.${user.id}` },
         () => qc.invalidateQueries({ queryKey: ["my-orders", user.id] }))
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    const botsCh = supabase
+      .channel(`farm-bots-rt-${user.id}`)
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "farm_bots", filter: `partner_id=eq.${user.id}` },
+        () => qc.invalidateQueries({ queryKey: ["my-bots-mini", user.id] }))
+      .subscribe();
+    return () => {
+      supabase.removeChannel(orders);
+      supabase.removeChannel(botsCh);
+    };
   }, [user?.id, qc]);
 
   const filtered = useMemo(() => {
@@ -118,12 +133,35 @@ export default function Pedidos() {
 
   const stats = useMemo(() => {
     const oneDayAgo = Date.now() - 24 * 3600 * 1000;
+    const tenMinAgo = Date.now() - 10 * 60 * 1000;
+    const noWs = orders.filter(
+      (o) => !o.target_workspace && ["paid", "queued", "processing"].includes(o.status)
+    ).length;
+    const stale = orders.filter((o) => {
+      if (o.status !== "processing" || !o.assigned_bot_id) return false;
+      const bot = botById.get(o.assigned_bot_id);
+      const hb = bot?.last_heartbeat_at ? new Date(bot.last_heartbeat_at).getTime() : 0;
+      return hb < tenMinAgo;
+    }).length;
     return {
       queued: orders.filter((o) => o.status === "queued").length,
       processing: orders.filter((o) => o.status === "processing").length,
       failed24h: orders.filter((o) => o.status === "failed" && new Date(o.created_at).getTime() > oneDayAgo).length,
+      noWs,
+      stale,
     };
-  }, [orders]);
+  }, [orders, botById]);
+
+  const fmtAgo = (iso: string | null) => {
+    if (!iso) return "—";
+    const diffMs = Date.now() - new Date(iso).getTime();
+    const min = Math.floor(diffMs / 60000);
+    if (min < 1) return "agora";
+    if (min < 60) return `há ${min} min`;
+    const h = Math.floor(min / 60);
+    if (h < 24) return `há ${h}h`;
+    return `há ${Math.floor(h / 24)}d`;
+  };
 
   return (
     <div className="space-y-6">
@@ -162,6 +200,23 @@ export default function Pedidos() {
         </div>
       )}
 
+      {(stats.noWs > 0 || stats.stale > 0) && (
+        <div className="grid sm:grid-cols-2 gap-3">
+          {stats.noWs > 0 && (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-destructive" />
+              <span><strong>{stats.noWs}</strong> pedido(s) sem workspace informado</span>
+            </div>
+          )}
+          {stats.stale > 0 && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400" />
+              <span><strong>{stats.stale}</strong> pedido(s) com worker offline (sem heartbeat &gt;10 min)</span>
+            </div>
+          )}
+        </div>
+      )}
+
       <Card>
         <CardHeader className="pb-3 flex flex-col gap-3">
           <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -195,16 +250,21 @@ export default function Pedidos() {
                 <TableHead>Pacote</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Bot</TableHead>
+                <TableHead>Heartbeat</TableHead>
                 <TableHead>Criado</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 && (
-                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Nenhum pedido.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Nenhum pedido.</TableCell></TableRow>
               )}
               {filtered.map((o) => {
                 const meta = statusMeta[o.status];
                 const bot = o.assigned_bot_id ? botById.get(o.assigned_bot_id) : null;
+                const tenMinAgo = Date.now() - 10 * 60 * 1000;
+                const hbMs = bot?.last_heartbeat_at ? new Date(bot.last_heartbeat_at).getTime() : 0;
+                const stale = o.status === "processing" && !!bot && hbMs < tenMinAgo;
+                const wsMissing = !o.target_workspace && ["paid", "queued", "processing"].includes(o.status);
                 return (
                   <TableRow key={o.id} className="cursor-pointer" onClick={() => setDetail(o)}>
                     <TableCell>
@@ -214,7 +274,14 @@ export default function Pedidos() {
                         <div className="text-xs text-muted-foreground font-mono">{o.customer_whatsapp}</div>
                       )}
                     </TableCell>
-                    <TableCell className="text-xs font-mono">{o.target_workspace ?? "—"}</TableCell>
+                    <TableCell className="text-xs font-mono">
+                      {o.target_workspace ?? <span className="text-destructive">— faltando</span>}
+                      {wsMissing && (
+                        <div className="text-[10px] text-destructive mt-0.5 flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" /> precisa contato
+                        </div>
+                      )}
+                    </TableCell>
                     <TableCell className="font-mono text-sm">{o.credits} cr · {brl(o.amount_cents)}</TableCell>
                     <TableCell>
                       <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${meta.cls}`}>
@@ -227,7 +294,30 @@ export default function Pedidos() {
                       )}
                     </TableCell>
                     <TableCell className="text-xs font-mono">
-                      {bot ? (bot.nickname ?? bot.email_lovable) : (o.assigned_bot_id ? o.assigned_bot_id.slice(0, 8) + "…" : "—")}
+                      {bot ? (
+                        <>
+                          <div>{bot.nickname ?? bot.email_lovable}</div>
+                          <div className="text-[10px] text-muted-foreground uppercase">{bot.status}</div>
+                        </>
+                      ) : o.assigned_bot_id ? (
+                        o.assigned_bot_id.slice(0, 8) + "…"
+                      ) : (
+                        "—"
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs font-mono">
+                      {bot ? (
+                        <span className={stale ? "text-amber-400" : "text-muted-foreground"}>
+                          {fmtAgo(bot.last_heartbeat_at)}
+                          {stale && (
+                            <span className="ml-1 inline-flex items-center gap-0.5">
+                              <AlertTriangle className="w-3 h-3" /> worker offline
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {new Date(o.created_at).toLocaleString("pt-BR")}

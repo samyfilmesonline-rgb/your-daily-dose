@@ -15,7 +15,7 @@ const Body = z.object({
   customerEmail: z.string().email(),
   customerWhatsapp: z.string().min(10).max(40),
   customerTaxId: z.string().min(11).max(20),
-  targetWorkspace: z.string().max(200).optional(),
+  targetWorkspace: z.string().trim().min(2).max(200),
 });
 
 Deno.serve(async (req) => {

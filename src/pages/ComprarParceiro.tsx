@@ -151,6 +151,15 @@ export default function ComprarParceiro() {
       });
       return;
     }
+    const whatsDigits = whatsapp.replace(/\D/g, "");
+    if (whatsDigits.length < 10 || whatsDigits.length > 13) {
+      toast({
+        title: "WhatsApp inválido",
+        description: "Informe DDD + número (ex: 11999999999).",
+        variant: "destructive",
+      });
+      return;
+    }
     setSubmitting(true);
     try {
       const { data, error } = await supabase.functions.invoke("partner-shop-create-pix", {
@@ -159,7 +168,7 @@ export default function ComprarParceiro() {
           packId: selected.id,
           customerName: name.trim(),
           customerEmail: email.trim().toLowerCase(),
-          customerWhatsapp: whatsapp.trim() || undefined,
+          customerWhatsapp: whatsDigits,
           customerTaxId: taxDigits,
           targetWorkspace: workspace.trim() || undefined,
         },
@@ -432,8 +441,14 @@ export default function ComprarParceiro() {
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <Label>WhatsApp</Label>
-                <Input value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} placeholder="(opcional)" />
+                <Label>WhatsApp (com DDD)</Label>
+                <Input
+                  required
+                  inputMode="tel"
+                  value={whatsapp}
+                  onChange={(e) => setWhatsapp(e.target.value)}
+                  placeholder="11999999999"
+                />
               </div>
               <div>
                 <Label>CPF / CNPJ</Label>

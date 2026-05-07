@@ -421,6 +421,23 @@ export default function ComprarParceiro() {
           </p>
         </header>
 
+        {/* Tabs principais */}
+        <Tabs value={tab} onValueChange={(v) => setTab(v as "comprar" | "pedidos")}>
+          <TabsList className="grid grid-cols-2 w-full max-w-md mx-auto">
+            <TabsTrigger value="comprar" className="gap-2">
+              <ShoppingCart className="w-4 h-4" /> Comprar créditos
+            </TabsTrigger>
+            <TabsTrigger value="pedidos" className="gap-2">
+              <History className="w-4 h-4" /> Meus pedidos
+              {history && history.length > 0 && (
+                <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary">
+                  {history.length}
+                </span>
+              )}
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="comprar" className="space-y-6 mt-6">
         {/* Requisitos */}
         <section className="rounded-2xl border-2 border-amber-500/30 bg-amber-500/5 backdrop-blur p-5">
           <div className="flex items-center justify-center gap-2 text-amber-400 text-xs font-mono uppercase tracking-[0.3em] mb-4">
@@ -541,6 +558,24 @@ export default function ComprarParceiro() {
           <ShieldCheck className="w-3.5 h-3.5 text-primary" />
           Pagamento seguro via Pix · Liberação automática
         </div>
+          </TabsContent>
+
+          <TabsContent value="pedidos" className="space-y-4 mt-6">
+            <OrdersHistorySection
+              history={history}
+              loading={historyLoading}
+              email={historyEmail}
+              onEmailChange={setHistoryEmail}
+              onRefresh={fetchHistory}
+              onTrack={(item) => {
+                setTrackingItem(item);
+                setTrackingOrderId(item.id);
+              }}
+              onCancel={(id) => setConfirmCancelId(id)}
+              partnerWhatsapp={partner?.whatsapp ?? null}
+            />
+          </TabsContent>
+        </Tabs>
       </main>
 
       {/* Confirmação */}

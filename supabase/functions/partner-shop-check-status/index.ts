@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
     );
     const { data: order } = await sb
       .from("partner_credit_orders")
-      .select("id, status, tx_id, assigned_bot_id, paid_at")
+      .select("id, status, tx_id, assigned_bot_id, paid_at, target_workspace, credits, amount_cents, delivered_at, failed_reason, customer_email")
       .eq("id", parsed.data.orderId)
       .maybeSingle();
     if (!order) {
@@ -74,12 +74,15 @@ Deno.serve(async (req) => {
     // Recarrega o estado atualizado após eventuais atribuições
     const { data: fresh } = await sb
       .from("partner_credit_orders")
-      .select("status, assigned_bot_id")
+      .select("status, assigned_bot_id, delivered_at, failed_reason, paid_at")
       .eq("id", order.id)
       .maybeSingle();
     if (fresh) {
       status = fresh.status;
       assignedBotId = fresh.assigned_bot_id ?? null;
+      order.delivered_at = fresh.delivered_at;
+      order.failed_reason = fresh.failed_reason;
+      order.paid_at = fresh.paid_at;
     }
 
     if (assignedBotId) {
@@ -92,7 +95,17 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ status, botEmail, assignedBotId }),
+      JSON.stringify({
+        status,
+        botEmail,
+        assignedBotId,
+        targetWorkspace: order.target_workspace ?? null,
+        credits: order.credits,
+        amountCents: order.amount_cents,
+        deliveredAt: order.delivered_at ?? null,
+        failedReason: order.failed_reason ?? null,
+        paidAt: order.paid_at ?? null,
+      }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {

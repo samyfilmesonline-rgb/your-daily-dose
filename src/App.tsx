@@ -59,7 +59,7 @@ const App = () => (
             <Route path="users" element={<AdminRoute><Users /></AdminRoute>} />
             <Route path="parceiros" element={<AdminRoute><Partners /></AdminRoute>} />
             <Route path="atualizacoes" element={<AdminRoute><Atualizacoes /></AdminRoute>} />
-            <Route path="bots" element={<ActivePartnerRoute><Bots /></ActivePartnerRoute>} />
+            <Route path="bots" element={<Bots />} />
           </Route>
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />

@@ -429,6 +429,11 @@ export default function ComprarParceiro() {
           targetWorkspace: workspace.trim(),
           clientFingerprint: fingerprint,
           useBalance,
+          ...(crossAuth &&
+          crossAuth.toEmail === email.trim().toLowerCase() &&
+          crossAuth.expiresAt > Date.now()
+            ? { balanceToken: crossAuth.token, balanceFromEmail: crossAuth.fromEmail }
+            : {}),
         },
       });
       if (error) {

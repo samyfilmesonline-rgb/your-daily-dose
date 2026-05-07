@@ -18,6 +18,45 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // --- Signature / shared-secret verification ---
+    // AbacatePay sends the webhook secret as a `webhookSecret` query param
+    // (per their docs). We also accept it via `x-webhook-signature` header
+    // for flexibility. Reject any request that doesn't match.
+    const expectedSecret = Deno.env.get("ABACATEPAY_WEBHOOK_SECRET");
+    if (!expectedSecret) {
+      console.error("ABACATEPAY_WEBHOOK_SECRET not configured");
+      return new Response(JSON.stringify({ error: "server misconfigured" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const url = new URL(req.url);
+    const providedSecret =
+      url.searchParams.get("webhookSecret") ??
+      req.headers.get("x-webhook-signature") ??
+      "";
+
+    // Constant-time comparison to avoid timing attacks
+    const enc = new TextEncoder();
+    const a = enc.encode(providedSecret);
+    const b = enc.encode(expectedSecret);
+    let equal = a.length === b.length;
+    const len = Math.max(a.length, b.length);
+    let diff = a.length ^ b.length;
+    for (let i = 0; i < len; i++) {
+      diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
+    }
+    equal = equal && diff === 0;
+
+    if (!equal) {
+      console.warn("abacate webhook: invalid signature/secret");
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const payload = await req.json().catch(() => ({}));
     console.log("abacate webhook payload", payload);
 

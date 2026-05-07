@@ -975,13 +975,29 @@ function OrdersHistorySection({
                       Bot: <span className="font-mono text-primary">{o.botEmail}</span>
                     </div>
                   )}
-                  {o.progress && o.progress.farmed > 0 && ["paid","queued","processing"].includes(o.status) && (
-                    <div className="mt-2">
+                  {o.progress && ["paid","queued","processing"].includes(o.status) && (o.progress.farmed > 0 || o.progress.lastMessage) && (
+                    <div className="mt-2 space-y-1">
                       <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
                         <span>{o.progress.farmed} / {o.credits} créditos</span>
                         <span>{o.progress.percent}%</span>
                       </div>
-                      <Progress value={o.progress.percent} className="h-1.5 mt-1" />
+                      <Progress value={o.progress.percent} className="h-1.5" />
+                      {o.progress.lastMessage && (
+                        <div
+                          className={`text-[11px] line-clamp-2 ${
+                            o.progress.lastStatus === "limite"
+                              ? "text-amber-400"
+                              : o.progress.lastStatus === "falha" || o.progress.lastStatus === "erro"
+                              ? "text-destructive"
+                              : o.progress.lastStatus === "sucesso" || o.progress.lastStatus === "concluido"
+                              ? "text-emerald-400"
+                              : "text-primary"
+                          }`}
+                          title={o.progress.lastMessage}
+                        >
+                          Bot: {o.progress.lastMessage}
+                        </div>
+                      )}
                     </div>
                   )}
                   {o.status === "failed" && o.failedReason && (

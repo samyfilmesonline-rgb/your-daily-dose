@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
     const { data: orders, error } = await sb
       .from("partner_credit_orders")
       .select(
-        "id, status, credits, amount_cents, target_workspace, created_at, paid_at, delivered_at, failed_reason, assigned_bot_id, pix_qrcode, pix_copy_paste, pix_expires_at, tx_id, customer_email, client_fingerprint, partner_id, assigned_at, bot_invite_confirmed_at"
+        "id, status, credits, amount_cents, target_workspace, created_at, paid_at, delivered_at, failed_reason, assigned_bot_id, pix_qrcode, pix_copy_paste, pix_expires_at, tx_id, customer_email, client_fingerprint, partner_id, assigned_at, bot_invite_confirmed_at, stop_requested_at, balance_applied_credits, balance_applied_cents, refunded_credits"
       )
       .eq("partner_id", partnerId)
       .or(filter)
@@ -84,6 +84,26 @@ Deno.serve(async (req) => {
         .select("id, email_lovable")
         .in("id", botIds);
       for (const b of bots ?? []) botEmailMap[b.id] = b.email_lovable;
+    }
+
+    // Saldo do cliente (por e-mail). Para device-only (sem e-mail), tenta inferir
+    // pelo e-mail do pedido mais recente que casa com o fingerprint.
+    let balanceEmail = email?.toLowerCase() ?? null;
+    if (!balanceEmail) {
+      const own = (orders ?? []).find(
+        (o) => o.client_fingerprint === fingerprint && o.customer_email
+      );
+      balanceEmail = own?.customer_email?.toLowerCase() ?? null;
+    }
+    let customerBalance: { credits: number; email: string | null } = { credits: 0, email: balanceEmail };
+    if (balanceEmail) {
+      const { data: bal } = await sb
+        .from("partner_customer_balances")
+        .select("credits")
+        .eq("partner_id", partnerId)
+        .eq("customer_email", balanceEmail)
+        .maybeSingle();
+      customerBalance = { credits: Number(bal?.credits ?? 0), email: balanceEmail };
     }
 
     // Pré-calcula progresso para pedidos em andamento
@@ -161,6 +181,10 @@ Deno.serve(async (req) => {
         customerEmail: o.customer_email,
         ownDevice,
         botInviteConfirmedAt: o.bot_invite_confirmed_at ?? null,
+        stopRequestedAt: o.stop_requested_at ?? null,
+        balanceAppliedCredits: o.balance_applied_credits ?? 0,
+        balanceAppliedCents: o.balance_applied_cents ?? 0,
+        refundedCredits: o.refunded_credits ?? 0,
         progress:
           progressMap[o.id] ?? {
             farmed: 0,
@@ -173,7 +197,7 @@ Deno.serve(async (req) => {
       };
     });
 
-    return new Response(JSON.stringify({ orders: items }), {
+    return new Response(JSON.stringify({ orders: items, customerBalance }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

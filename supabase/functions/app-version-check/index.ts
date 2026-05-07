@@ -6,6 +6,8 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
 
+const SEMVER_RE = /^\d+\.\d+\.\d+(?:[-+].+)?$/;
+
 function cmp(a: string, b: string): number {
   const pa = a.split(/[-+]/)[0].split(".").map((n) => parseInt(n) || 0);
   const pb = b.split(/[-+]/)[0].split(".").map((n) => parseInt(n) || 0);
@@ -20,7 +22,8 @@ Deno.serve(async (req) => {
 
   try {
     const url = new URL(req.url);
-    const current = url.searchParams.get("current") ?? "0.0.0";
+    const rawCurrent = url.searchParams.get("current") ?? "0.0.0";
+    const current = SEMVER_RE.test(rawCurrent.trim()) ? rawCurrent.trim() : "0.0.0";
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -37,10 +40,10 @@ Deno.serve(async (req) => {
     const releases = (data ?? []).slice().sort((a, b) => cmp(b.version, a.version));
     const latest = releases[0] ?? null;
 
+    const jsonHeaders = { ...corsHeaders, "Content-Type": "application/json", "Cache-Control": "no-store, max-age=0" };
+
     if (!latest) {
-      return new Response(JSON.stringify({ update_available: false, latest_version: null }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(JSON.stringify({ update_available: false, latest_version: null, current_version: current }), { headers: jsonHeaders });
     }
 
     const updateAvailable = cmp(latest.version, current) > 0;
@@ -51,13 +54,14 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({
       update_available: updateAvailable,
       mandatory: latest.is_mandatory || forceMandatory,
+      current_version: current,
       latest_version: latest.version,
       download_url: latest.download_url,
       sha256: latest.sha256,
       file_size_bytes: latest.file_size_bytes,
       changelog: latest.changelog,
       published_at: latest.published_at,
-    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }), { headers: jsonHeaders });
   } catch (err) {
     return new Response(JSON.stringify({ error: (err as Error).message }), {
       status: 500,

@@ -18,7 +18,7 @@ const schema = z.object({
   file_size_bytes: z.number().int().nonnegative().nullable(),
   changelog: z.string().max(5000).optional().or(z.literal("")),
   is_mandatory: z.boolean(),
-  min_supported_version: z.string().trim().refine((v) => v === "" || isValidSemver(v), "Semver inválido").optional().or(z.literal("")),
+  min_supported_version: z.string().refine((v) => !v || !v.trim() || isValidSemver(v.trim()), "Semver inválido").optional(),
   is_published: z.boolean(),
 });
 
@@ -102,7 +102,7 @@ export default function ReleaseFormDialog({ open, onOpenChange, release, onSaved
         file_size_bytes: d.file_size_bytes,
         changelog: d.changelog || null,
         is_mandatory: d.is_mandatory,
-        min_supported_version: d.min_supported_version || null,
+        min_supported_version: d.min_supported_version?.trim() || null,
         is_published: d.is_published,
       };
       if (isEdit && release) {
@@ -117,7 +117,9 @@ export default function ReleaseFormDialog({ open, onOpenChange, release, onSaved
       onSaved();
       onOpenChange(false);
     } catch (err) {
-      toast.error(friendlyError(err));
+      const code = (err as { code?: string })?.code;
+      if (code === "23505") toast.error("Esta versão já existe.");
+      else toast.error(friendlyError(err));
     } finally {
       setSubmitting(false);
     }

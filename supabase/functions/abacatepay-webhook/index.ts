@@ -101,7 +101,7 @@ Deno.serve(async (req) => {
             // Busca dados completos para aplicar saldo se necessário
             const { data: fullOrder } = await supabase
               .from("partner_credit_orders")
-              .select("partner_id, customer_email, balance_applied_credits")
+              .select("partner_id, customer_email, balance_applied_credits, raw_payload")
               .eq("id", order.id)
               .maybeSingle();
             await supabase
@@ -113,12 +113,20 @@ Deno.serve(async (req) => {
               })
               .eq("id", order.id);
             if (fullOrder && Number(fullOrder.balance_applied_credits) > 0) {
-              const { data: applied } = await supabase.rpc("apply_balance_to_order", {
-                _partner_id: fullOrder.partner_id,
-                _customer_email: fullOrder.customer_email,
-                _amount: Number(fullOrder.balance_applied_credits),
-                _order_id: order.id,
-              });
+              const cross = (fullOrder.raw_payload as { crossBalance?: { tokenHash?: string } } | null)?.crossBalance;
+              const { data: applied } = cross?.tokenHash
+                ? await supabase.rpc("apply_balance_with_token", {
+                    _partner_id: fullOrder.partner_id,
+                    _order_id: order.id,
+                    _amount: Number(fullOrder.balance_applied_credits),
+                    _token_hash: cross.tokenHash,
+                  })
+                : await supabase.rpc("apply_balance_to_order", {
+                    _partner_id: fullOrder.partner_id,
+                    _customer_email: fullOrder.customer_email,
+                    _amount: Number(fullOrder.balance_applied_credits),
+                    _order_id: order.id,
+                  });
               if (!applied || Number(applied) === 0) {
                 // Saldo evaporou — zera o registro mas mantém o pedido
                 await supabase

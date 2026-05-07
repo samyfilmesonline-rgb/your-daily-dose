@@ -80,6 +80,54 @@ export type Database = {
         }
         Relationships: []
       }
+      app_releases: {
+        Row: {
+          changelog: string | null
+          created_at: string
+          created_by: string | null
+          download_url: string
+          file_size_bytes: number | null
+          id: string
+          is_mandatory: boolean
+          is_published: boolean
+          min_supported_version: string | null
+          published_at: string | null
+          sha256: string
+          updated_at: string
+          version: string
+        }
+        Insert: {
+          changelog?: string | null
+          created_at?: string
+          created_by?: string | null
+          download_url: string
+          file_size_bytes?: number | null
+          id?: string
+          is_mandatory?: boolean
+          is_published?: boolean
+          min_supported_version?: string | null
+          published_at?: string | null
+          sha256: string
+          updated_at?: string
+          version: string
+        }
+        Update: {
+          changelog?: string | null
+          created_at?: string
+          created_by?: string | null
+          download_url?: string
+          file_size_bytes?: number | null
+          id?: string
+          is_mandatory?: boolean
+          is_published?: boolean
+          min_supported_version?: string | null
+          published_at?: string | null
+          sha256?: string
+          updated_at?: string
+          version?: string
+        }
+        Relationships: []
+      }
       contas_lovable: {
         Row: {
           atualizado_em: string | null

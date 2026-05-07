@@ -96,16 +96,25 @@ Deno.serve(async (req) => {
           status === "PAID" ||
           status === "BILLING.PAID" ||
           status === "PIXQRCODE.PAID";
-        if (isPaid && order.status === "pending") {
-          await supabase
-            .from("partner_credit_orders")
-            .update({
-              status: "paid",
-              paid_at: new Date().toISOString(),
-              raw_payload: payload as unknown as Record<string, unknown>,
-            })
-            .eq("id", order.id);
-          await supabase.rpc("assign_bot_to_order", { _order_id: order.id });
+        if (isPaid) {
+          if (order.status === "pending") {
+            await supabase
+              .from("partner_credit_orders")
+              .update({
+                status: "paid",
+                paid_at: new Date().toISOString(),
+                raw_payload: payload as unknown as Record<string, unknown>,
+              })
+              .eq("id", order.id);
+          }
+          // Tenta atribuir bot — idempotente p/ paid/queued sem bot.
+          if (["pending", "paid", "queued"].includes(order.status)) {
+            const { data: botId, error: rpcErr } = await supabase.rpc(
+              "assign_bot_to_order",
+              { _order_id: order.id }
+            );
+            console.log("webhook assign result", { orderId: order.id, botId, rpcErr });
+          }
         }
         return new Response(JSON.stringify({ ok: true, kind: "partner_order" }), {
           status: 200,

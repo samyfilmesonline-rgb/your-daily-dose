@@ -777,6 +777,22 @@ export default function ComprarParceiro() {
                   </span>
                 </label>
               )}
+              {crossAuth && crossAuth.expiresAt > Date.now() && (
+                <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-2 text-xs">
+                  <strong className="text-emerald-400">Saldo de {crossAuth.fromEmail}</strong> autorizado:
+                  até <strong>{crossAuth.credits}</strong> créditos serão aplicados neste pedido.
+                  Vai valer para o e-mail <strong>{crossAuth.toEmail}</strong>.
+                </div>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full text-xs text-emerald-400 hover:text-emerald-300"
+                onClick={() => setCrossOpen(true)}
+              >
+                <Wallet className="w-3.5 h-3.5 mr-1.5" />
+                Tenho saldo em outro e-mail
+              </Button>
               <p className="text-[10px] text-center text-muted-foreground">
                 Cobrança proporcional · reembolso automático
               </p>

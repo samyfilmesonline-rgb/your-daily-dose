@@ -209,6 +209,19 @@ export default function ComprarParceiro() {
   const [confirmStopId, setConfirmStopId] = useState<string | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
 
+  // Saldo de outro e-mail (Plano C) — só fingerprint
+  const [crossOpen, setCrossOpen] = useState(false);
+  const [crossEmail, setCrossEmail] = useState("");
+  const [crossLoading, setCrossLoading] = useState(false);
+  const [crossLookup, setCrossLookup] = useState<{ email: string; credits: number } | null>(null);
+  const [crossAuth, setCrossAuth] = useState<{
+    fromEmail: string;
+    token: string;
+    credits: number;
+    toEmail: string;
+    expiresAt: number;
+  } | null>(null);
+
   useEffect(() => {
     document.title = "Comprar créditos · Matrix";
   }, []);
@@ -447,6 +460,8 @@ export default function ComprarParceiro() {
           description: `Usamos ${pd.balanceAppliedCredits} créditos do seu saldo. Sem cobrança.`,
         });
       }
+      // limpa autorização cross-email após uso (single-use)
+      setCrossAuth(null);
       try {
         localStorage.setItem(LAST_EMAIL_KEY, email.trim().toLowerCase());
         localStorage.setItem(ACTIVE_ORDER_KEY, pd.orderId);

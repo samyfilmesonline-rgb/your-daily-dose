@@ -641,6 +641,25 @@ export default function ComprarParceiro() {
           </TabsContent>
 
           <TabsContent value="pedidos" className="space-y-4 mt-6">
+            {customerBalance.credits > 0 && (
+              <div className="rounded-2xl border-2 border-emerald-500/40 bg-emerald-500/5 p-4 flex items-center gap-3">
+                <Wallet className="w-6 h-6 text-emerald-400 flex-none" />
+                <div className="flex-1">
+                  <div className="text-xs font-mono uppercase tracking-widest text-emerald-400">
+                    Saldo disponível
+                  </div>
+                  <div className="text-2xl font-black font-mono text-emerald-400">
+                    {customerBalance.credits} créditos
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Crédito gerado por pedidos não entregues integralmente. Use em um novo pedido para o mesmo e-mail ({customerBalance.email ?? "—"}) sem pagar de novo.
+                  </div>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => setTab("comprar")}>
+                  Usar saldo
+                </Button>
+              </div>
+            )}
             <OrdersHistorySection
               history={history}
               loading={historyLoading}
@@ -652,6 +671,7 @@ export default function ComprarParceiro() {
                 setTrackingOrderId(item.id);
               }}
               onCancel={(id) => setConfirmCancelId(id)}
+              onStop={(id) => setConfirmStopId(id)}
               partnerWhatsapp={partner?.whatsapp ?? null}
             />
           </TabsContent>

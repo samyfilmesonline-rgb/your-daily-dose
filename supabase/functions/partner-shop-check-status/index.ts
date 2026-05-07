@@ -46,6 +46,7 @@ Deno.serve(async (req) => {
     if (status === "pending" && order.tx_id) {
       try {
         const remote = await checkPixStatus(order.tx_id);
+        console.log("check-status remote", { txId: order.tx_id, remoteStatus: remote.status });
         const isPaid =
           String(remote.status).toUpperCase() === "PAID" ||
           String(remote.status).toUpperCase() === "BILLING.PAID" ||

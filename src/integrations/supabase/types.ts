@@ -426,6 +426,48 @@ export type Database = {
         }
         Relationships: []
       }
+      partner_balance_apply_authorizations: {
+        Row: {
+          created_at: string
+          expires_at: string
+          fingerprint: string
+          from_email: string
+          id: string
+          max_credits: number
+          partner_id: string
+          to_email: string
+          token_hash: string
+          used_at: string | null
+          used_order_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          fingerprint: string
+          from_email: string
+          id?: string
+          max_credits: number
+          partner_id: string
+          to_email: string
+          token_hash: string
+          used_at?: string | null
+          used_order_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          fingerprint?: string
+          from_email?: string
+          id?: string
+          max_credits?: number
+          partner_id?: string
+          to_email?: string
+          token_hash?: string
+          used_at?: string | null
+          used_order_id?: string | null
+        }
+        Relationships: []
+      }
       partner_credit_ledger: {
         Row: {
           created_at: string
@@ -972,6 +1014,15 @@ export type Database = {
         }
         Returns: number
       }
+      apply_balance_with_token: {
+        Args: {
+          _amount: number
+          _order_id: string
+          _partner_id: string
+          _token_hash: string
+        }
+        Returns: number
+      }
       assign_bot_to_order: { Args: { _order_id: string }; Returns: string }
       assign_next_queued_order: {
         Args: { _partner_id: string }
@@ -1018,6 +1069,17 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      create_balance_apply_authorization: {
+        Args: {
+          _fingerprint: string
+          _from_email: string
+          _max_credits: number
+          _partner_id: string
+          _to_email: string
+          _token_hash: string
+        }
+        Returns: string
+      }
       current_partner_name: { Args: never; Returns: string }
       current_partner_whatsapp: { Args: never; Returns: string }
       has_role: {
@@ -1032,6 +1094,13 @@ export type Database = {
         Returns: boolean
       }
       is_active_partner: { Args: never; Returns: boolean }
+      lookup_balance_by_email: {
+        Args: { _fingerprint: string; _from_email: string; _partner_id: string }
+        Returns: {
+          credits: number
+          fingerprint_match: boolean
+        }[]
+      }
       parceiro_ativo: { Args: { _user_id: string }; Returns: boolean }
       recalc_parceiro_creditos: {
         Args: { _user_id: string }
@@ -1056,6 +1125,15 @@ export type Database = {
       }
       stop_order_partial: {
         Args: { _fingerprint: string; _order_id: string }
+        Returns: number
+      }
+      transfer_balance_between_emails: {
+        Args: {
+          _fingerprint: string
+          _from_email: string
+          _partner_id: string
+          _to_email: string
+        }
         Returns: number
       }
     }

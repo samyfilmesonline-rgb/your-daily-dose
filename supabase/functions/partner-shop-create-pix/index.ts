@@ -16,6 +16,7 @@ const Body = z.object({
   customerWhatsapp: z.string().min(10).max(40),
   customerTaxId: z.string().min(11).max(20),
   targetWorkspace: z.string().trim().min(2).max(200),
+  clientFingerprint: z.string().min(8).max(80).optional(),
 });
 
 Deno.serve(async (req) => {
@@ -85,6 +86,7 @@ Deno.serve(async (req) => {
         customer_whatsapp: b.customerWhatsapp ?? null,
         customer_tax_id: taxIdDigits,
         target_workspace: b.targetWorkspace ?? null,
+        client_fingerprint: b.clientFingerprint ?? null,
         credits: pack.credits,
         amount_cents: pack.price_cents,
         tx_id: charge.id,

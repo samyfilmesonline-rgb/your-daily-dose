@@ -902,7 +902,7 @@ export default function ComprarParceiro() {
       </Dialog>
 
       {/* Form do cliente */}
-      <Dialog open={step === "form"} onOpenChange={(o) => !o && setStep("browse")}>
+      <Dialog open={step === "form"} onOpenChange={(o) => { if (!o) { setStep("browse"); setPrefillOrderId(null); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Seus dados</DialogTitle>
@@ -910,6 +910,37 @@ export default function ComprarParceiro() {
               Precisamos disso pra emitir o Pix e te enviar o convite da conta-mãe.
             </DialogDescription>
           </DialogHeader>
+          {prefillOrderId && (
+            <div className="rounded-lg border-2 border-emerald-500/40 bg-emerald-500/10 p-3 text-xs">
+              <div className="font-bold text-emerald-400 flex items-center gap-1.5">
+                <RefreshCw className="w-3.5 h-3.5" /> Dados do pedido anterior preenchidos
+              </div>
+              <div className="text-muted-foreground mt-0.5">
+                Revise e clique em "Gerar Pix" — vamos abater do seu saldo automaticamente.
+              </div>
+            </div>
+          )}
+          {selected && totalAvailableBalance > 0 && (() => {
+            const c = computePriceWithBalance(selected.credits, selected.price_cents, totalAvailableBalance);
+            return (
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Pacote</span>
+                  <span className="font-mono">{selected.credits} cr · {brl(selected.price_cents)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Abate do saldo</span>
+                  <span className="font-mono text-emerald-400">−{c.balanceUsed} créditos</span>
+                </div>
+                <div className="flex justify-between border-t border-emerald-500/20 mt-1.5 pt-1.5">
+                  <span className="font-bold">Pix</span>
+                  <span className={`font-mono font-black ${c.freeWithBalance ? "text-emerald-400" : "text-primary"}`}>
+                    {c.freeWithBalance ? "GRÁTIS" : brl(c.payCents)}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
           <form onSubmit={submit} className="space-y-3">
             <div>
               <Label>Nome completo</Label>

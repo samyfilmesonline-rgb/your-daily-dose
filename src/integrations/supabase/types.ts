@@ -431,6 +431,7 @@ export type Database = {
           amount_cents: number
           assigned_at: string | null
           assigned_bot_id: string | null
+          client_fingerprint: string | null
           created_at: string
           credits: number
           customer_email: string
@@ -456,6 +457,7 @@ export type Database = {
           amount_cents: number
           assigned_at?: string | null
           assigned_bot_id?: string | null
+          client_fingerprint?: string | null
           created_at?: string
           credits: number
           customer_email: string
@@ -481,6 +483,7 @@ export type Database = {
           amount_cents?: number
           assigned_at?: string | null
           assigned_bot_id?: string | null
+          client_fingerprint?: string | null
           created_at?: string
           credits?: number
           customer_email?: string

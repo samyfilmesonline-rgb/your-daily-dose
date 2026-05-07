@@ -968,6 +968,15 @@ function OrdersHistorySection({
                       Bot: <span className="font-mono text-primary">{o.botEmail}</span>
                     </div>
                   )}
+                  {o.progress && o.progress.farmed > 0 && ["paid","queued","processing"].includes(o.status) && (
+                    <div className="mt-2">
+                      <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
+                        <span>{o.progress.farmed} / {o.credits} créditos</span>
+                        <span>{o.progress.percent}%</span>
+                      </div>
+                      <Progress value={o.progress.percent} className="h-1.5 mt-1" />
+                    </div>
+                  )}
                   {o.status === "failed" && o.failedReason && (
                     <div className="text-xs text-destructive mt-1">{o.failedReason}</div>
                   )}

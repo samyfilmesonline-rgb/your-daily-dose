@@ -1,56 +1,102 @@
-# Pedido travado em "Aguardando pagamento"
+## Problema
 
-## Diagnóstico
+Quando um pedido é reembolsado (parcial ou total), os créditos voltam como saldo, mas refazer um novo pedido com esse saldo está confuso:
 
-Verifiquei direto na API da AbacatePay os 3 pedidos `pending` no banco — todos retornam `status: "PENDING"` no gateway. O nosso código já faz polling correto a cada chamada de `partner-shop-check-status`: se o gateway disser PAID, marca como pago. Ou seja, o problema não é bug nosso — o gateway simplesmente não recebeu/processou a confirmação do banco do cliente para o pedido `28327826…` (R$ 1,00, endersonaguiartrader@gmail.com).
+1. **Saldo invisível na aba "Comprar"** — só aparece na aba "Pedidos".
+2. **Sem CTA direto no card reembolsado** — cliente precisa navegar de volta, escolher pacote, preencher tudo.
+3. **Checkbox "Usar saldo" escondido** dentro do dialog de confirmação, sem deixar claro o valor final.
+4. **Mensagens vagas** — "saldo", "reembolso automático" não comunicam que é dinheiro pronto pra usar.
+5. **Form pede tudo de novo** (e-mail, workspace, WhatsApp, CPF) mesmo já tendo dado tudo no pedido anterior.
 
-Casos típicos: pagamento feito após `expiresAt`, banco do cliente atrasou liquidação, ou Pix caiu em outra cobrança. Como você tem o comprovante, precisamos de duas coisas: (1) ferramenta para o cliente forçar uma reverificação imediata, e (2) caminho admin para marcar manualmente como pago anexando o comprovante.
+## Solução
 
-## O que vou construir
+Tornar o caminho "tenho saldo → novo pedido" um fluxo de 1-2 cliques, com o saldo visível em todos os pontos críticos.
 
-### 1. Botão "Já paguei, verificar agora" (cliente final, em `ComprarParceiro.tsx`)
+### 1. Banner de saldo fixo no topo (ambas as abas)
 
-- No card do Pix pendente, abaixo do QR code e do "Aguardando pagamento", adicionar botão `Já paguei — verificar agora`.
-- Ao clicar: chama `partner-shop-check-status` imediatamente (fora do intervalo de polling), mostra loader 2-3s.
-- Se voltar `paid/queued/...`: avança a UI normalmente.
-- Se continuar `pending`: toast amigável — "Ainda não recebemos a confirmação do banco. Pode levar até alguns minutos. Se já se passaram mais de 10 minutos, fale com o suporte e tenha o comprovante em mãos."
-- Rate-limit no frontend: bloqueia novo clique por 10s para evitar spam no gateway.
+Quando `customerBalance.credits > 0`, mostra banner verde fixo logo abaixo do header — visível tanto em "Comprar" quanto em "Pedidos":
 
-### 2. Forçar refresh no gateway (edge function)
+```text
+┌─────────────────────────────────────────────────────────┐
+│ 💰 Você tem 173 créditos de saldo (cliente@email.com)   │
+│    Use agora em qualquer pacote sem pagar nada extra    │
+│                                  [ Usar meu saldo → ]   │
+└─────────────────────────────────────────────────────────┘
+```
 
-- Hoje `partner-shop-check-status` só consulta o gateway quando o pedido está `pending`. Já está adequado para o botão.
-- Adicionar um pequeno log (`console.log`) com `tx_id` e status remoto retornado, para facilitar diagnóstico futuro nas Edge Function logs.
+- Botão "Usar meu saldo" rola até a lista de pacotes e destaca os que ficam **grátis ou com desconto** com o saldo.
+- Cada card de pacote ganha um selo verde quando o saldo cobre/abate: **"Você paga apenas R$ X com seu saldo"** ou **"GRÁTIS com seu saldo"**.
 
-### 3. Reconciliação manual por admin (pedido com comprovante)
+### 2. Botão "Refazer pedido" no card de pedido reembolsado/parado
 
-Criar painel simples em `/dashboard/pedidos` (ou nova aba "Pedidos travados") visível apenas para admins:
+No card de cada pedido com status `refunded` (ou `failed`/`expired` com saldo gerado), substitui o atual texto solto por:
 
-- Lista pedidos com `status='pending'` há mais de 5 minutos.
-- Mostra: cliente, e-mail, valor, tx_id, criado há X min, status remoto AbacatePay (consultado on-demand).
-- Ações por linha:
-  - **Marcar como pago manualmente**: abre dialog pedindo `notes` (ex.: "Comprovante e2e ID xxx — verificado em 07/05") e confirmação. Chama nova edge function `admin-force-paid-order`.
-  - **Cancelar/expirar pedido**: marca como `expired`, libera bot se houver.
+```text
+✓ 173 créditos voltaram como saldo
+[ 🔄 Refazer pedido grátis com meu saldo ]
+```
 
-### 4. Edge function `admin-force-paid-order`
+Ao clicar:
+- Pré-seleciona o **mesmo pacote** do pedido anterior (mesmo `credits`).
+- Pré-preenche **e-mail, workspace, WhatsApp, CPF, nome** do pedido anterior.
+- Marca `useBalance = true` automaticamente.
+- Pula o dialog de confirmação e vai direto pro form (já preenchido) com botão grande **"Confirmar e gerar pedido (GRÁTIS)"** ou **"Confirmar e gerar Pix de R$ X"** se faltar valor.
 
-- Valida que o caller é admin (via `has_role`).
-- Atualiza pedido: `status='paid'`, `paid_at=now()`, `failed_reason=null`, salva `notes` em `raw_payload.adminOverride`.
-- Se tinha `balance_applied_credits` pendente (cross-token), aplica via `apply_balance_with_token` / `apply_balance_to_order` (mesmo fluxo do webhook).
-- Chama `assign_bot_to_order` para entregar.
-- Loga em `partner_credit_ledger` uma entrada de auditoria com `reason='admin_manual_paid:<notes>'`.
+### 3. Card do pacote com cálculo de saldo embutido
+
+Atualmente o card mostra só "Comprar 200 créditos · R$ 27,00". Vira:
+
+```text
+┌───────────────────────────────┐
+│ 200 créditos · R$ 27,00       │
+│ ─────────────────────────     │
+│ Seu saldo: -173 créditos      │
+│ Você paga: R$ 3,65 via Pix    │
+│ [ Continuar com saldo ]       │
+└───────────────────────────────┘
+```
+
+Se saldo cobre 100%: botão diz **"Pegar GRÁTIS com meu saldo"** em destaque.
+
+### 4. Form pré-preenchido + atalho para repetir
+
+Quando o cliente já tem histórico (mesmo fingerprint OU mesmo e-mail no `LAST_EMAIL_KEY`), ao abrir o form mostrar topo:
+
+```text
+┌─────────────────────────────────────────┐
+│ ↻ Usar dados do pedido anterior?        │
+│   email, workspace, WhatsApp, CPF       │
+│              [ Sim, preencher ]         │
+└─────────────────────────────────────────┘
+```
+
+Pega do último pedido em `history` e popula todos os campos. Cliente só revisa.
+
+### 5. Texto mais claro
+
+Substituições globais:
+
+| Antes | Depois |
+|-------|--------|
+| "saldo" (sozinho) | "créditos no seu saldo" / "crédito disponível" |
+| "Reembolso automático" | "Crédito automático para próximo pedido" |
+| "Usar meu saldo" | "Abater do meu saldo (R$ X)" |
+| "voltam como saldo" | "voltam como crédito pra usar em outro pedido" |
+
+## Arquivos
+
+- `src/pages/ComprarParceiro.tsx` — único arquivo afetado:
+  - Banner de saldo no topo (acima do `<Tabs>`)
+  - Card do pack com cálculo de saldo + CTA contextual
+  - Botão "Refazer pedido" no card reembolsado dentro de `OrdersHistorySection`
+  - Pré-preenchimento do form quando vier do "Refazer pedido" ou de "Usar saldo"
+  - Atualização de microcopy
+
+Sem mudanças em backend, edge functions ou banco — toda a lógica de saldo já existe e funciona.
 
 ## Detalhes técnicos
 
-**Arquivos a editar:**
-- `src/pages/ComprarParceiro.tsx` — botão "Já paguei", handler com debounce.
-- `src/pages/dashboard/Pedidos.tsx` (ou novo) — UI admin de reconciliação.
-- `supabase/functions/partner-shop-check-status/index.ts` — log do status remoto.
-
-**Novos arquivos:**
-- `supabase/functions/admin-force-paid-order/index.ts` — força pago + atribui bot.
-
-**Sem mudanças no schema do banco.** O `raw_payload jsonb` já existe e cabe o `adminOverride`. A tabela `partner_credit_ledger` já está pronta para registrar a auditoria.
-
-## Para o pedido específico (R$ 1,00 endersonaguiartrader)
-
-Depois que a UI admin estiver pronta, você abre, anexa o comprovante nas notas e marca como pago — ele entra na fila normalmente.
+- Estado novo: `prefillFromOrderId: string | null` para identificar quando preencher tudo automaticamente.
+- Helper `computePriceWithBalance(pack, balance)` retorna `{ payCents, freeWithBalance, balanceUsed }`.
+- O atual `crossAuth` (saldo de outro e-mail) também entra no cálculo.
+- Banner usa `customerBalance` que já é carregado em `fetchHistory()` no mount.

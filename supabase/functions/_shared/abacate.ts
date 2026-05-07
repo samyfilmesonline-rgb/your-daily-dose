@@ -16,12 +16,13 @@ export type AbacatePixIn = {
   amount: number; // em centavos
   expiresIn?: number; // segundos
   description?: string;
-  customer: {
+  customer?: {
     name: string;
     cellphone?: string;
-    email: string;
+    email?: string;
     taxId?: string;
   };
+  metadata?: Record<string, unknown>;
 };
 
 export type AbacatePixOut = {
@@ -34,16 +35,32 @@ export type AbacatePixOut = {
 };
 
 export async function createPixCharge(input: AbacatePixIn): Promise<AbacatePixOut> {
+  // Sanitiza o payload conforme schema v2: sem chaves undefined e
+  // customer só vai se tiver name + taxId (campos obrigatórios na v2 PIX).
+  const data: Record<string, unknown> = { amount: input.amount };
+  if (input.expiresIn !== undefined) data.expiresIn = input.expiresIn;
+  if (input.description) data.description = input.description;
+  if (input.metadata) data.metadata = input.metadata;
+
+  if (input.customer && input.customer.name && input.customer.taxId) {
+    const c: Record<string, string> = {
+      name: input.customer.name,
+      taxId: input.customer.taxId,
+    };
+    if (input.customer.email) c.email = input.customer.email;
+    if (input.customer.cellphone) c.cellphone = input.customer.cellphone;
+    data.customer = c;
+  }
+
+  const body = { method: "PIX", data };
   const res = await fetch(`${ABACATE_BASE}/transparents/create`, {
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({
-      method: "PIX",
-      data: input,
-    }),
+    body: JSON.stringify(body),
   });
   const json = await res.json();
   if (!res.ok) {
+    console.error("AbacatePay create failed", res.status, JSON.stringify(body), json);
     throw new Error(`AbacatePay create [${res.status}]: ${JSON.stringify(json)}`);
   }
   return (json.data ?? json) as AbacatePixOut;

@@ -15,7 +15,13 @@ import { matrixThemeStyle } from "@/lib/matrix-theme";
 import {
   Sparkles, ShieldCheck, AlertTriangle, Ban, Clock, Coins,
   CheckCircle2, Copy, Loader2, QrCode, Mail, ExternalLink, XCircle, Hourglass, Bot,
+  History, ShoppingCart, RefreshCw, Trash2, Eye,
 } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type Pack = {
   id: string;
@@ -50,6 +56,69 @@ type OrderState = {
   paidAt: string | null;
 };
 
+type OrderHistoryItem = {
+  id: string;
+  status: OrderStatus;
+  credits: number;
+  amountCents: number;
+  targetWorkspace: string | null;
+  createdAt: string;
+  paidAt: string | null;
+  deliveredAt: string | null;
+  failedReason: string | null;
+  assignedBotId: string | null;
+  botEmail: string | null;
+  pixQrcode: string | null;
+  pixCopyPaste: string | null;
+  pixExpiresAt: string | null;
+  txId: string | null;
+  customerEmail: string;
+  ownDevice: boolean;
+};
+
+const FP_KEY = "mf_client_fp";
+const LAST_EMAIL_KEY = "mf_last_email";
+const ACTIVE_ORDER_KEY = "mf_active_order_id";
+
+function getOrCreateFingerprint(): string {
+  try {
+    let fp = localStorage.getItem(FP_KEY);
+    if (!fp) {
+      fp =
+        typeof crypto?.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem(FP_KEY, fp);
+    }
+    return fp;
+  } catch {
+    return `nofp-${Date.now()}`;
+  }
+}
+
+function timeAgo(iso: string | null): string {
+  if (!iso) return "—";
+  const diff = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "agora";
+  if (min < 60) return `há ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `há ${h}h`;
+  const d = Math.floor(h / 24);
+  return `há ${d}d`;
+}
+
+const STATUS_BADGE: Record<OrderStatus, { label: string; cls: string }> = {
+  pending: { label: "Aguardando Pix", cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" },
+  paid: { label: "Pago", cls: "bg-primary/15 text-primary border-primary/40" },
+  queued: { label: "Na fila", cls: "bg-primary/15 text-primary border-primary/40" },
+  processing: { label: "Processando", cls: "bg-primary/15 text-primary border-primary/40" },
+  delivered: { label: "Entregue", cls: "bg-emerald-500/15 text-emerald-400 border-emerald-500/40" },
+  failed: { label: "Falhou", cls: "bg-destructive/15 text-destructive border-destructive/40" },
+  expired: { label: "Expirado", cls: "bg-muted text-muted-foreground border-border" },
+  refunded: { label: "Reembolsado", cls: "bg-muted text-muted-foreground border-border" },
+};
+
 export default function ComprarParceiro() {
   const { partnerId = "" } = useParams();
   const { toast } = useToast();
@@ -69,9 +138,88 @@ export default function ComprarParceiro() {
   const [orderState, setOrderState] = useState<OrderState | null>(null);
   const pollRef = useRef<number | null>(null);
 
+  // Histórico / fingerprint
+  const fingerprint = useMemo(() => getOrCreateFingerprint(), []);
+  const [tab, setTab] = useState<"comprar" | "pedidos">("comprar");
+  const [history, setHistory] = useState<OrderHistoryItem[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyEmail, setHistoryEmail] = useState<string>(() => {
+    try { return localStorage.getItem(LAST_EMAIL_KEY) ?? ""; } catch { return ""; }
+  });
+  const [trackingOrderId, setTrackingOrderId] = useState<string | null>(null);
+  const [trackingItem, setTrackingItem] = useState<OrderHistoryItem | null>(null);
+  const [cancelingId, setCancelingId] = useState<string | null>(null);
+  const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
+
   useEffect(() => {
     document.title = "Comprar créditos · Matrix";
   }, []);
+
+  // Pré-preenche email se houver
+  useEffect(() => {
+    if (!email && historyEmail) setEmail(historyEmail);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const fetchHistory = useMemo(
+    () => async () => {
+      if (!isValidPartnerId) return;
+      setHistoryLoading(true);
+      try {
+        const { data, error } = await supabase.functions.invoke(
+          "partner-shop-list-orders",
+          {
+            body: {
+              partnerId,
+              fingerprint,
+              email: historyEmail.trim() || undefined,
+            },
+          }
+        );
+        if (error) throw error;
+        setHistory(((data as { orders?: OrderHistoryItem[] })?.orders) ?? []);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Erro ao carregar pedidos";
+        toast({ title: "Falha", description: msg, variant: "destructive" });
+      } finally {
+        setHistoryLoading(false);
+      }
+    },
+    [partnerId, fingerprint, historyEmail, isValidPartnerId, toast]
+  );
+
+  // Carrega histórico ao abrir tab e em foco/intervalo
+  useEffect(() => {
+    if (tab !== "pedidos") return;
+    fetchHistory();
+    const id = window.setInterval(fetchHistory, 15000);
+    const onVis = () => { if (document.visibilityState === "visible") fetchHistory(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [tab, fetchHistory]);
+
+  // Auto-detecta pedido em aberto ao abrir página
+  useEffect(() => {
+    if (!isValidPartnerId) return;
+    let activeId: string | null = null;
+    try { activeId = localStorage.getItem(ACTIVE_ORDER_KEY); } catch { /* ignore */ }
+    if (!activeId) return;
+    (async () => {
+      const { data } = await supabase.functions.invoke("partner-shop-check-status", {
+        body: { orderId: activeId },
+      });
+      const d = data as OrderState | null;
+      if (!d?.status) return;
+      if (["delivered", "failed", "expired", "refunded"].includes(d.status)) {
+        try { localStorage.removeItem(ACTIVE_ORDER_KEY); } catch { /* ignore */ }
+        return;
+      }
+      setTrackingOrderId(activeId);
+    })();
+  }, [isValidPartnerId]);
 
   const { data: partner } = useQuery({
     queryKey: ["partner-public", partnerId],
@@ -79,7 +227,7 @@ export default function ComprarParceiro() {
     queryFn: async () => {
       const { data } = await supabase
         .from("parceiros")
-        .select("user_id, nome, status")
+        .select("user_id, nome, status, whatsapp")
         .eq("user_id", partnerId)
         .maybeSingle();
       return data;
@@ -188,6 +336,7 @@ export default function ComprarParceiro() {
           customerWhatsapp: whatsDigits,
           customerTaxId: taxDigits,
           targetWorkspace: workspace.trim(),
+          clientFingerprint: fingerprint,
         },
       });
       if (error) {
@@ -211,6 +360,10 @@ export default function ComprarParceiro() {
       if (!data?.orderId) throw new Error("Resposta inválida");
       setPix(data as PixData);
       setStep("pix");
+      try {
+        localStorage.setItem(LAST_EMAIL_KEY, email.trim().toLowerCase());
+        localStorage.setItem(ACTIVE_ORDER_KEY, (data as PixData).orderId);
+      } catch { /* ignore */ }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro ao gerar Pix";
       toast({ title: "Falha", description: msg, variant: "destructive" });
@@ -268,6 +421,23 @@ export default function ComprarParceiro() {
           </p>
         </header>
 
+        {/* Tabs principais */}
+        <Tabs value={tab} onValueChange={(v) => setTab(v as "comprar" | "pedidos")}>
+          <TabsList className="grid grid-cols-2 w-full max-w-md mx-auto">
+            <TabsTrigger value="comprar" className="gap-2">
+              <ShoppingCart className="w-4 h-4" /> Comprar créditos
+            </TabsTrigger>
+            <TabsTrigger value="pedidos" className="gap-2">
+              <History className="w-4 h-4" /> Meus pedidos
+              {history && history.length > 0 && (
+                <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary">
+                  {history.length}
+                </span>
+              )}
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="comprar" className="space-y-6 mt-6">
         {/* Requisitos */}
         <section className="rounded-2xl border-2 border-amber-500/30 bg-amber-500/5 backdrop-blur p-5">
           <div className="flex items-center justify-center gap-2 text-amber-400 text-xs font-mono uppercase tracking-[0.3em] mb-4">
@@ -388,6 +558,24 @@ export default function ComprarParceiro() {
           <ShieldCheck className="w-3.5 h-3.5 text-primary" />
           Pagamento seguro via Pix · Liberação automática
         </div>
+          </TabsContent>
+
+          <TabsContent value="pedidos" className="space-y-4 mt-6">
+            <OrdersHistorySection
+              history={history}
+              loading={historyLoading}
+              email={historyEmail}
+              onEmailChange={setHistoryEmail}
+              onRefresh={fetchHistory}
+              onTrack={(item) => {
+                setTrackingItem(item);
+                setTrackingOrderId(item.id);
+              }}
+              onCancel={(id) => setConfirmCancelId(id)}
+              partnerWhatsapp={partner?.whatsapp ?? null}
+            />
+          </TabsContent>
+        </Tabs>
       </main>
 
       {/* Confirmação */}
@@ -539,6 +727,65 @@ export default function ComprarParceiro() {
           toast({ title: "E-mail copiado!" });
         }}
       />
+
+      {/* Tracking de pedido vindo do histórico */}
+      <HistoryTrackingDialog
+        orderId={trackingOrderId}
+        initialItem={trackingItem}
+        onOpenChange={(o) => {
+          if (!o) {
+            setTrackingOrderId(null);
+            setTrackingItem(null);
+          }
+        }}
+      />
+
+      {/* Confirmação de cancelamento */}
+      <AlertDialog
+        open={!!confirmCancelId}
+        onOpenChange={(o) => !o && setConfirmCancelId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancelar este pedido?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Só é possível cancelar enquanto o pagamento ainda não foi confirmado.
+              Depois de pago, fale com o suporte para qualquer ajuste.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!!cancelingId}
+              onClick={async () => {
+                if (!confirmCancelId) return;
+                setCancelingId(confirmCancelId);
+                try {
+                  const { error } = await supabase.functions.invoke(
+                    "partner-shop-cancel-order",
+                    { body: { orderId: confirmCancelId, fingerprint } }
+                  );
+                  if (error) throw error;
+                  toast({ title: "Pedido cancelado" });
+                  try {
+                    const active = localStorage.getItem(ACTIVE_ORDER_KEY);
+                    if (active === confirmCancelId) localStorage.removeItem(ACTIVE_ORDER_KEY);
+                  } catch { /* ignore */ }
+                  setConfirmCancelId(null);
+                  fetchHistory();
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : "Erro";
+                  toast({ title: "Falha", description: msg, variant: "destructive" });
+                } finally {
+                  setCancelingId(null);
+                }
+              }}
+            >
+              {cancelingId ? "Cancelando..." : "Sim, cancelar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -736,5 +983,346 @@ function OrderTrackingDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+// ============================================================
+// Histórico de pedidos (tab "Meus pedidos")
+// ============================================================
+
+function OrdersHistorySection({
+  history, loading, email, onEmailChange, onRefresh,
+  onTrack, onCancel, partnerWhatsapp,
+}: {
+  history: OrderHistoryItem[] | null;
+  loading: boolean;
+  email: string;
+  onEmailChange: (v: string) => void;
+  onRefresh: () => void;
+  onTrack: (item: OrderHistoryItem) => void;
+  onCancel: (id: string) => void;
+  partnerWhatsapp: string | null;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border-2 border-primary/30 bg-card/60 backdrop-blur p-5">
+        <div className="flex flex-col md:flex-row md:items-end gap-3">
+          <div className="flex-1">
+            <Label className="text-xs">Ver pedidos por e-mail (opcional)</Label>
+            <Input
+              type="email"
+              placeholder="seu@email.com"
+              value={email}
+              onChange={(e) => onEmailChange(e.target.value)}
+              onBlur={onRefresh}
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Pedidos feitos neste navegador aparecem automaticamente. Use o e-mail
+              se trocou de dispositivo.
+            </p>
+          </div>
+          <Button variant="outline" onClick={onRefresh} disabled={loading}>
+            <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+            Atualizar
+          </Button>
+        </div>
+      </div>
+
+      {loading && !history ? (
+        <div className="text-center text-muted-foreground font-mono py-10">
+          Carregando seus pedidos...
+        </div>
+      ) : !history?.length ? (
+        <div className="text-center text-muted-foreground font-mono py-10 rounded-2xl border border-dashed border-primary/20 bg-card/40">
+          Nenhum pedido encontrado neste dispositivo.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {history.map((o) => {
+            const badge = STATUS_BADGE[o.status];
+            const canCancel = o.status === "pending" && o.ownDevice;
+            const canTrack = ["pending", "paid", "queued", "processing"].includes(o.status);
+            return (
+              <div
+                key={o.id}
+                className="rounded-xl border border-primary/20 bg-card/60 p-4 flex flex-col md:flex-row md:items-center gap-3"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[10px] font-mono uppercase tracking-wider border px-2 py-0.5 rounded ${badge.cls}`}>
+                      {badge.label}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{timeAgo(o.createdAt)}</span>
+                    {!o.ownDevice && (
+                      <span className="text-[10px] font-mono uppercase tracking-wider border border-muted text-muted-foreground px-2 py-0.5 rounded">
+                        outro dispositivo
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1.5 font-bold">
+                    {o.credits} créditos · {brl(o.amountCents)}
+                  </div>
+                  <div className="text-xs text-muted-foreground break-all">
+                    Workspace: <span className="font-mono text-foreground">{o.targetWorkspace ?? "—"}</span>
+                  </div>
+                  {o.botEmail && (
+                    <div className="text-xs text-muted-foreground break-all">
+                      Bot: <span className="font-mono text-primary">{o.botEmail}</span>
+                    </div>
+                  )}
+                  {o.status === "failed" && o.failedReason && (
+                    <div className="text-xs text-destructive mt-1">{o.failedReason}</div>
+                  )}
+                  {o.status === "delivered" && o.deliveredAt && (
+                    <div className="text-xs text-emerald-400 mt-1">
+                      Entregue em {new Date(o.deliveredAt).toLocaleString("pt-BR")}
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2 md:flex-col md:items-stretch md:w-44">
+                  {canTrack && (
+                    <Button size="sm" onClick={() => onTrack(o)}>
+                      <Eye className="w-4 h-4 mr-1.5" />
+                      {o.status === "pending" ? "Ver Pix" : "Acompanhar"}
+                    </Button>
+                  )}
+                  {!canTrack && (
+                    <Button size="sm" variant="outline" onClick={() => onTrack(o)}>
+                      <Eye className="w-4 h-4 mr-1.5" /> Detalhes
+                    </Button>
+                  )}
+                  {canCancel && (
+                    <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
+                      onClick={() => onCancel(o.id)}>
+                      <Trash2 className="w-4 h-4 mr-1.5" /> Cancelar
+                    </Button>
+                  )}
+                  {(o.status === "failed" || o.status === "expired" || o.status === "refunded") && partnerWhatsapp && (
+                    <a
+                      href={`https://wa.me/${partnerWhatsapp.replace(/\D/g, "")}?text=${encodeURIComponent(`Olá! Preciso de ajuda com o pedido ${o.id}.`)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center text-xs underline text-primary"
+                    >
+                      Falar com suporte
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Tracking de pedido vindo do histórico (recupera Pix em aberto)
+// ============================================================
+
+function HistoryTrackingDialog({
+  orderId, initialItem, onOpenChange,
+}: {
+  orderId: string | null;
+  initialItem: OrderHistoryItem | null;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const [state, setState] = useState<OrderState | null>(null);
+  const [pix, setPix] = useState<{ qr: string | null; copy: string | null } | null>(null);
+
+  useEffect(() => {
+    if (!orderId) {
+      setState(null);
+      setPix(null);
+      return;
+    }
+    if (initialItem) {
+      setPix({ qr: initialItem.pixQrcode, copy: initialItem.pixCopyPaste });
+    }
+    const fetchStatus = async () => {
+      const { data } = await supabase.functions.invoke("partner-shop-check-status", {
+        body: { orderId },
+      });
+      const d = data as OrderState | null;
+      if (d?.status) setState(d);
+    };
+    fetchStatus();
+    const ch = supabase
+      .channel(`hist-rt-${orderId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "partner_credit_orders", filter: `id=eq.${orderId}` },
+        () => fetchStatus()
+      )
+      .subscribe();
+    const id = window.setInterval(fetchStatus, 6000);
+    return () => {
+      window.clearInterval(id);
+      supabase.removeChannel(ch);
+    };
+  }, [orderId, initialItem]);
+
+  const status = state?.status ?? initialItem?.status ?? null;
+  const showPix = status === "pending" && pix?.copy;
+
+  if (!orderId) return null;
+
+  return (
+    <Dialog open={!!orderId} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        {showPix ? (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <QrCode className="w-5 h-5 text-primary" /> Pague via Pix
+              </DialogTitle>
+              <DialogDescription>
+                Escaneie o QR Code ou copie o código abaixo. Liberação automática após o pagamento.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col items-center gap-4 mt-2">
+              {pix?.qr && (
+                <div className="bg-white p-3 rounded-lg">
+                  <img src={pix.qr} alt="QR Code Pix" className="w-56 h-56 object-contain" />
+                </div>
+              )}
+              {pix?.copy && (
+                <div className="w-full">
+                  <Label className="text-xs">Pix Copia e Cola</Label>
+                  <div className="flex gap-2 mt-1">
+                    <Input readOnly value={pix.copy} className="font-mono text-xs" />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(pix.copy!);
+                        toast({ title: "Copiado!" });
+                      }}
+                    >
+                      <Copy className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" /> Aguardando pagamento...
+              </div>
+            </div>
+          </>
+        ) : (
+          <OrderTrackingInline
+            order={state}
+            fallbackWorkspace={initialItem?.targetWorkspace ?? null}
+            fallbackCredits={initialItem?.credits ?? null}
+            fallbackAmountCents={initialItem?.amountCents ?? null}
+            onCopyEmail={async (e) => {
+              await navigator.clipboard.writeText(e);
+              toast({ title: "E-mail copiado!" });
+            }}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Versão "inline" (sem Dialog próprio) do tracking, reaproveitando o body
+function OrderTrackingInline({
+  order, fallbackWorkspace, fallbackCredits, fallbackAmountCents, onCopyEmail,
+}: {
+  order: OrderState | null;
+  fallbackWorkspace: string | null;
+  fallbackCredits: number | null;
+  fallbackAmountCents: number | null;
+  onCopyEmail: (email: string) => void;
+}) {
+  const status = order?.status;
+  const botEmail = order?.botEmail ?? null;
+  const workspace = order?.targetWorkspace ?? fallbackWorkspace ?? null;
+  const credits = order?.credits ?? fallbackCredits ?? null;
+  const amount = order?.amountCents ?? fallbackAmountCents ?? null;
+  const isTerminalSuccess = status === "delivered";
+  const isTerminalFailure = status === "failed" || status === "expired" || status === "refunded";
+  const showBotBlock = !!botEmail && (status === "processing" || status === "paid" || status === "queued");
+  const headerIcon = isTerminalSuccess ? <CheckCircle2 className="w-6 h-6" />
+    : isTerminalFailure ? <XCircle className="w-6 h-6" />
+    : showBotBlock ? <Bot className="w-6 h-6" />
+    : <Hourglass className="w-6 h-6 animate-pulse" />;
+  const headerTone = isTerminalFailure ? "text-destructive" : "text-primary";
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className={`flex items-center gap-2 ${headerTone}`}>
+          {headerIcon} {statusHeadline(order)}
+        </DialogTitle>
+        <DialogDescription>
+          {isTerminalSuccess
+            ? "Seus créditos já foram adicionados ao workspace informado."
+            : isTerminalFailure
+            ? "Veja os detalhes abaixo. Em caso de cobrança, o reembolso é automático."
+            : showBotBlock
+            ? "Falta um passo manual: convide o bot abaixo como Owner do seu workspace Lovable."
+            : "Estamos preparando seu pedido. Esta tela atualiza sozinha."}
+        </DialogDescription>
+      </DialogHeader>
+      <div className="rounded-lg border border-primary/20 bg-card/60 p-3 text-xs grid grid-cols-2 gap-2">
+        <div><div className="text-muted-foreground">Workspace</div><div className="font-mono font-semibold break-all">{workspace ?? "—"}</div></div>
+        <div><div className="text-muted-foreground">Créditos</div><div className="font-mono font-semibold">{credits ?? "—"}</div></div>
+        <div><div className="text-muted-foreground">Valor</div><div className="font-mono font-semibold">{amount != null ? brl(amount) : "—"}</div></div>
+        <div><div className="text-muted-foreground">Status</div><div className="font-mono font-semibold">{status ? STATUS_LABEL[status] : "—"}</div></div>
+      </div>
+      {showBotBlock && botEmail && (
+        <div className="rounded-lg border-2 border-primary/40 bg-primary/5 p-4 space-y-3 mt-3">
+          <div className="text-xs font-mono uppercase tracking-widest text-primary flex items-center gap-1.5">
+            <Mail className="w-3.5 h-3.5" /> Próximo passo: convide o bot no seu workspace Lovable
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Entre no Lovable, abra o workspace informado e <strong>convide o e-mail abaixo como Owner</strong>.
+            O sistema <strong>não</strong> envia esse convite automaticamente.
+          </p>
+          <div className="rounded border border-primary/30 bg-background/60 p-3">
+            <div className="text-[10px] font-mono uppercase text-primary/70 mb-1">E-mail do bot</div>
+            <div className="font-mono text-base font-bold text-primary break-all">{botEmail}</div>
+            <Button size="sm" variant="outline" className="mt-2" onClick={() => onCopyEmail(botEmail)}>
+              <Copy className="w-3.5 h-3.5 mr-1.5" /> Copiar e-mail do bot
+            </Button>
+          </div>
+          <ol className="list-decimal pl-5 space-y-1 text-xs text-muted-foreground">
+            <li>Acesse <a href="https://lovable.dev" target="_blank" rel="noopener noreferrer" className="text-primary underline inline-flex items-center gap-1">lovable.dev <ExternalLink className="w-3 h-3" /></a></li>
+            <li>Abra o workspace informado ({workspace ?? "—"})</li>
+            <li>Vá em <strong>Settings → Members</strong></li>
+            <li>Convide o e-mail do bot como <strong>Owner</strong></li>
+            <li>Volte aqui e aguarde — atualiza sozinho</li>
+          </ol>
+        </div>
+      )}
+      {(status === "paid" || status === "queued" || (status === "processing" && !order?.assignedBotId)) && !showBotBlock && (
+        <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm flex items-center gap-2">
+          <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
+          Estamos preparando seu pedido. Se demorar, fale com o suporte.
+        </div>
+      )}
+      {isTerminalSuccess && (
+        <div className="mt-3 rounded-lg border border-primary/40 bg-primary/5 p-3 text-sm">
+          <div className="flex items-center gap-2 text-primary font-semibold">
+            <CheckCircle2 className="w-4 h-4" /> Créditos entregues!
+          </div>
+          {order?.deliveredAt && (
+            <div className="text-xs text-muted-foreground">Entregue em {new Date(order.deliveredAt).toLocaleString("pt-BR")}</div>
+          )}
+        </div>
+      )}
+      {isTerminalFailure && status && (
+        <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm space-y-1">
+          <div className="flex items-center gap-2 text-destructive font-semibold">
+            <XCircle className="w-4 h-4" /> {STATUS_LABEL[status]}
+          </div>
+          {order?.failedReason && <div className="text-xs text-muted-foreground">{order.failedReason}</div>}
+          <div className="text-xs text-muted-foreground">Em caso de pagamento confirmado, o reembolso é automático.</div>
+        </div>
+      )}
+    </>
   );
 }

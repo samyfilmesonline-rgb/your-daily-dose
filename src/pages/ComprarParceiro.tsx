@@ -637,22 +637,10 @@ export default function ComprarParceiro() {
             <AlertTriangle className="w-3.5 h-3.5" /> Requisitos importantes
           </div>
           <p className="text-center text-xs text-muted-foreground mb-4">
-            Antes de comprar, <strong className="text-foreground">confirme que sua conta atende</strong> a essas duas regras.
+            Antes de comprar, <strong className="text-foreground">confirme que sua conta atende</strong> a esta regra.
             Caso contrário, a entrega <span className="text-destructive">não funciona</span> e o pedido será cancelado.
           </p>
-          <div className="grid md:grid-cols-2 gap-3">
-            <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4">
-              <div className="flex items-center gap-2 text-destructive text-xs font-mono uppercase tracking-wider mb-1">
-                <Ban className="w-3.5 h-3.5" /> Não pode ter
-              </div>
-              <div className="font-semibold">Assinatura PRO ativa</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Se você já tem PRO (500+ créditos próprios), nossa conta-mãe <strong>não consegue injetar</strong> os créditos.
-              </p>
-              <span className="inline-block mt-2 text-[10px] font-mono uppercase tracking-widest border border-destructive/40 text-destructive px-2 py-0.5 rounded">
-                status esperado · FREE
-              </span>
-            </div>
+          <div className="max-w-xl mx-auto">
             <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4">
               <div className="flex items-center gap-2 text-amber-400 text-xs font-mono uppercase tracking-wider mb-1">
                 <Clock className="w-3.5 h-3.5" /> Limite por workspace
@@ -663,9 +651,6 @@ export default function ComprarParceiro() {
                 <span className="text-destructive">CANCELADO e reembolsado</span>.
               </p>
             </div>
-          </div>
-          <div className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-muted-foreground">
-            <strong className="text-destructive">ATENÇÃO:</strong> pedidos feitos com a conta fora dessas regras são automaticamente <strong>cancelados</strong> e o valor volta pro seu saldo. Para mais {main?.credits ?? 200}cr no dia seguinte, é só fazer um novo pedido.
           </div>
         </section>
 

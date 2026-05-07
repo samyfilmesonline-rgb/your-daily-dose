@@ -35,20 +35,25 @@ export type AbacatePixOut = {
 };
 
 export async function createPixCharge(input: AbacatePixIn): Promise<AbacatePixOut> {
-  // Sanitiza o payload conforme schema v2: sem chaves undefined e
-  // customer só vai se tiver name + taxId (campos obrigatórios na v2 PIX).
+  // Sanitiza o payload conforme schema v2: sem chaves undefined.
+  // A AbacatePay rejeita customer parcial; só enviamos quando está completo.
   const data: Record<string, unknown> = { amount: input.amount };
   if (input.expiresIn !== undefined) data.expiresIn = input.expiresIn;
   if (input.description) data.description = input.description;
   if (input.metadata) data.metadata = input.metadata;
 
-  if (input.customer && input.customer.name && input.customer.taxId) {
+  if (
+    input.customer?.name &&
+    input.customer.email &&
+    input.customer.taxId &&
+    input.customer.cellphone
+  ) {
     const c: Record<string, string> = {
       name: input.customer.name,
+      email: input.customer.email,
       taxId: input.customer.taxId,
+      cellphone: input.customer.cellphone,
     };
-    if (input.customer.email) c.email = input.customer.email;
-    if (input.customer.cellphone) c.cellphone = input.customer.cellphone;
     data.customer = c;
   }
 

@@ -14,7 +14,7 @@ import MatrixRain from "@/components/landing/MatrixRain";
 import { matrixThemeStyle } from "@/lib/matrix-theme";
 import {
   Sparkles, ShieldCheck, AlertTriangle, Ban, Clock, Coins,
-  CheckCircle2, Copy, Loader2, QrCode, Mail,
+  CheckCircle2, Copy, Loader2, QrCode, Mail, ExternalLink, XCircle, Hourglass, Bot,
 } from "lucide-react";
 
 type Pack = {
@@ -35,6 +35,20 @@ function brl(cents: number) {
 
 type Step = "browse" | "form" | "pix" | "paid";
 type PixData = { orderId: string; txId: string; qrCodeImage: string; copiaECola: string };
+type OrderStatus =
+  | "pending" | "paid" | "queued" | "processing"
+  | "delivered" | "failed" | "expired" | "refunded";
+type OrderState = {
+  status: OrderStatus;
+  botEmail: string | null;
+  assignedBotId: string | null;
+  targetWorkspace: string | null;
+  credits: number;
+  amountCents: number;
+  deliveredAt: string | null;
+  failedReason: string | null;
+  paidAt: string | null;
+};
 
 export default function ComprarParceiro() {
   const { partnerId = "" } = useParams();
@@ -52,7 +66,7 @@ export default function ComprarParceiro() {
   const [workspace, setWorkspace] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [pix, setPix] = useState<PixData | null>(null);
-  const [botEmail, setBotEmail] = useState<string | null>(null);
+  const [orderState, setOrderState] = useState<OrderState | null>(null);
   const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -91,45 +105,34 @@ export default function ComprarParceiro() {
   useEffect(() => {
     if (!pix?.orderId) return;
     if (step !== "pix" && step !== "paid") return;
-    if (step === "paid" && botEmail) return; // já temos o bot, nada a fazer
+    // Se o pedido já chegou em estado terminal, paramos.
+    if (
+      step === "paid" &&
+      orderState &&
+      ["delivered", "failed", "expired", "refunded"].includes(orderState.status)
+    ) {
+      return;
+    }
+    const fetchStatus = async () => {
+      const { data } = await supabase.functions.invoke("partner-shop-check-status", {
+        body: { orderId: pix.orderId },
+      });
+      const d = data as OrderState | null;
+      if (!d?.status) return;
+      setOrderState(d);
+      if (d.status !== "pending" && step === "pix") setStep("paid");
+    };
     // Realtime: dispara checagem quando o status muda
     const ch = supabase
       .channel(`order-rt-${pix.orderId}`)
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "partner_credit_orders", filter: `id=eq.${pix.orderId}` },
-        () => {
-          // Pede ao backend o estado consolidado (com botEmail).
-          supabase.functions
-            .invoke("partner-shop-check-status", { body: { orderId: pix.orderId } })
-            .then(({ data }) => {
-              const d = data as { status?: string; botEmail?: string | null } | null;
-              if (!d?.status) return;
-              if (["paid", "queued", "processing", "delivered"].includes(d.status)) {
-                setBotEmail(d.botEmail ?? null);
-                setStep("paid");
-              }
-            });
-        }
+        () => { fetchStatus(); }
       )
       .subscribe();
-    pollRef.current = window.setInterval(async () => {
-      const { data } = await supabase.functions.invoke("partner-shop-check-status", {
-        body: { orderId: pix.orderId },
-      });
-      if (!data) return;
-      const d = data as { status?: string; botEmail?: string | null };
-      const s = d.status;
-      if (s && ["paid", "queued", "processing", "delivered"].includes(s)) {
-        setBotEmail(d.botEmail ?? null);
-        setStep("paid");
-        // Só para o polling depois que o bot foi entregue ao cliente.
-        if (d.botEmail && pollRef.current) {
-          window.clearInterval(pollRef.current);
-          pollRef.current = null;
-        }
-      }
-    }, 4000);
+    fetchStatus();
+    pollRef.current = window.setInterval(fetchStatus, 5000);
     return () => {
       if (pollRef.current) {
         window.clearInterval(pollRef.current);
@@ -137,7 +140,7 @@ export default function ComprarParceiro() {
       }
       supabase.removeChannel(ch);
     };
-  }, [step, pix?.orderId, botEmail]);
+  }, [step, pix?.orderId, orderState?.status]);
 
   const handleConfirm = () => {
     if (!selected) return;
@@ -148,6 +151,14 @@ export default function ComprarParceiro() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selected) return;
+    if (workspace.trim().length < 2) {
+      toast({
+        title: "Workspace obrigatório",
+        description: "Informe o nome exato do workspace Lovable de destino.",
+        variant: "destructive",
+      });
+      return;
+    }
     const taxDigits = taxId.replace(/\D/g, "");
     if (taxDigits.length !== 11 && taxDigits.length !== 14) {
       toast({
@@ -176,7 +187,7 @@ export default function ComprarParceiro() {
           customerEmail: email.trim().toLowerCase(),
           customerWhatsapp: whatsDigits,
           customerTaxId: taxDigits,
-          targetWorkspace: workspace.trim() || undefined,
+          targetWorkspace: workspace.trim(),
         },
       });
       if (error) {

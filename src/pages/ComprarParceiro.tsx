@@ -228,8 +228,26 @@ export default function ComprarParceiro() {
   // Prefill / "Refazer pedido" — quando vier do card de pedido reembolsado
   const [prefillOrderId, setPrefillOrderId] = useState<string | null>(null);
   const packsListRef = useRef<HTMLDivElement | null>(null);
+
+  // Saldo de outro e-mail (Plano C) — só fingerprint
+  const [crossOpen, setCrossOpen] = useState(false);
+  const [crossEmail, setCrossEmail] = useState("");
+  const [crossLoading, setCrossLoading] = useState(false);
+  const [crossLookup, setCrossLookup] = useState<{ email: string; credits: number } | null>(null);
+  const [crossAuth, setCrossAuth] = useState<{
+    fromEmail: string;
+    token: string;
+    credits: number;
+    toEmail: string;
+    expiresAt: number;
+  } | null>(null);
+
+  const totalAvailableBalance =
+    customerBalance.credits +
+    (crossAuth && crossAuth.expiresAt > Date.now() ? crossAuth.credits : 0);
+
+  const reorderFromHistory = (item: OrderHistoryItem) => {
     if (!packs?.length) return;
-    // Mesmo número de créditos, ou pacote mais próximo
     const samePack =
       packs.find((p) => p.credits === item.credits) ??
       [...packs].sort(
@@ -244,19 +262,6 @@ export default function ComprarParceiro() {
     setTab("comprar");
     setStep("form");
   };
-
-  // Saldo de outro e-mail (Plano C) — só fingerprint
-  const [crossOpen, setCrossOpen] = useState(false);
-  const [crossEmail, setCrossEmail] = useState("");
-  const [crossLoading, setCrossLoading] = useState(false);
-  const [crossLookup, setCrossLookup] = useState<{ email: string; credits: number } | null>(null);
-  const [crossAuth, setCrossAuth] = useState<{
-    fromEmail: string;
-    token: string;
-    credits: number;
-    toEmail: string;
-    expiresAt: number;
-  } | null>(null);
 
   useEffect(() => {
     document.title = "Comprar créditos · Matrix";

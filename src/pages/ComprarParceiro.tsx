@@ -134,6 +134,22 @@ const FP_KEY = "mf_client_fp";
 const LAST_EMAIL_KEY = "mf_last_email";
 const ACTIVE_ORDER_KEY = "mf_active_order_id";
 
+function computePriceWithBalance(
+  packCredits: number,
+  packPriceCents: number,
+  balanceCredits: number,
+) {
+  const balanceUsed = Math.max(0, Math.min(balanceCredits, packCredits));
+  const remaining = Math.max(0, packCredits - balanceUsed);
+  const payCents =
+    packCredits > 0 ? Math.round((packPriceCents * remaining) / packCredits) : packPriceCents;
+  return {
+    balanceUsed,
+    payCents,
+    freeWithBalance: payCents === 0 && balanceUsed > 0,
+  };
+}
+
 function getOrCreateFingerprint(): string {
   try {
     let fp = localStorage.getItem(FP_KEY);
@@ -209,6 +225,10 @@ export default function ComprarParceiro() {
   const [confirmStopId, setConfirmStopId] = useState<string | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
 
+  // Prefill / "Refazer pedido" — quando vier do card de pedido reembolsado
+  const [prefillOrderId, setPrefillOrderId] = useState<string | null>(null);
+  const packsListRef = useRef<HTMLDivElement | null>(null);
+
   // Saldo de outro e-mail (Plano C) — só fingerprint
   const [crossOpen, setCrossOpen] = useState(false);
   const [crossEmail, setCrossEmail] = useState("");
@@ -221,6 +241,27 @@ export default function ComprarParceiro() {
     toEmail: string;
     expiresAt: number;
   } | null>(null);
+
+  const totalAvailableBalance =
+    customerBalance.credits +
+    (crossAuth && crossAuth.expiresAt > Date.now() ? crossAuth.credits : 0);
+
+  const reorderFromHistory = (item: OrderHistoryItem) => {
+    if (!packs?.length) return;
+    const samePack =
+      packs.find((p) => p.credits === item.credits) ??
+      [...packs].sort(
+        (a, b) => Math.abs(a.credits - item.credits) - Math.abs(b.credits - item.credits),
+      )[0];
+    if (!samePack) return;
+    setSelected(samePack);
+    setEmail(item.customerEmail || "");
+    if (item.targetWorkspace) setWorkspace(item.targetWorkspace);
+    setUseBalance(true);
+    setPrefillOrderId(item.id);
+    setTab("comprar");
+    setStep("form");
+  };
 
   useEffect(() => {
     document.title = "Comprar créditos · Matrix";
@@ -467,6 +508,7 @@ export default function ComprarParceiro() {
       }
       // limpa autorização cross-email após uso (single-use)
       setCrossAuth(null);
+      setPrefillOrderId(null);
       try {
         localStorage.setItem(LAST_EMAIL_KEY, email.trim().toLowerCase());
         localStorage.setItem(ACTIVE_ORDER_KEY, pd.orderId);
@@ -528,6 +570,41 @@ export default function ComprarParceiro() {
           </p>
         </header>
 
+        {/* Banner de saldo (visível em ambas as abas) */}
+        {totalAvailableBalance > 0 && (
+          <div className="rounded-2xl border-2 border-emerald-500/50 bg-emerald-500/10 p-5 flex flex-col md:flex-row md:items-center gap-4 shadow-[0_0_30px_hsl(142_70%_50%/0.15)]">
+            <Wallet className="w-10 h-10 text-emerald-400 flex-none" />
+            <div className="flex-1">
+              <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-emerald-400">
+                Crédito disponível pra usar agora
+              </div>
+              <div className="text-3xl font-black font-mono text-emerald-400">
+                {totalAvailableBalance} créditos
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {customerBalance.email
+                  ? <>Vinculado a <strong className="text-foreground">{customerBalance.email}</strong>. </>
+                  : null}
+                Use em qualquer pacote abaixo — abate direto do valor do Pix.
+              </div>
+            </div>
+            <Button
+              size="lg"
+              className="bg-emerald-500 hover:bg-emerald-600 text-background font-bold"
+              onClick={() => {
+                setTab("comprar");
+                setUseBalance(true);
+                setTimeout(() => {
+                  packsListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }, 100);
+              }}
+            >
+              <Sparkles className="w-4 h-4 mr-2" />
+              Usar meu saldo agora
+            </Button>
+          </div>
+        )}
+
         {/* Tabs principais */}
         <Tabs value={tab} onValueChange={(v) => setTab(v as "comprar" | "pedidos")}>
           <TabsList className="grid grid-cols-2 w-full max-w-md mx-auto">
@@ -584,6 +661,7 @@ export default function ComprarParceiro() {
         </section>
 
         {/* Pacotes */}
+        <div ref={packsListRef} className="space-y-6">
         {isLoading ? (
           <div className="text-center text-muted-foreground font-mono py-10">Carregando pacotes...</div>
         ) : !packs?.length ? (
@@ -594,6 +672,8 @@ export default function ComprarParceiro() {
           packs.map((p) => {
             const orig = p.original_price_cents;
             const discPct = orig ? Math.round((1 - p.price_cents / orig) * 100) : null;
+            const balCalc = computePriceWithBalance(p.credits, p.price_cents, totalAvailableBalance);
+            const hasBal = totalAvailableBalance > 0;
             return (
               <section
                 key={p.id}
@@ -647,19 +727,38 @@ export default function ComprarParceiro() {
                   <div className="text-xs text-muted-foreground mt-1">
                     ≈ {(p.price_cents / p.credits / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 3 })} por crédito
                   </div>
+                  {hasBal && (
+                    <div className="mt-3 rounded-lg border-2 border-emerald-500/40 bg-emerald-500/10 p-3">
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <span className="text-muted-foreground">Seu saldo</span>
+                        <span className="text-emerald-400 font-bold">−{balCalc.balanceUsed} créditos</span>
+                      </div>
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="text-xs font-mono text-muted-foreground">Você paga via Pix</span>
+                        <span className={`text-2xl font-black font-mono ${balCalc.freeWithBalance ? "text-emerald-400" : "text-primary"}`}>
+                          {balCalc.freeWithBalance ? "GRÁTIS" : brl(balCalc.payCents)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                   <Button
                     size="lg"
-                    className="mt-5 w-full text-base"
+                    className={`mt-5 w-full text-base ${balCalc.freeWithBalance ? "bg-emerald-500 hover:bg-emerald-600 text-background" : ""}`}
                     onClick={() => { setSelected(p); setConfirmOpen(true); }}
                   >
                     <Sparkles className="w-4 h-4 mr-2" />
-                    Comprar {p.credits} créditos · {brl(p.price_cents)}
+                    {balCalc.freeWithBalance
+                      ? `Pegar ${p.credits} créditos GRÁTIS com saldo`
+                      : hasBal
+                      ? `Comprar ${p.credits} cr · pague só ${brl(balCalc.payCents)}`
+                      : `Comprar ${p.credits} créditos · ${brl(p.price_cents)}`}
                   </Button>
                 </div>
               </section>
             );
           })
         )}
+        </div>
 
         <div className="flex items-center justify-center gap-2 text-xs font-mono text-muted-foreground pt-4">
           <ShieldCheck className="w-3.5 h-3.5 text-primary" />
@@ -710,6 +809,8 @@ export default function ComprarParceiro() {
               }}
               onCancel={(id) => setConfirmCancelId(id)}
               onStop={(id) => setConfirmStopId(id)}
+              onReorder={reorderFromHistory}
+              hasBalance={totalAvailableBalance > 0}
               partnerWhatsapp={partner?.whatsapp ?? null}
             />
           </TabsContent>
@@ -802,7 +903,7 @@ export default function ComprarParceiro() {
       </Dialog>
 
       {/* Form do cliente */}
-      <Dialog open={step === "form"} onOpenChange={(o) => !o && setStep("browse")}>
+      <Dialog open={step === "form"} onOpenChange={(o) => { if (!o) { setStep("browse"); setPrefillOrderId(null); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Seus dados</DialogTitle>
@@ -810,6 +911,37 @@ export default function ComprarParceiro() {
               Precisamos disso pra emitir o Pix e te enviar o convite da conta-mãe.
             </DialogDescription>
           </DialogHeader>
+          {prefillOrderId && (
+            <div className="rounded-lg border-2 border-emerald-500/40 bg-emerald-500/10 p-3 text-xs">
+              <div className="font-bold text-emerald-400 flex items-center gap-1.5">
+                <RefreshCw className="w-3.5 h-3.5" /> Dados do pedido anterior preenchidos
+              </div>
+              <div className="text-muted-foreground mt-0.5">
+                Revise e clique em "Gerar Pix" — vamos abater do seu saldo automaticamente.
+              </div>
+            </div>
+          )}
+          {selected && totalAvailableBalance > 0 && (() => {
+            const c = computePriceWithBalance(selected.credits, selected.price_cents, totalAvailableBalance);
+            return (
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Pacote</span>
+                  <span className="font-mono">{selected.credits} cr · {brl(selected.price_cents)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Abate do saldo</span>
+                  <span className="font-mono text-emerald-400">−{c.balanceUsed} créditos</span>
+                </div>
+                <div className="flex justify-between border-t border-emerald-500/20 mt-1.5 pt-1.5">
+                  <span className="font-bold">Pix</span>
+                  <span className={`font-mono font-black ${c.freeWithBalance ? "text-emerald-400" : "text-primary"}`}>
+                    {c.freeWithBalance ? "GRÁTIS" : brl(c.payCents)}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
           <form onSubmit={submit} className="space-y-3">
             <div>
               <Label>Nome completo</Label>
@@ -850,7 +982,13 @@ export default function ComprarParceiro() {
               </p>
             </div>
             <Button type="submit" className="w-full" size="lg" disabled={submitting}>
-              {submitting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Gerando Pix...</> : "Gerar Pix"}
+              {submitting ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Gerando pedido...</>
+              ) : selected && totalAvailableBalance >= selected.credits && useBalance ? (
+                <>Confirmar pedido GRÁTIS com saldo</>
+              ) : (
+                "Gerar Pix"
+              )}
             </Button>
           </form>
         </DialogContent>
@@ -1236,7 +1374,7 @@ function OrderTrackingDialog({
 
 function OrdersHistorySection({
   history, loading, email, onEmailChange, onRefresh,
-  onTrack, onCancel, onStop, partnerWhatsapp,
+  onTrack, onCancel, onStop, onReorder, hasBalance, partnerWhatsapp,
 }: {
   history: OrderHistoryItem[] | null;
   loading: boolean;
@@ -1246,6 +1384,8 @@ function OrdersHistorySection({
   onTrack: (item: OrderHistoryItem) => void;
   onCancel: (id: string) => void;
   onStop: (id: string) => void;
+  onReorder: (item: OrderHistoryItem) => void;
+  hasBalance: boolean;
   partnerWhatsapp: string | null;
 }) {
   return (
@@ -1345,13 +1485,33 @@ function OrdersHistorySection({
                   )}
                   {o.status === "refunded" && (
                     <div className="text-xs text-emerald-400 mt-1">
-                      {o.refundedCredits ?? 0} créditos voltaram como saldo
+                      {o.refundedCredits ?? 0} créditos voltaram como crédito pra usar em outro pedido
                       {o.failedReason ? ` · ${o.failedReason}` : ""}
                     </div>
                   )}
                   {(o.balanceAppliedCredits ?? 0) > 0 && (
                     <div className="text-[11px] text-emerald-400/80 mt-1">
                       Pago com {o.balanceAppliedCredits} créditos do seu saldo
+                    </div>
+                  )}
+                  {(o.status === "refunded" || (o.status === "failed" && hasBalance) || (o.status === "expired" && hasBalance)) && o.ownDevice && (
+                    <div className="mt-3 rounded-lg border-2 border-emerald-500/40 bg-emerald-500/10 p-3 flex flex-col sm:flex-row sm:items-center gap-2">
+                      <div className="flex-1 text-xs">
+                        <div className="font-bold text-emerald-400">
+                          Refaça este pedido sem pagar de novo
+                        </div>
+                        <div className="text-muted-foreground">
+                          Vamos preencher tudo igual ao anterior e abater do seu saldo.
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        className="bg-emerald-500 hover:bg-emerald-600 text-background font-bold"
+                        onClick={() => onReorder(o)}
+                      >
+                        <RefreshCw className="w-4 h-4 mr-1.5" />
+                        Refazer pedido
+                      </Button>
                     </div>
                   )}
                   {o.status === "delivered" && o.deliveredAt && (

@@ -139,10 +139,19 @@ function computePriceWithBalance(
   packPriceCents: number,
   balanceCredits: number,
 ) {
-  const balanceUsed = Math.max(0, Math.min(balanceCredits, packCredits));
-  const remaining = Math.max(0, packCredits - balanceUsed);
-  const payCents =
+  const MIN_PIX_CENTS = 100;
+  let balanceUsed = Math.max(0, Math.min(balanceCredits, packCredits));
+  let remaining = Math.max(0, packCredits - balanceUsed);
+  let payCents =
     packCredits > 0 ? Math.round((packPriceCents * remaining) / packCredits) : packPriceCents;
+  // Pix mínimo R$ 1,00 — se ficaria abaixo, reduz o saldo aplicado
+  if (payCents > 0 && payCents < MIN_PIX_CENTS && packCredits > 0) {
+    const pricePerCredit = packPriceCents / packCredits;
+    const maxBalanceCents = Math.max(0, packPriceCents - MIN_PIX_CENTS);
+    balanceUsed = Math.max(0, Math.min(balanceUsed, Math.floor(maxBalanceCents / pricePerCredit)));
+    remaining = packCredits - balanceUsed;
+    payCents = Math.round(pricePerCredit * remaining);
+  }
   return {
     balanceUsed,
     payCents,

@@ -110,12 +110,22 @@ Deno.serve(async (req) => {
         .maybeSingle();
       availableBalance = Math.max(0, Number(bal?.credits ?? 0));
     }
-    const balanceToApply = crossBalance > 0
+    let balanceToApply = crossBalance > 0
       ? crossBalance
       : Math.min(availableBalance, pack.credits);
-    const creditsToCharge = pack.credits - balanceToApply;
+    let creditsToCharge = pack.credits - balanceToApply;
     const pricePerCredit = pack.price_cents / pack.credits;
-    const amountToCharge = Math.round(pricePerCredit * creditsToCharge);
+    let amountToCharge = Math.round(pricePerCredit * creditsToCharge);
+    // AbacatePay exige Pix mínimo de R$ 1,00. Se o valor restante ficaria
+    // abaixo, reduzimos o saldo aplicado para manter o Pix em ≥ R$ 1,00.
+    const MIN_PIX_CENTS = 100;
+    if (amountToCharge > 0 && amountToCharge < MIN_PIX_CENTS && pack.credits > 0) {
+      const maxBalanceCents = Math.max(0, pack.price_cents - MIN_PIX_CENTS);
+      const maxBalanceCredits = Math.floor(maxBalanceCents / pricePerCredit);
+      balanceToApply = Math.max(0, Math.min(balanceToApply, maxBalanceCredits));
+      creditsToCharge = pack.credits - balanceToApply;
+      amountToCharge = Math.round(pricePerCredit * creditsToCharge);
+    }
     const balanceCentsValue = pack.price_cents - amountToCharge;
 
     // Caso saldo cobre 100% — não precisa de Pix

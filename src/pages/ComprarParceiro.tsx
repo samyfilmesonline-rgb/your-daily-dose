@@ -408,6 +408,7 @@ export default function ComprarParceiro() {
           customerTaxId: taxDigits,
           targetWorkspace: workspace.trim(),
           clientFingerprint: fingerprint,
+          useBalance,
         },
       });
       if (error) {
@@ -429,11 +430,19 @@ export default function ComprarParceiro() {
         throw error;
       }
       if (!data?.orderId) throw new Error("Resposta inválida");
-      setPix(data as PixData);
-      setStep("pix");
+      const pd = data as PixData;
+      setPix(pd);
+      // Se foi pago totalmente com saldo, pula a tela de Pix
+      setStep(pd.paidWithBalance ? "paid" : "pix");
+      if (pd.paidWithBalance) {
+        toast({
+          title: "Pedido criado com saldo",
+          description: `Usamos ${pd.balanceAppliedCredits} créditos do seu saldo. Sem cobrança.`,
+        });
+      }
       try {
         localStorage.setItem(LAST_EMAIL_KEY, email.trim().toLowerCase());
-        localStorage.setItem(ACTIVE_ORDER_KEY, (data as PixData).orderId);
+        localStorage.setItem(ACTIVE_ORDER_KEY, pd.orderId);
       } catch { /* ignore */ }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro ao gerar Pix";

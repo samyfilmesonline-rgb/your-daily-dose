@@ -2,6 +2,7 @@ Diagnóstico:
 - O erro real nos logs da Edge Function `partner-shop-create-pix` é: `AbacatePay create [422]: {"success":false,"data":null,"error":"Value should be one of 'object', 'object'"}`.
 - A função da loja que já funciona (`abacatepay-create-pix` / `loja-create-pix`) chama o helper `createPixCharge` sem `metadata`.
 - O checkout do parceiro chama a mesma API v2, mas adiciona `metadata: { partnerId, packId }`. Pela mensagem 422, o gateway está rejeitando algum campo extra/estrutura da payload v2. Como o pedido já salva `partner_id`, `pack_id` e `tx_id` no Supabase, esse `metadata` não é necessário.
+- Nova evidência após remover `metadata`: o 422 continuou com payload contendo `customer` sem `cellphone`. A documentação da AbacatePay indica que `customer` é opcional, mas quando enviado pode exigir todos os campos. O formulário do parceiro deixa WhatsApp opcional, então a payload precisava omitir `customer` quando ele estiver incompleto.
 
 Plano de correção:
 1. Alterar `supabase/functions/partner-shop-create-pix/index.ts` para usar a mesma payload enviada pela loja:
@@ -16,7 +17,7 @@ Plano de correção:
    - continuar logando o erro técnico no Supabase.
    - retornar uma mensagem clara para o frontend quando o gateway recusar a criação do Pix.
 4. Não alterar tabelas, RLS, nomes de colunas, nem fluxo de atribuição de bot.
-5. Validar depois da implementação:
-   - checar que não há `metadata` na criação Pix do parceiro.
-   - testar/chamar a Edge Function se possível com payload equivalente ao formulário.
-   - conferir logs para confirmar que o 422 da AbacatePay não reaparece.
+5. Validação aplicada:
+   - checado que não há `metadata` na criação Pix do parceiro.
+   - helper `createPixCharge` ajustado para não enviar `customer` parcial.
+   - teste local confirmou payload equivalente ao formulário: `{ method: "PIX", data: { amount, expiresIn, description } }`.

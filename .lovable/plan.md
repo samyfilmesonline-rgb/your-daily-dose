@@ -1,35 +1,26 @@
-# Corrigir erro do checkout Pix (AbacatePay v2)
-
 ## Diagnóstico
 
-Logs da edge `partner-shop-create-pix`:
+A tentativa mais recente chegou na Edge Function `partner-shop-create-pix`, mas ela respondeu **400 antes de chamar a AbacatePay**. Ou seja: o erro atual não é mais o `422` da AbacatePay; é validação local da função.
 
-```
-AbacatePay create [422]: {"success":false,"error":"Value should be one of 'object', 'object'"}
-```
+Pelo print e pelo payload, o campo mais provável é o **CPF/CNPJ**: foi digitado `045690404202` com 12 dígitos. A função só aceita CPF com 11 dígitos ou CNPJ com 14 dígitos, então retorna erro e o frontend mostra apenas `Edge Function returned a non-2xx status code`.
 
-A v2 (`POST https://api.abacatepay.com/v2/transparents/create`) com `{ "method": "PIX", "data": {...} }` está correta. O 422 vem da validação do `data.customer`: na v2 PIX, **se o `customer` for informado, `name` e `taxId` são obrigatórios e `additionalProperties: false`** — qualquer campo `undefined`/extra ou faltando dispara esse erro genérico.
+## Plano de correção
 
-No código atual (`supabase/functions/_shared/abacate.ts`) o objeto `customer` é montado direto a partir do input com `cellphone: customerWhatsapp` podendo ser `undefined`, e a tipagem permite chaves extras. Quando o WhatsApp não vem, ainda assim a chave existe no objeto serializado em alguns paths e a Abacate v2 reclama.
+1. **Melhorar validação no frontend em `src/pages/ComprarParceiro.tsx`**
+   - Antes de chamar a Edge Function, validar que CPF/CNPJ tem 11 ou 14 dígitos.
+   - Se estiver inválido, mostrar toast amigável: `CPF/CNPJ inválido. Use 11 dígitos para CPF ou 14 para CNPJ.`
+   - Não disparar a função quando o documento estiver inválido.
 
-Além disso, há um bug ortogonal na navegação: a rota é `/comprar/:partnerId` e o usuário abriu o link literal — todos os requests aparecem com `partner_id=eq.%3ApartnerId` (400 invalid uuid). Não é o que quebrou o botão "Comprar", mas precisa de uma mensagem amigável.
+2. **Melhorar mensagem de erro da Edge Function**
+   - Em `supabase/functions/partner-shop-create-pix/index.ts`, manter a validação atual, mas retornar erro claro quando o CPF/CNPJ tiver tamanho incorreto.
+   - Isso evita o erro genérico caso alguém chame a função direto ou o frontend deixe passar.
 
-## Mudanças
-
-**1. `supabase/functions/_shared/abacate.ts`** — sanitizar o body conforme schema v2:
-- Construir `data.customer` apenas se `name` e `taxId` existirem.
-- Remover chaves `undefined` (`cellphone`, `email`) antes de enviar.
-- Enviar `{ method: "PIX", data: { amount, expiresIn, description, customer?, metadata? } }` sem chaves extras.
-- Manter `ABACATE_BASE = https://api.abacatepay.com/v2` e `POST /transparents/create` / `GET /transparents/check?id=...`.
-- Logar o body em caso de erro 4xx para facilitar diagnóstico futuro.
-
-**2. `supabase/functions/partner-shop-create-pix/index.ts`** — passar `metadata: { orderRef, partnerId }` para correlação no webhook (opcional, ajuda rastreio) e garantir que `customerWhatsapp` undefined não vire chave do objeto.
-
-**3. `src/pages/ComprarParceiro.tsx`** — quando `partnerId` não for UUID válido, mostrar tela "Link inválido" em vez de fazer requests com `:partnerId`.
+3. **Exibir erro real no formulário**
+   - Ajustar o catch do submit para tentar ler `error.context` / resposta da função quando disponível.
+   - Assim, se a função retornar `{ error: "CPF/CNPJ inválido" }`, o usuário verá essa mensagem em vez de `Edge Function returned a non-2xx status code`.
 
 ## Validação
 
-1. Deploy automático.
-2. Acessar `/comprar/<uuid-do-parceiro-real>`, escolher pacote, preencher form e gerar Pix → QR aparece.
-3. Conferir logs `partner-shop-create-pix` (esperado 200).
-4. Acessar `/comprar/:partnerId` literal → deve mostrar "Link inválido", sem requests 400.
+- Testar com CPF/CNPJ inválido: deve bloquear no formulário, sem chamar a função.
+- Testar com 11 ou 14 dígitos: deve chamar a função normalmente.
+- Se a AbacatePay retornar erro depois disso, os logs já vão mostrar o próximo problema real.

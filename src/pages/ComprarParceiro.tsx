@@ -122,6 +122,15 @@ export default function ComprarParceiro() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selected) return;
+    const taxDigits = taxId.replace(/\D/g, "");
+    if (taxDigits.length !== 11 && taxDigits.length !== 14) {
+      toast({
+        title: "CPF/CNPJ inválido",
+        description: "Use 11 dígitos para CPF ou 14 para CNPJ.",
+        variant: "destructive",
+      });
+      return;
+    }
     setSubmitting(true);
     try {
       const { data, error } = await supabase.functions.invoke("partner-shop-create-pix", {
@@ -131,11 +140,28 @@ export default function ComprarParceiro() {
           customerName: name.trim(),
           customerEmail: email.trim().toLowerCase(),
           customerWhatsapp: whatsapp.trim() || undefined,
-          customerTaxId: taxId.replace(/\D/g, ""),
+          customerTaxId: taxDigits,
           targetWorkspace: workspace.trim() || undefined,
         },
       });
-      if (error) throw error;
+      if (error) {
+        const ctx = (error as { context?: Response }).context;
+        if (ctx && typeof ctx.json === "function") {
+          try {
+            const body = await ctx.json();
+            const msg =
+              typeof body?.error === "string"
+                ? body.error
+                : body?.error
+                ? JSON.stringify(body.error)
+                : error.message;
+            throw new Error(msg);
+          } catch {
+            throw error;
+          }
+        }
+        throw error;
+      }
       if (!data?.orderId) throw new Error("Resposta inválida");
       setPix(data as PixData);
       setStep("pix");

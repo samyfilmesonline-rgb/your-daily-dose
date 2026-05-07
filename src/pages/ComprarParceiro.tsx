@@ -209,6 +209,19 @@ export default function ComprarParceiro() {
   const [confirmStopId, setConfirmStopId] = useState<string | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
 
+  // Saldo de outro e-mail (Plano C) — só fingerprint
+  const [crossOpen, setCrossOpen] = useState(false);
+  const [crossEmail, setCrossEmail] = useState("");
+  const [crossLoading, setCrossLoading] = useState(false);
+  const [crossLookup, setCrossLookup] = useState<{ email: string; credits: number } | null>(null);
+  const [crossAuth, setCrossAuth] = useState<{
+    fromEmail: string;
+    token: string;
+    credits: number;
+    toEmail: string;
+    expiresAt: number;
+  } | null>(null);
+
   useEffect(() => {
     document.title = "Comprar créditos · Matrix";
   }, []);
@@ -416,6 +429,11 @@ export default function ComprarParceiro() {
           targetWorkspace: workspace.trim(),
           clientFingerprint: fingerprint,
           useBalance,
+          ...(crossAuth &&
+          crossAuth.toEmail === email.trim().toLowerCase() &&
+          crossAuth.expiresAt > Date.now()
+            ? { balanceToken: crossAuth.token, balanceFromEmail: crossAuth.fromEmail }
+            : {}),
         },
       });
       if (error) {
@@ -447,6 +465,8 @@ export default function ComprarParceiro() {
           description: `Usamos ${pd.balanceAppliedCredits} créditos do seu saldo. Sem cobrança.`,
         });
       }
+      // limpa autorização cross-email após uso (single-use)
+      setCrossAuth(null);
       try {
         localStorage.setItem(LAST_EMAIL_KEY, email.trim().toLowerCase());
         localStorage.setItem(ACTIVE_ORDER_KEY, pd.orderId);
@@ -667,6 +687,17 @@ export default function ComprarParceiro() {
                 </Button>
               </div>
             )}
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-xs text-emerald-400 hover:text-emerald-300"
+                onClick={() => setCrossOpen(true)}
+              >
+                <Wallet className="w-3.5 h-3.5 mr-1.5" />
+                Tenho saldo em outro e-mail
+              </Button>
+            </div>
             <OrdersHistorySection
               history={history}
               loading={historyLoading}
@@ -746,6 +777,22 @@ export default function ComprarParceiro() {
                   </span>
                 </label>
               )}
+              {crossAuth && crossAuth.expiresAt > Date.now() && (
+                <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-2 text-xs">
+                  <strong className="text-emerald-400">Saldo de {crossAuth.fromEmail}</strong> autorizado:
+                  até <strong>{crossAuth.credits}</strong> créditos serão aplicados neste pedido.
+                  Vai valer para o e-mail <strong>{crossAuth.toEmail}</strong>.
+                </div>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full text-xs text-emerald-400 hover:text-emerald-300"
+                onClick={() => setCrossOpen(true)}
+              >
+                <Wallet className="w-3.5 h-3.5 mr-1.5" />
+                Tenho saldo em outro e-mail
+              </Button>
               <p className="text-[10px] text-center text-muted-foreground">
                 Cobrança proporcional · reembolso automático
               </p>
@@ -963,6 +1010,162 @@ export default function ComprarParceiro() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Saldo de outro e-mail (Plano C) */}
+      <Dialog open={crossOpen} onOpenChange={(o) => {
+        setCrossOpen(o);
+        if (!o) { setCrossLookup(null); setCrossEmail(""); }
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wallet className="w-5 h-5 text-emerald-400" /> Saldo em outro e-mail
+            </DialogTitle>
+            <DialogDescription>
+              Informe o e-mail antigo. Você precisa estar no mesmo navegador/computador usado naquele pedido (sem isso, contate o suporte).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">E-mail antigo</Label>
+              <Input
+                type="email"
+                value={crossEmail}
+                onChange={(e) => setCrossEmail(e.target.value)}
+                placeholder="seuemail@antigo.com"
+              />
+            </div>
+            {!crossLookup && (
+              <Button
+                className="w-full"
+                disabled={crossLoading || !crossEmail.trim()}
+                onClick={async () => {
+                  setCrossLoading(true);
+                  try {
+                    const { data, error } = await supabase.functions.invoke(
+                      "partner-shop-balance-transfer",
+                      { body: { action: "lookup", partnerId, fromEmail: crossEmail.trim().toLowerCase(), fingerprint } }
+                    );
+                    if (error) throw error;
+                    const d = data as { credits: number; fingerprintMatch: boolean };
+                    if (!d.credits) {
+                      toast({ title: "Sem saldo", description: "Não há saldo disponível neste e-mail.", variant: "destructive" });
+                      return;
+                    }
+                    if (!d.fingerprintMatch) {
+                      toast({
+                        title: "Dispositivo diferente",
+                        description: "Este saldo pertence a outro navegador/computador. Acesse pelo dispositivo original ou contate o suporte.",
+                        variant: "destructive",
+                      });
+                      return;
+                    }
+                    setCrossLookup({ email: crossEmail.trim().toLowerCase(), credits: d.credits });
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : "Erro";
+                    toast({ title: "Falha", description: msg, variant: "destructive" });
+                  } finally {
+                    setCrossLoading(false);
+                  }
+                }}
+              >
+                {crossLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                Consultar saldo
+              </Button>
+            )}
+            {crossLookup && (
+              <>
+                <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+                  <div className="text-xs text-muted-foreground">Saldo encontrado em <strong>{crossLookup.email}</strong></div>
+                  <div className="text-2xl font-black font-mono text-emerald-400">{crossLookup.credits} créditos</div>
+                </div>
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  disabled={crossLoading || !customerBalance.email}
+                  onClick={async () => {
+                    const toEmail = (customerBalance.email ?? email.trim().toLowerCase()).trim();
+                    if (!toEmail) {
+                      toast({ title: "Faça um pedido primeiro", description: "Use o e-mail atual ao menos uma vez para podermos transferir.", variant: "destructive" });
+                      return;
+                    }
+                    setCrossLoading(true);
+                    try {
+                      const { error } = await supabase.functions.invoke(
+                        "partner-shop-balance-transfer",
+                        { body: { action: "transfer", partnerId, fromEmail: crossLookup.email, toEmail, fingerprint } }
+                      );
+                      if (error) throw error;
+                      toast({ title: "Saldo transferido", description: `${crossLookup.credits} créditos vieram para ${toEmail}.` });
+                      setCrossOpen(false);
+                      setCrossLookup(null);
+                      setCrossEmail("");
+                      fetchHistory();
+                    } catch (err) {
+                      const msg = err instanceof Error ? err.message : "Erro";
+                      toast({ title: "Falha", description: msg, variant: "destructive" });
+                    } finally {
+                      setCrossLoading(false);
+                    }
+                  }}
+                >
+                  Transferir para {customerBalance.email ?? "meu e-mail atual"}
+                </Button>
+                <Button
+                  className="w-full"
+                  disabled={crossLoading}
+                  onClick={async () => {
+                    const toEmail = email.trim().toLowerCase();
+                    if (!toEmail || !selected) {
+                      toast({ title: "Preencha o e-mail e escolha um pacote primeiro", variant: "destructive" });
+                      return;
+                    }
+                    setCrossLoading(true);
+                    try {
+                      const { data, error } = await supabase.functions.invoke(
+                        "partner-shop-balance-transfer",
+                        {
+                          body: {
+                            action: "authorize_apply",
+                            partnerId,
+                            fromEmail: crossLookup.email,
+                            toEmail,
+                            fingerprint,
+                            maxCredits: Math.min(crossLookup.credits, selected.credits),
+                          },
+                        }
+                      );
+                      if (error) throw error;
+                      const d = data as { token: string; expiresInSec: number };
+                      setCrossAuth({
+                        fromEmail: crossLookup.email,
+                        token: d.token,
+                        credits: Math.min(crossLookup.credits, selected.credits),
+                        toEmail,
+                        expiresAt: Date.now() + d.expiresInSec * 1000,
+                      });
+                      toast({
+                        title: "Saldo autorizado",
+                        description: `Use até ${Math.min(crossLookup.credits, selected.credits)} créditos do e-mail antigo neste pedido.`,
+                      });
+                      setCrossOpen(false);
+                      setCrossLookup(null);
+                      setCrossEmail("");
+                    } catch (err) {
+                      const msg = err instanceof Error ? err.message : "Erro";
+                      toast({ title: "Falha", description: msg, variant: "destructive" });
+                    } finally {
+                      setCrossLoading(false);
+                    }
+                  }}
+                >
+                  Usar somente neste pedido
+                </Button>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

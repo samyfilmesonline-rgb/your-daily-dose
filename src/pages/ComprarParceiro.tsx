@@ -1125,11 +1125,16 @@ function OrderTrackingInline({
   fallbackAmountCents: number | null;
   onCopyEmail: (email: string) => void;
 }) {
+  const { toast } = useToast();
+  const [confirming, setConfirming] = useState(false);
+  const [localConfirmedAt, setLocalConfirmedAt] = useState<string | null>(null);
   const status = order?.status;
   const botEmail = order?.botEmail ?? null;
   const workspace = order?.targetWorkspace ?? fallbackWorkspace ?? null;
   const credits = order?.credits ?? fallbackCredits ?? null;
   const amount = order?.amountCents ?? fallbackAmountCents ?? null;
+  const inviteConfirmedAt = order?.botInviteConfirmedAt ?? localConfirmedAt;
+  const progress = order?.progress ?? null;
   const isTerminalSuccess = status === "delivered";
   const isTerminalFailure = status === "failed" || status === "expired" || status === "refunded";
   const showBotBlock = !!botEmail && (status === "processing" || status === "paid" || status === "queued");
@@ -1138,6 +1143,42 @@ function OrderTrackingInline({
     : showBotBlock ? <Bot className="w-6 h-6" />
     : <Hourglass className="w-6 h-6 animate-pulse" />;
   const headerTone = isTerminalFailure ? "text-destructive" : "text-primary";
+  const showProgress =
+    !!inviteConfirmedAt &&
+    (status === "paid" || status === "queued" || status === "processing");
+
+  const confirmInvite = async () => {
+    if (!order) return;
+    // Recupera orderId do contexto via window? Não temos. Usamos progresso/state? Precisamos do id.
+    // O id chega via order? Não está em OrderState. Usamos localStorage active ou vem do parent.
+    // Solução: id é mantido em ACTIVE_ORDER_KEY ou no HistoryDialog - usamos atributo em window via callback.
+    // Adiamos: usamos data-order-id via DOM? Melhor: subir prop. Como fallback, lê localStorage.
+    let orderId: string | null = null;
+    try { orderId = localStorage.getItem("mf_active_order_id"); } catch { /* ignore */ }
+    // Se HistoryDialog setou um id de tracking, está em window.__mf_tracking_id
+    const winId = (window as unknown as { __mf_tracking_id?: string }).__mf_tracking_id;
+    if (winId) orderId = winId;
+    if (!orderId) {
+      toast({ title: "Não foi possível identificar o pedido", variant: "destructive" });
+      return;
+    }
+    let fp = "";
+    try { fp = localStorage.getItem("mf_client_fp") ?? ""; } catch { /* ignore */ }
+    setConfirming(true);
+    try {
+      const { error } = await supabase.functions.invoke("partner-shop-confirm-invite", {
+        body: { orderId, fingerprint: fp },
+      });
+      if (error) throw error;
+      setLocalConfirmedAt(new Date().toISOString());
+      toast({ title: "Convite confirmado!", description: "O farm vai começar em instantes." });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Erro";
+      toast({ title: "Falha ao confirmar", description: msg, variant: "destructive" });
+    } finally {
+      setConfirming(false);
+    }
+  };
 
   return (
     <>
@@ -1150,6 +1191,8 @@ function OrderTrackingInline({
             ? "Seus créditos já foram adicionados ao workspace informado."
             : isTerminalFailure
             ? "Veja os detalhes abaixo. Em caso de cobrança, o reembolso é automático."
+            : showProgress
+            ? "Estamos farmando seus créditos. Acompanhe o progresso em tempo real abaixo."
             : showBotBlock
             ? "Falta um passo manual: convide o bot abaixo como Owner do seu workspace Lovable."
             : "Estamos preparando seu pedido. Esta tela atualiza sozinha."}
@@ -1161,6 +1204,95 @@ function OrderTrackingInline({
         <div><div className="text-muted-foreground">Valor</div><div className="font-mono font-semibold">{amount != null ? brl(amount) : "—"}</div></div>
         <div><div className="text-muted-foreground">Status</div><div className="font-mono font-semibold">{status ? STATUS_LABEL[status] : "—"}</div></div>
       </div>
+
+      {/* Painel de progresso em tempo real */}
+      {showProgress && progress && (
+        <div className="rounded-lg border-2 border-emerald-500/40 bg-emerald-500/5 p-4 space-y-3 mt-3">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-mono uppercase tracking-widest text-emerald-400 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5" /> Farm em andamento
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Convite confirmado {timeAgo(inviteConfirmedAt)}
+            </div>
+          </div>
+          <div>
+            <div className="flex items-baseline justify-between mb-1">
+              <div className="font-mono text-2xl font-bold text-emerald-400">
+                {progress.farmed}<span className="text-base text-muted-foreground"> / {progress.target}</span>
+              </div>
+              <div className="font-mono text-sm text-emerald-400">{progress.percent}%</div>
+            </div>
+            <Progress value={progress.percent} className="h-2" />
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded border border-border bg-background/40 p-2">
+              <div className="text-muted-foreground">Bot</div>
+              <div className="font-mono">
+                {order?.botStatus === "busy" ? (
+                  <span className="text-emerald-400 inline-flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" /> trabalhando
+                  </span>
+                ) : order?.botStatus ?? "—"}
+              </div>
+              <div className="text-[10px] text-muted-foreground">
+                heartbeat {timeAgo(order?.botHeartbeatAt ?? null)}
+              </div>
+            </div>
+            <div className="rounded border border-border bg-background/40 p-2">
+              <div className="text-muted-foreground">Tentativas</div>
+              <div className="font-mono text-base font-semibold">{progress.attempts}</div>
+              <div className="text-[10px] text-muted-foreground">
+                último evento {timeAgo(progress.lastEventAt)}
+              </div>
+            </div>
+          </div>
+          {progress.currentExecution && (
+            <div className="rounded border border-border bg-background/40 p-2 text-xs">
+              <div className="text-muted-foreground mb-0.5">Tentativa atual</div>
+              <div className="font-mono">
+                {progress.currentExecution.status === "em_andamento" && (
+                  <span className="inline-flex items-center gap-1 text-emerald-400">
+                    <Loader2 className="w-3 h-3 animate-spin" /> farmando…
+                  </span>
+                )}
+                {progress.currentExecution.status === "limite" && (
+                  <span className="text-amber-400">Lovable bloqueou — próxima tentativa automática</span>
+                )}
+                {(progress.currentExecution.status === "sucesso" || progress.currentExecution.status === "concluido") && (
+                  <span className="text-emerald-400">+{progress.currentExecution.creditosAdicionados ?? 0} créditos nesta tentativa</span>
+                )}
+                {(progress.currentExecution.status === "falha" || progress.currentExecution.status === "erro") && (
+                  <span className="text-destructive">Falhou: {progress.currentExecution.erro ?? "erro"}</span>
+                )}
+              </div>
+            </div>
+          )}
+          {progress.recent.length > 1 && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-muted-foreground">Ver últimas tentativas</summary>
+              <ul className="mt-2 space-y-1">
+                {progress.recent.map((r) => (
+                  <li key={r.id} className="flex items-center gap-2 font-mono">
+                    {r.status === "sucesso" || r.status === "concluido" ? (
+                      <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                    ) : r.status === "limite" ? (
+                      <Clock className="w-3 h-3 text-amber-400" />
+                    ) : r.status === "em_andamento" ? (
+                      <Loader2 className="w-3 h-3 text-primary animate-spin" />
+                    ) : (
+                      <XCircle className="w-3 h-3 text-destructive" />
+                    )}
+                    <span>+{r.creditosAdicionados ?? 0}</span>
+                    <span className="text-muted-foreground">{timeAgo(r.atualizadoEm)}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+
       {showBotBlock && botEmail && (
         <div className="rounded-lg border-2 border-primary/40 bg-primary/5 p-4 space-y-3 mt-3">
           <div className="text-xs font-mono uppercase tracking-widest text-primary flex items-center gap-1.5">
@@ -1184,6 +1316,24 @@ function OrderTrackingInline({
             <li>Convide o e-mail do bot como <strong>Owner</strong></li>
             <li>Volte aqui e aguarde — atualiza sozinho</li>
           </ol>
+          {!inviteConfirmedAt ? (
+            <Button
+              className="w-full"
+              onClick={confirmInvite}
+              disabled={confirming}
+            >
+              {confirming ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Confirmando...</>
+              ) : (
+                <><CheckCircle2 className="w-4 h-4 mr-2" /> Já adicionei o bot como Owner</>
+              )}
+            </Button>
+          ) : (
+            <div className="rounded border border-emerald-500/40 bg-emerald-500/5 p-2 text-xs text-emerald-400 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4" />
+              Convite confirmado {timeAgo(inviteConfirmedAt)} — iniciando farm.
+            </div>
+          )}
         </div>
       )}
       {(status === "paid" || status === "queued" || (status === "processing" && !order?.assignedBotId)) && !showBotBlock && (

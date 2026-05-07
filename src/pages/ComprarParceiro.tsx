@@ -15,7 +15,13 @@ import { matrixThemeStyle } from "@/lib/matrix-theme";
 import {
   Sparkles, ShieldCheck, AlertTriangle, Ban, Clock, Coins,
   CheckCircle2, Copy, Loader2, QrCode, Mail, ExternalLink, XCircle, Hourglass, Bot,
+  History, ShoppingCart, RefreshCw, Trash2, Eye,
 } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type Pack = {
   id: string;
@@ -50,6 +56,69 @@ type OrderState = {
   paidAt: string | null;
 };
 
+type OrderHistoryItem = {
+  id: string;
+  status: OrderStatus;
+  credits: number;
+  amountCents: number;
+  targetWorkspace: string | null;
+  createdAt: string;
+  paidAt: string | null;
+  deliveredAt: string | null;
+  failedReason: string | null;
+  assignedBotId: string | null;
+  botEmail: string | null;
+  pixQrcode: string | null;
+  pixCopyPaste: string | null;
+  pixExpiresAt: string | null;
+  txId: string | null;
+  customerEmail: string;
+  ownDevice: boolean;
+};
+
+const FP_KEY = "mf_client_fp";
+const LAST_EMAIL_KEY = "mf_last_email";
+const ACTIVE_ORDER_KEY = "mf_active_order_id";
+
+function getOrCreateFingerprint(): string {
+  try {
+    let fp = localStorage.getItem(FP_KEY);
+    if (!fp) {
+      fp =
+        typeof crypto?.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem(FP_KEY, fp);
+    }
+    return fp;
+  } catch {
+    return `nofp-${Date.now()}`;
+  }
+}
+
+function timeAgo(iso: string | null): string {
+  if (!iso) return "—";
+  const diff = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "agora";
+  if (min < 60) return `há ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `há ${h}h`;
+  const d = Math.floor(h / 24);
+  return `há ${d}d`;
+}
+
+const STATUS_BADGE: Record<OrderStatus, { label: string; cls: string }> = {
+  pending: { label: "Aguardando Pix", cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" },
+  paid: { label: "Pago", cls: "bg-primary/15 text-primary border-primary/40" },
+  queued: { label: "Na fila", cls: "bg-primary/15 text-primary border-primary/40" },
+  processing: { label: "Processando", cls: "bg-primary/15 text-primary border-primary/40" },
+  delivered: { label: "Entregue", cls: "bg-emerald-500/15 text-emerald-400 border-emerald-500/40" },
+  failed: { label: "Falhou", cls: "bg-destructive/15 text-destructive border-destructive/40" },
+  expired: { label: "Expirado", cls: "bg-muted text-muted-foreground border-border" },
+  refunded: { label: "Reembolsado", cls: "bg-muted text-muted-foreground border-border" },
+};
+
 export default function ComprarParceiro() {
   const { partnerId = "" } = useParams();
   const { toast } = useToast();
@@ -69,9 +138,88 @@ export default function ComprarParceiro() {
   const [orderState, setOrderState] = useState<OrderState | null>(null);
   const pollRef = useRef<number | null>(null);
 
+  // Histórico / fingerprint
+  const fingerprint = useMemo(() => getOrCreateFingerprint(), []);
+  const [tab, setTab] = useState<"comprar" | "pedidos">("comprar");
+  const [history, setHistory] = useState<OrderHistoryItem[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyEmail, setHistoryEmail] = useState<string>(() => {
+    try { return localStorage.getItem(LAST_EMAIL_KEY) ?? ""; } catch { return ""; }
+  });
+  const [trackingOrderId, setTrackingOrderId] = useState<string | null>(null);
+  const [trackingItem, setTrackingItem] = useState<OrderHistoryItem | null>(null);
+  const [cancelingId, setCancelingId] = useState<string | null>(null);
+  const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
+
   useEffect(() => {
     document.title = "Comprar créditos · Matrix";
   }, []);
+
+  // Pré-preenche email se houver
+  useEffect(() => {
+    if (!email && historyEmail) setEmail(historyEmail);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const fetchHistory = useMemo(
+    () => async () => {
+      if (!isValidPartnerId) return;
+      setHistoryLoading(true);
+      try {
+        const { data, error } = await supabase.functions.invoke(
+          "partner-shop-list-orders",
+          {
+            body: {
+              partnerId,
+              fingerprint,
+              email: historyEmail.trim() || undefined,
+            },
+          }
+        );
+        if (error) throw error;
+        setHistory(((data as { orders?: OrderHistoryItem[] })?.orders) ?? []);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Erro ao carregar pedidos";
+        toast({ title: "Falha", description: msg, variant: "destructive" });
+      } finally {
+        setHistoryLoading(false);
+      }
+    },
+    [partnerId, fingerprint, historyEmail, isValidPartnerId, toast]
+  );
+
+  // Carrega histórico ao abrir tab e em foco/intervalo
+  useEffect(() => {
+    if (tab !== "pedidos") return;
+    fetchHistory();
+    const id = window.setInterval(fetchHistory, 15000);
+    const onVis = () => { if (document.visibilityState === "visible") fetchHistory(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [tab, fetchHistory]);
+
+  // Auto-detecta pedido em aberto ao abrir página
+  useEffect(() => {
+    if (!isValidPartnerId) return;
+    let activeId: string | null = null;
+    try { activeId = localStorage.getItem(ACTIVE_ORDER_KEY); } catch { /* ignore */ }
+    if (!activeId) return;
+    (async () => {
+      const { data } = await supabase.functions.invoke("partner-shop-check-status", {
+        body: { orderId: activeId },
+      });
+      const d = data as OrderState | null;
+      if (!d?.status) return;
+      if (["delivered", "failed", "expired", "refunded"].includes(d.status)) {
+        try { localStorage.removeItem(ACTIVE_ORDER_KEY); } catch { /* ignore */ }
+        return;
+      }
+      setTrackingOrderId(activeId);
+    })();
+  }, [isValidPartnerId]);
 
   const { data: partner } = useQuery({
     queryKey: ["partner-public", partnerId],
@@ -79,7 +227,7 @@ export default function ComprarParceiro() {
     queryFn: async () => {
       const { data } = await supabase
         .from("parceiros")
-        .select("user_id, nome, status")
+        .select("user_id, nome, status, whatsapp")
         .eq("user_id", partnerId)
         .maybeSingle();
       return data;
@@ -188,6 +336,7 @@ export default function ComprarParceiro() {
           customerWhatsapp: whatsDigits,
           customerTaxId: taxDigits,
           targetWorkspace: workspace.trim(),
+          clientFingerprint: fingerprint,
         },
       });
       if (error) {
@@ -211,6 +360,10 @@ export default function ComprarParceiro() {
       if (!data?.orderId) throw new Error("Resposta inválida");
       setPix(data as PixData);
       setStep("pix");
+      try {
+        localStorage.setItem(LAST_EMAIL_KEY, email.trim().toLowerCase());
+        localStorage.setItem(ACTIVE_ORDER_KEY, (data as PixData).orderId);
+      } catch { /* ignore */ }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro ao gerar Pix";
       toast({ title: "Falha", description: msg, variant: "destructive" });

@@ -7,8 +7,10 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Activity, Search, AlertTriangle, Clock, Loader2 } from "lucide-react";
+import { Activity, Search, AlertTriangle, Clock, Loader2, CheckCircle2 } from "lucide-react";
 import GlitchText from "@/components/landing/GlitchText";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
 
 type OrderStatus = "pending" | "paid" | "queued" | "processing" | "delivered" | "failed" | "expired" | "refunded";
 
@@ -62,11 +64,14 @@ function brl(c: number) {
 export default function Pedidos() {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const { toast } = useToast();
   useEffect(() => { document.title = "Pedidos · Matrix"; }, []);
 
   const [statusFilter, setStatusFilter] = useState<OrderStatus | "all">("all");
   const [search, setSearch] = useState("");
   const [detail, setDetail] = useState<Order | null>(null);
+  const [forcePaidNotes, setForcePaidNotes] = useState("");
+  const [forcePaidLoading, setForcePaidLoading] = useState(false);
 
   const { data: orders = [] } = useQuery({
     queryKey: ["my-orders", user?.id],
@@ -360,6 +365,54 @@ export default function Pedidos() {
                 <div className="rounded border border-primary/30 bg-primary/5 p-2 space-y-1">
                   <div className="text-xs text-muted-foreground">Pix copia e cola (reenvie ao cliente):</div>
                   <Input readOnly value={detail.pix_copy_paste} className="font-mono text-xs" />
+                </div>
+              )}
+              {detail.status === "pending" && (
+                <div className="rounded border border-amber-500/40 bg-amber-500/5 p-3 space-y-2">
+                  <div className="text-xs font-medium text-amber-400 flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5" /> Marcar como pago manualmente
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Use só se o cliente apresentou comprovante e o gateway não confirmou. Anote o ID
+                    end-to-end do Pix ou referência do banco. Esta ação é auditada.
+                  </p>
+                  <Textarea
+                    value={forcePaidNotes}
+                    onChange={(e) => setForcePaidNotes(e.target.value)}
+                    placeholder="Ex.: Comprovante e2e ID E12345678... — verificado em 07/05/2026"
+                    className="text-xs font-mono min-h-[60px]"
+                  />
+                  <Button
+                    size="sm"
+                    variant="default"
+                    disabled={forcePaidLoading || forcePaidNotes.trim().length < 3}
+                    onClick={async () => {
+                      if (!detail) return;
+                      setForcePaidLoading(true);
+                      try {
+                        const { error } = await supabase.functions.invoke(
+                          "partner-shop-force-paid-order",
+                          { body: { orderId: detail.id, notes: forcePaidNotes.trim() } }
+                        );
+                        if (error) throw error;
+                        toast({ title: "Pedido marcado como pago", description: "Bot será atribuído automaticamente." });
+                        setForcePaidNotes("");
+                        setDetail(null);
+                        qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : "Erro";
+                        toast({ title: "Falha", description: msg, variant: "destructive" });
+                      } finally {
+                        setForcePaidLoading(false);
+                      }
+                    }}
+                  >
+                    {forcePaidLoading ? (
+                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Processando...</>
+                    ) : (
+                      <><CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Confirmar pagamento manual</>
+                    )}
+                  </Button>
                 </div>
               )}
             </div>

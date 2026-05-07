@@ -1447,13 +1447,33 @@ function OrdersHistorySection({
                   )}
                   {o.status === "refunded" && (
                     <div className="text-xs text-emerald-400 mt-1">
-                      {o.refundedCredits ?? 0} créditos voltaram como saldo
+                      {o.refundedCredits ?? 0} créditos voltaram como crédito pra usar em outro pedido
                       {o.failedReason ? ` · ${o.failedReason}` : ""}
                     </div>
                   )}
                   {(o.balanceAppliedCredits ?? 0) > 0 && (
                     <div className="text-[11px] text-emerald-400/80 mt-1">
                       Pago com {o.balanceAppliedCredits} créditos do seu saldo
+                    </div>
+                  )}
+                  {(o.status === "refunded" || (o.status === "failed" && hasBalance) || (o.status === "expired" && hasBalance)) && o.ownDevice && (
+                    <div className="mt-3 rounded-lg border-2 border-emerald-500/40 bg-emerald-500/10 p-3 flex flex-col sm:flex-row sm:items-center gap-2">
+                      <div className="flex-1 text-xs">
+                        <div className="font-bold text-emerald-400">
+                          Refaça este pedido sem pagar de novo
+                        </div>
+                        <div className="text-muted-foreground">
+                          Vamos preencher tudo igual ao anterior e abater do seu saldo.
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        className="bg-emerald-500 hover:bg-emerald-600 text-background font-bold"
+                        onClick={() => onReorder(o)}
+                      >
+                        <RefreshCw className="w-4 h-4 mr-1.5" />
+                        Refazer pedido
+                      </Button>
                     </div>
                   )}
                   {o.status === "delivered" && o.deliveredAt && (

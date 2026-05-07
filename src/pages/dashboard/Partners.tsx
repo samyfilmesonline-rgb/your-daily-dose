@@ -571,6 +571,15 @@ export default function Partners() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {botsFor && (
+        <PartnerBotsDialog
+          open={!!botsFor}
+          onOpenChange={(o) => !o && setBotsFor(null)}
+          partnerId={botsFor.user_id}
+          partnerName={botsFor.nome ?? profiles.get(botsFor.user_id)}
+        />
+      )}
     </div>
   );
 }

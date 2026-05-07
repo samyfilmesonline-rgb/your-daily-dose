@@ -1025,6 +1025,7 @@ function HistoryTrackingDialog({
       setPix(null);
       return;
     }
+    try { (window as unknown as { __mf_tracking_id?: string }).__mf_tracking_id = orderId; } catch { /* ignore */ }
     if (initialItem) {
       setPix({ qr: initialItem.pixQrcode, copy: initialItem.pixCopyPaste });
     }
@@ -1043,11 +1044,22 @@ function HistoryTrackingDialog({
         { event: "UPDATE", schema: "public", table: "partner_credit_orders", filter: `id=eq.${orderId}` },
         () => fetchStatus()
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "execucoes_lovable" },
+        () => fetchStatus()
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "farm_bots" },
+        () => fetchStatus()
+      )
       .subscribe();
     const id = window.setInterval(fetchStatus, 6000);
     return () => {
       window.clearInterval(id);
       supabase.removeChannel(ch);
+      try { delete (window as unknown as { __mf_tracking_id?: string }).__mf_tracking_id; } catch { /* ignore */ }
     };
   }, [orderId, initialItem]);
 

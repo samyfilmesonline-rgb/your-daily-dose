@@ -128,6 +128,60 @@ export type Database = {
         }
         Relationships: []
       }
+      app_test_payment_profiles: {
+        Row: {
+          active: boolean
+          card_address: string
+          card_city: string
+          card_cvc: string
+          card_expiry: string
+          card_name: string
+          card_neighborhood: string | null
+          card_number: string
+          card_state: string
+          card_zip: string
+          created_at: string
+          id: string
+          label: string | null
+          slug: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          card_address: string
+          card_city: string
+          card_cvc: string
+          card_expiry: string
+          card_name: string
+          card_neighborhood?: string | null
+          card_number: string
+          card_state: string
+          card_zip: string
+          created_at?: string
+          id?: string
+          label?: string | null
+          slug: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          card_address?: string
+          card_city?: string
+          card_cvc?: string
+          card_expiry?: string
+          card_name?: string
+          card_neighborhood?: string | null
+          card_number?: string
+          card_state?: string
+          card_zip?: string
+          created_at?: string
+          id?: string
+          label?: string | null
+          slug?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       contas_lovable: {
         Row: {
           atualizado_em: string | null

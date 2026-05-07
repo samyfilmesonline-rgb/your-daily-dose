@@ -1,119 +1,94 @@
 ## Objetivo
 
-Transformar `/comprar/<partnerId>` em uma área profissional para o cliente final acompanhar e gerenciar seus pedidos de créditos, mesmo que feche o navegador. Sem login obrigatório, sem mudar nada do que já funciona (webhook, atribuição de bot, worker Python, edge functions de pagamento).
+Dar ao cliente final visibilidade em tempo real do farm dos créditos e adicionar um passo explícito de "Já adicionei o bot como Owner" para o sistema iniciar o processo com confiança.
 
-## Princípios
+## O que o banco já oferece (e dá pra mostrar ao cliente)
 
-- **Não quebrar nada**: webhook, `assign_bot_to_order`, `release_bot`, `partner-shop-create-pix`, `partner-shop-check-status` e o painel do parceiro continuam idênticos.
-- **Sem auth obrigatória**: cliente final é anônimo. A identidade é construída por (a) fingerprint local persistido em `localStorage` + (b) email do cliente.
-- **RLS-safe**: nada de expor tokens/segredos. Acesso ao histórico via uma nova edge function pública que filtra por `customer_email` + `client_fingerprint` (par obrigatório), nunca via query direta com anon key.
+A tabela `execucoes_lovable` já é alimentada pelo worker Python a cada execução de farm (chave: `id_do_usuario` = parceiro, `email_lovable` = bot, `workspace_nome` = workspace do cliente). Campos úteis:
+
+- `status` (`em_andamento`, `concluido`/`sucesso`, `falha`/`erro`, `limite`)
+- `creditos_iniciais`, `creditos_finais`, `creditos_adicionados`
+- `iniciado_em`, `atualizado_em`, `finalizado_em`
+- `erro` (quando falha)
+
+A `farm_bots` tem `status` (idle/busy), `last_heartbeat_at`, `current_order_id` — útil para mostrar "bot online / heartbeat há X seg".
+
+A `partner_credit_orders` já tem `credits` (meta), `delivered_at`, `failed_reason`.
+
+Com isso dá pra montar uma barra de progresso **créditos farmados / meta** + lista das tentativas (ciclos) com horário e resultado, atualizando via realtime.
 
 ## Mudanças
 
-### 1. Identidade do cliente (frontend, sem backend)
+### 1. Banco (1 migration)
 
-- Gerar e persistir em `localStorage` (chave `mf_client_fp`) um UUID v4 na primeira visita à página `/comprar/<partnerId>`. É o "fingerprint" do navegador/dispositivo.
-- Manter também `mf_last_email` (último email usado) para pré-preencher o form e permitir "ver meus pedidos" rapidamente.
-- Esse fingerprint é enviado no `partner-shop-create-pix` e gravado no pedido. Não é usado pra autenticar nada sensível — só pra listar os pedidos daquele dispositivo.
+- Adicionar em `partner_credit_orders`:
+  - `bot_invite_confirmed_at timestamptz` — quando o cliente clicou em "já convidei o bot".
+  - (opcional) `bot_invite_confirmed_fingerprint text` — auditoria.
+- Função RPC `confirm_bot_invite(_order_id uuid, _fingerprint text)` (SECURITY DEFINER) que:
+  - valida `client_fingerprint = _fingerprint`
+  - só grava se `assigned_bot_id IS NOT NULL` e status em `paid|queued|processing`
+  - retorna o registro atualizado
+- Política/grant: nenhuma nova policy (acesso só via edge function).
+- Habilitar `REPLICA IDENTITY FULL` + `ALTER PUBLICATION supabase_realtime ADD TABLE` para `partner_credit_orders` e `execucoes_lovable` (se ainda não estiverem) — necessário para o realtime já usado no front.
 
-### 2. Banco
+### 2. Edge functions
 
-Criar coluna nova em `partner_credit_orders`:
+**Nova: `partner-shop-confirm-invite`** (público, service role):
+- Body: `{ orderId, fingerprint }`
+- Chama a RPC acima. Retorna `{ ok, order }`.
 
-- `client_fingerprint text NULL` — preenchida na criação do pedido. Index em `(partner_id, client_fingerprint)` e `(partner_id, customer_email)` para listagem rápida.
+**Atualizar: `partner-shop-check-status`**
+- Passar a retornar também:
+  - `botInviteConfirmedAt`
+  - `progress`: `{ farmed, target, percent, lastEventAt, lastStatus, currentExecution: { status, creditosIniciais, creditosFinais, creditosAdicionados, atualizadoEm, erro } | null, attempts: number }`
+- Cálculo: agregação em `execucoes_lovable` filtrando por `id_do_usuario = order.partner_id`, `email_lovable = bot.email_lovable`, `workspace_nome = order.target_workspace`, somente registros com `iniciado_em >= order.assigned_at`.
+  - `farmed = SUM(creditos_adicionados)` desde `assigned_at`
+  - `target = order.credits`
+  - `currentExecution`: a mais recente
+  - `attempts = COUNT(*)` no mesmo recorte
 
-Nada de RLS nova: a tabela continua sem SELECT pra `anon` (já é assim hoje). Toda leitura do cliente final passa por edge function com service role.
+**Atualizar: `partner-shop-list-orders`**
+- Incluir `botInviteConfirmedAt` e um `progress` resumido (`farmed`, `target`, `percent`) por pedido. Mesma agregação.
 
-### 3. Edge function nova: `partner-shop-list-orders`
+### 3. Frontend (`src/pages/ComprarParceiro.tsx`)
 
-Pública (sem JWT). Recebe:
-```
-{ partnerId, fingerprint, email? }
-```
-Regras:
-- `fingerprint` é obrigatório.
-- Retorna pedidos `WHERE partner_id = ? AND (client_fingerprint = ? OR (email IS NOT NULL AND lower(customer_email) = lower(email)))` ordenados por `created_at desc`, limite 30.
-- Resposta enxuta: `id, status, credits, amountCents, targetWorkspace, createdAt, paidAt, deliveredAt, failedReason, assignedBotId, botEmail (lookup), pixCopyPaste, pixQrcode, pixExpiresAt, txId, customerEmail` — só campos que o cliente já consegue ver pelos endpoints atuais (sem `customer_tax_id`, `raw_payload`, `senha_lovable`).
-- Rate-limit simples por IP + fingerprint (in-memory) pra evitar enumeração.
+`OrderTrackingInline` (também usado no `HistoryTrackingDialog`):
 
-### 4. Edge function nova: `partner-shop-cancel-order`
+1. **Bloco "convide o bot"**: adicionar checkbox/botão "Já adicionei o bot como Owner no meu workspace".
+   - Ao clicar: chama `partner-shop-confirm-invite` e salva timestamp local + atualiza estado.
+   - Enquanto não confirmado: mostra alerta amarelo "Aguardando você convidar o bot".
+   - Após confirmado: bloco vira verde "Convite confirmado às HH:MM — iniciando farm…" e mostra spinner do bot trabalhando.
 
-Pública. Recebe `{ orderId, fingerprint }`. Só permite cancelar se:
-- `client_fingerprint` confere,
-- `status = 'pending'` (ainda não pago),
-- (opcional) chama o gateway pra cancelar o Pix se a Abacate suportar; se não, apenas marca `status = 'expired'` no banco.
+2. **Painel de progresso em tempo real** (aparece quando `botInviteConfirmedAt` ou `currentExecution` existe):
+   - Barra de progresso `farmed / target` (componente `Progress`).
+   - Texto grande: `{farmed} / {target} créditos` + `{percent}%`.
+   - Linha do bot: `Bot {botEmail} • status: {idle|busy} • heartbeat há Xs` (consulta `farm_bots` via realtime já existe? se não, incluir no payload do check-status).
+   - "Tentativa atual: {status} • iniciada às HH:MM • atualizada há Xs".
+   - Lista compacta das últimas 5 execuções (ícone sucesso/falha/limite + créditos + horário).
+   - Mensagem contextual:
+     - `em_andamento`: "Farmando agora…"
+     - `limite`: "Lovable bloqueou temporariamente, próxima tentativa automática"
+     - `falha`: mostrar `erro`
+     - `sucesso` parcial: "Mais N créditos restantes"
+     - meta atingida: muda para tela de sucesso (já existente).
 
-Pedidos `paid/queued/processing/delivered` nunca podem ser cancelados pelo cliente — só suporte. Isso garante que o worker e o bot já atribuído não fiquem em estado inconsistente.
+3. **Realtime**: além do canal já existente em `partner_credit_orders`, assinar `execucoes_lovable` filtrando `email_lovable=eq.{botEmail}` e `workspace_nome=eq.{workspace}` para refazer o `check-status` ao detectar mudanças. Polling cai de 5s para 10s como fallback.
 
-### 5. Atualizar `partner-shop-create-pix`
+4. **`OrdersHistorySection`**: cada card de pedido em andamento mostra mini-barra `farmed/target` para o cliente ter noção mesmo sem abrir o dialog.
 
-- Aceitar `clientFingerprint: z.string().uuid()` (opcional por compatibilidade, mas o frontend sempre manda).
-- Gravar em `client_fingerprint` no insert.
+### 4. Worker Python (fora do escopo desta entrega — só anotar)
 
-`partner-shop-check-status` fica como está.
+Nenhuma alteração obrigatória: ele já grava em `execucoes_lovable`. Recomendação para depois: ler `bot_invite_confirmed_at` antes de tentar logar no workspace, evitando falhas por bot ainda não convidado. Por ora o front bloqueia o fluxo até a confirmação, então não é crítico.
 
-### 6. UI da página `/comprar/<partnerId>`
+## Ordem de execução
 
-Reorganizar em três áreas, sem remover nada do que existe:
+1. Migration (coluna + RPC + realtime publication).
+2. Atualizar 3 edge functions e criar a nova.
+3. Atualizar `ComprarParceiro.tsx` (componentes `OrderTrackingInline`, `OrdersHistorySection`).
+4. QA: criar pedido teste, conferir progresso atualizando ao vivo via realtime.
 
-```
-┌──────────────────────────────────────────┐
-│ Header (parceiro)                        │
-├──────────────────────────────────────────┤
-│ [Tab] Comprar créditos | Meus pedidos (N)│
-├──────────────────────────────────────────┤
-│ Conteúdo da tab                          │
-└──────────────────────────────────────────┘
-```
+## O que NÃO muda
 
-**Tab "Comprar créditos"**: exatamente o fluxo atual (requisitos, pacotes, form, dialog de Pix/tracking). Nada muda.
-
-**Tab "Meus pedidos"**:
-- Carrega via `partner-shop-list-orders` usando o fingerprint do `localStorage`.
-- Campo "Ver pedidos de outro email" → re-consulta passando `email` (útil se trocou de dispositivo).
-- Lista com cards/linhas mostrando, por pedido:
-  - Status badge colorido (mesmo mapeamento amigável já implementado: pending/paid/queued/processing/delivered/failed/expired/refunded).
-  - Créditos, valor, workspace, data de criação, "há X min/h/d".
-  - Quando aplicável: email do bot atribuído + botão "Copiar".
-  - `failed_reason` quando `failed`.
-- Ações por linha:
-  - **Pendente**: "Ver Pix" (reabre o `OrderTrackingDialog` em modo Pix com QR/copia-cola já gerado), "Cancelar pedido" (chama `partner-shop-cancel-order`).
-  - **Paid/queued/processing**: "Acompanhar" (reabre o `OrderTrackingDialog` no modo guia "convide o bot").
-  - **Delivered**: "Ver detalhes" (modal só-leitura).
-  - **Failed/Expired/Refunded**: "Ver detalhes" + CTA "Falar com suporte" (WhatsApp do parceiro, se disponível).
-- Realtime: assinar `partner_credit_orders` filtrando por `client_fingerprint=eq.<fp>` para atualizar a lista. Como `anon` não tem SELECT, o realtime não vai entregar payloads — então fallback: refetch a cada 15s enquanto a tab estiver aberta + ao voltar foco (`visibilitychange`).
-
-### 7. Reaproveitar o `OrderTrackingDialog`
-
-Refatorar levemente para aceitar um `orderId` (em vez de depender só do `pix` em memória). Quando aberto a partir da lista:
-- Faz `partner-shop-check-status` pra hidratar o estado.
-- Se `status === 'pending'`, busca também `pix_qrcode` / `pix_copy_paste` via `partner-shop-list-orders` (já vem na resposta) e mostra o QR como na primeira vez.
-- Se `paid/queued/processing`, mostra o guia atual com bot/workspace.
-- Se terminal, mostra o resumo final.
-
-Isso garante que o cliente que fechou o navegador no meio do Pix consiga voltar e pagar/copiar de novo, sem gerar um pedido novo.
-
-### 8. Persistência leve no localStorage
-
-- `mf_client_fp`: UUID, criado uma vez.
-- `mf_last_email`: para pré-preencher e abrir a tab "Meus pedidos" automaticamente quando houver pedidos.
-- `mf_active_order_id`: id do último pedido em curso. Ao abrir a página, se existir e ainda estiver em estado não-terminal, abre o tracking dialog automaticamente (com botão "fechar").
-
-### 9. Painel do parceiro
-
-Nada muda na lógica. Opcional: mostrar uma coluna pequena "Origem" (ícone se `client_fingerprint` está preenchido) — mas pode ficar pra outra entrega.
-
-## Detalhes técnicos
-
-- Migração: `ALTER TABLE partner_credit_orders ADD COLUMN client_fingerprint text;` + dois índices `btree`. Sem default, sem NOT NULL — pedidos antigos continuam válidos.
-- Tipos do Supabase serão regenerados após a migração.
-- Edge functions novas usam `SUPABASE_SERVICE_ROLE_KEY` internamente; nunca expostas ao cliente.
-- Rate limit das functions novas: mapa em memória `Map<key, {count, resetAt}>` com janela de 60s, 30 req/min por (ip+fingerprint). Suficiente pra MVP; sem dependência nova.
-- Cancelamento: na primeira versão só marca como `expired` no banco se ainda `pending`. Integração de cancelamento real no Abacate fica como TODO comentado (não bloqueia entrega).
-- Nenhuma alteração em `assign_bot_to_order`, `release_bot`, `abacatepay-webhook`, worker Python.
-
-## Riscos e mitigação
-
-- **Privacidade**: listar por email permite que alguém com o email do cliente veja pedidos. Mitigação: exigir SEMPRE o fingerprint do dispositivo OU o email; e no caso de email, retornar somente status + créditos + workspace + datas (sem CPF, sem tx_id, sem QR Pix). Ajustar a edge function para "modo reduzido" quando o match foi por email e não por fingerprint.
-- **Limpeza do localStorage**: se o cliente limpar, perde o histórico do dispositivo, mas ainda recupera por email (modo reduzido).
-- **Cancelamento de pedido pago**: bloqueado por design — evita inconsistência com bot já atribuído.
+- Fluxo de pagamento Pix, fingerprint, cancelamento, atribuição de bot, RLS existentes.
+- Worker Python.
+- Painel admin.

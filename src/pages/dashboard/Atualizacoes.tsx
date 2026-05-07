@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Package, Plus, RefreshCw } from "lucide-react";
+import { Package, Plus, RefreshCw, Copy, Zap, Info } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
@@ -40,6 +40,31 @@ export default function Atualizacoes() {
   const openNew = () => { setEditing(null); setOpenForm(true); };
   const openEdit = (r: AppRelease) => { setEditing(r); setOpenForm(true); };
 
+  const copyPayload = () => {
+    if (!latestPublished) return;
+    const payload = {
+      update_available: true,
+      mandatory: latestPublished.is_mandatory,
+      latest_version: latestPublished.version,
+      download_url: latestPublished.download_url,
+      sha256: latestPublished.sha256,
+      file_size_bytes: latestPublished.file_size_bytes,
+      changelog: latestPublished.changelog,
+      published_at: latestPublished.published_at,
+    };
+    navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+    toast.success("Payload copiado");
+  };
+
+  const testEdgeFn = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke("app-version-check?current=0.0.0", { method: "GET" } as never);
+      if (error) throw error;
+      console.log("[app-version-check]", data);
+      toast.success(`OK — latest: v${(data as { latest_version?: string })?.latest_version ?? "-"} (veja console)`);
+    } catch (e) { toast.error(friendlyError(e)); }
+  };
+
   return (
     <div className="space-y-6">
       <div className="relative overflow-hidden rounded-xl border neon-border cyber-grid">
@@ -71,10 +96,25 @@ export default function Atualizacoes() {
         </CardHeader>
         <CardContent>
           {latestPublished ? (
-            <div className="flex items-center gap-3 flex-wrap">
-              <Badge className="text-base px-3 py-1 font-mono">v{latestPublished.version}</Badge>
-              <span className="text-sm text-muted-foreground">publicada em {fmtDate(latestPublished.published_at)}</span>
-              {latestPublished.is_mandatory && <Badge variant="destructive">obrigatória</Badge>}
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 flex-wrap">
+                <Badge className="text-base px-3 py-1 font-mono">v{latestPublished.version}</Badge>
+                <span className="text-sm text-muted-foreground">publicada em {fmtDate(latestPublished.published_at)}</span>
+                {latestPublished.is_mandatory && <Badge variant="destructive">obrigatória</Badge>}
+                {latestPublished.min_supported_version && (
+                  <Badge variant="outline" className="font-mono text-[10px]">min: v{latestPublished.min_supported_version}</Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button size="sm" variant="outline" onClick={copyPayload}><Copy className="h-3.5 w-3.5 mr-1.5" /> Copiar payload</Button>
+                <Button size="sm" variant="outline" onClick={testEdgeFn}><Zap className="h-3.5 w-3.5 mr-1.5" /> Testar edge function</Button>
+              </div>
+              <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 p-3 text-xs">
+                <Info className="h-4 w-4 shrink-0 mt-0.5 text-primary" />
+                <div className="text-muted-foreground">
+                  Defina <span className="font-mono text-foreground">min_supported_version</span> para forçar a atualização em todos os clientes abaixo dessa versão (vira obrigatória mesmo sem o flag).
+                </div>
+              </div>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Nenhuma release publicada ainda.</p>

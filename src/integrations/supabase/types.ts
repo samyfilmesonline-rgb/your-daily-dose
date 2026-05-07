@@ -527,7 +527,51 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      app_updates: {
+        Row: {
+          active: boolean | null
+          channel: string | null
+          download_url: string | null
+          github_release_url: string | null
+          mandatory: boolean | null
+          min_version: string | null
+          notes: string | null
+          platform: string | null
+          published_at: string | null
+          sha256: string | null
+          title: string | null
+          version: string | null
+        }
+        Insert: {
+          active?: boolean | null
+          channel?: never
+          download_url?: string | null
+          github_release_url?: never
+          mandatory?: boolean | null
+          min_version?: string | null
+          notes?: string | null
+          platform?: never
+          published_at?: never
+          sha256?: string | null
+          title?: never
+          version?: string | null
+        }
+        Update: {
+          active?: boolean | null
+          channel?: never
+          download_url?: string | null
+          github_release_url?: never
+          mandatory?: boolean | null
+          min_version?: string | null
+          notes?: string | null
+          platform?: never
+          published_at?: never
+          sha256?: string | null
+          title?: never
+          version?: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       current_partner_name: { Args: never; Returns: string }

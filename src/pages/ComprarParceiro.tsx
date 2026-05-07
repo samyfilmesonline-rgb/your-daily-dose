@@ -886,6 +886,55 @@ export default function ComprarParceiro() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Confirmação de parar farm */}
+      <AlertDialog
+        open={!!confirmStopId}
+        onOpenChange={(o) => !o && setConfirmStopId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Parar farm e receber saldo?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O que já foi farmado fica entregue na sua workspace. Os créditos restantes
+              voltam como <strong>saldo</strong> e você pode usar em um novo pedido sem pagar de novo.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!!stoppingId}
+              onClick={async () => {
+                if (!confirmStopId) return;
+                setStoppingId(confirmStopId);
+                try {
+                  const { data, error } = await supabase.functions.invoke(
+                    "partner-shop-stop-order",
+                    { body: { orderId: confirmStopId, fingerprint } }
+                  );
+                  if (error) throw error;
+                  const refunded = (data as { refundedCredits?: number })?.refundedCredits ?? 0;
+                  toast({
+                    title: "Farm parado",
+                    description: refunded > 0
+                      ? `${refunded} créditos voltaram para o seu saldo.`
+                      : "Pedido encerrado.",
+                  });
+                  setConfirmStopId(null);
+                  fetchHistory();
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : "Erro";
+                  toast({ title: "Falha", description: msg, variant: "destructive" });
+                } finally {
+                  setStoppingId(null);
+                }
+              }}
+            >
+              {stoppingId ? "Parando..." : "Sim, parar e receber saldo"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

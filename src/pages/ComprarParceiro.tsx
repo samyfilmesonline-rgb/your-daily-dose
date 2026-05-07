@@ -308,6 +308,16 @@ export default function ComprarParceiro() {
         { event: "UPDATE", schema: "public", table: "partner_credit_orders", filter: `id=eq.${pix.orderId}` },
         () => { fetchStatus(); }
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "execucoes_lovable" },
+        () => { fetchStatus(); }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "farm_bots" },
+        () => { fetchStatus(); }
+      )
       .subscribe();
     fetchStatus();
     pollRef.current = window.setInterval(fetchStatus, 5000);

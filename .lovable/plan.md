@@ -1,94 +1,55 @@
 ## Objetivo
 
-Dar ao cliente final visibilidade em tempo real do farm dos créditos e adicionar um passo explícito de "Já adicionei o bot como Owner" para o sistema iniciar o processo com confiança.
-
-## O que o banco já oferece (e dá pra mostrar ao cliente)
-
-A tabela `execucoes_lovable` já é alimentada pelo worker Python a cada execução de farm (chave: `id_do_usuario` = parceiro, `email_lovable` = bot, `workspace_nome` = workspace do cliente). Campos úteis:
-
-- `status` (`em_andamento`, `concluido`/`sucesso`, `falha`/`erro`, `limite`)
-- `creditos_iniciais`, `creditos_finais`, `creditos_adicionados`
-- `iniciado_em`, `atualizado_em`, `finalizado_em`
-- `erro` (quando falha)
-
-A `farm_bots` tem `status` (idle/busy), `last_heartbeat_at`, `current_order_id` — útil para mostrar "bot online / heartbeat há X seg".
-
-A `partner_credit_orders` já tem `credits` (meta), `delivered_at`, `failed_reason`.
-
-Com isso dá pra montar uma barra de progresso **créditos farmados / meta** + lista das tentativas (ciclos) com horário e resultado, atualizando via realtime.
+Hoje o cliente final só vê a barra `farmed/target`. O worker já grava em `execucoes_lovable` mensagens úteis (ex.: "Workspaces detectados...", "Workspace encontrado...", erros de login, "limite", etc.) no campo `erro` + `status`, mas nada disso chega na UI dos cards de pedidos. Vamos expor esse último evento tanto na listagem quanto no tracking detalhado.
 
 ## Mudanças
 
-### 1. Banco (1 migration)
+### 1. Edge function `partner-shop-list-orders`
 
-- Adicionar em `partner_credit_orders`:
-  - `bot_invite_confirmed_at timestamptz` — quando o cliente clicou em "já convidei o bot".
-  - (opcional) `bot_invite_confirmed_fingerprint text` — auditoria.
-- Função RPC `confirm_bot_invite(_order_id uuid, _fingerprint text)` (SECURITY DEFINER) que:
-  - valida `client_fingerprint = _fingerprint`
-  - só grava se `assigned_bot_id IS NOT NULL` e status em `paid|queued|processing`
-  - retorna o registro atualizado
-- Política/grant: nenhuma nova policy (acesso só via edge function).
-- Habilitar `REPLICA IDENTITY FULL` + `ALTER PUBLICATION supabase_realtime ADD TABLE` para `partner_credit_orders` e `execucoes_lovable` (se ainda não estiverem) — necessário para o realtime já usado no front.
+No bloco que já calcula `progressMap`, ampliar a query e o payload:
 
-### 2. Edge functions
+- Trocar `select("creditos_adicionados")` por `select("status, creditos_adicionados, erro, atualizado_em, iniciado_em")` ordenado por `iniciado_em desc`.
+- Continuar somando `farmed = SUM(creditos_adicionados)`.
+- Adicionar ao `progressMap[o.id]`:
+  - `lastStatus`: status da execução mais recente (`em_andamento` | `sucesso`/`concluido` | `falha`/`erro` | `limite`).
+  - `lastMessage`: `erro` da execução mais recente (o worker usa esse campo tanto para mensagens informativas quanto para erros).
+  - `lastEventAt`: `atualizado_em` da execução mais recente.
+  - `attempts`: total de execuções no recorte.
+- Refletir esses campos no objeto `progress` do item retornado (default `{ farmed:0, percent:0, lastStatus:null, lastMessage:null, lastEventAt:null, attempts:0 }`).
 
-**Nova: `partner-shop-confirm-invite`** (público, service role):
-- Body: `{ orderId, fingerprint }`
-- Chama a RPC acima. Retorna `{ ok, order }`.
+### 2. Edge function `partner-shop-check-status`
 
-**Atualizar: `partner-shop-check-status`**
-- Passar a retornar também:
-  - `botInviteConfirmedAt`
-  - `progress`: `{ farmed, target, percent, lastEventAt, lastStatus, currentExecution: { status, creditosIniciais, creditosFinais, creditosAdicionados, atualizadoEm, erro } | null, attempts: number }`
-- Cálculo: agregação em `execucoes_lovable` filtrando por `id_do_usuario = order.partner_id`, `email_lovable = bot.email_lovable`, `workspace_nome = order.target_workspace`, somente registros com `iniciado_em >= order.assigned_at`.
-  - `farmed = SUM(creditos_adicionados)` desde `assigned_at`
-  - `target = order.credits`
-  - `currentExecution`: a mais recente
-  - `attempts = COUNT(*)` no mesmo recorte
+Já retorna `progress.currentExecution.erro` e `recent[].erro`, mas o frontend não exibe. Garantir que `currentExecution` também inclua um campo `mensagem` (alias de `erro`) só por clareza semântica — opcional, podemos manter `erro` mesmo. Sem mudanças estruturais aqui.
 
-**Atualizar: `partner-shop-list-orders`**
-- Incluir `botInviteConfirmedAt` e um `progress` resumido (`farmed`, `target`, `percent`) por pedido. Mesma agregação.
+### 3. Frontend `src/pages/ComprarParceiro.tsx`
 
-### 3. Frontend (`src/pages/ComprarParceiro.tsx`)
+**`OrderTrackingInline` (painel ao vivo):**
+- Abaixo da barra de progresso, adicionar uma linha "Última atividade do bot" com:
+  - Ícone por status (`Loader2` para `em_andamento`, `CheckCircle2` para sucesso, `AlertTriangle` para `limite`, `XCircle` para `falha`).
+  - Texto = `progress.currentExecution.erro` (ou fallback "Aguardando próximo ciclo…" se vazio).
+  - Timestamp relativo ("há Xs") usando `atualizadoEm`.
+- Na lista "Últimas tentativas" (recent), mostrar a mensagem `erro` truncada ao lado do status, não só status + créditos.
 
-`OrderTrackingInline` (também usado no `HistoryTrackingDialog`):
+**`OrdersHistorySection` (cards do histórico):**
+- Para pedidos `paid|queued|processing` com `progress.lastMessage`, exibir uma linha discreta abaixo da mini-barra:
+  - `lastStatus === "em_andamento"` → texto azul "Bot: {lastMessage}".
+  - `lastStatus === "limite"` → texto âmbar "Aguardando liberação: {lastMessage}".
+  - `lastStatus === "falha"|"erro"` → texto vermelho "Tentando novamente: {lastMessage}".
+  - `lastStatus === "sucesso"|"concluido"` → texto verde "Último ciclo: +X créditos".
+- Truncar em ~80 chars com `line-clamp-2`.
 
-1. **Bloco "convide o bot"**: adicionar checkbox/botão "Já adicionei o bot como Owner no meu workspace".
-   - Ao clicar: chama `partner-shop-confirm-invite` e salva timestamp local + atualiza estado.
-   - Enquanto não confirmado: mostra alerta amarelo "Aguardando você convidar o bot".
-   - Após confirmado: bloco vira verde "Convite confirmado às HH:MM — iniciando farm…" e mostra spinner do bot trabalhando.
+### 4. Tipos
 
-2. **Painel de progresso em tempo real** (aparece quando `botInviteConfirmedAt` ou `currentExecution` existe):
-   - Barra de progresso `farmed / target` (componente `Progress`).
-   - Texto grande: `{farmed} / {target} créditos` + `{percent}%`.
-   - Linha do bot: `Bot {botEmail} • status: {idle|busy} • heartbeat há Xs` (consulta `farm_bots` via realtime já existe? se não, incluir no payload do check-status).
-   - "Tentativa atual: {status} • iniciada às HH:MM • atualizada há Xs".
-   - Lista compacta das últimas 5 execuções (ícone sucesso/falha/limite + créditos + horário).
-   - Mensagem contextual:
-     - `em_andamento`: "Farmando agora…"
-     - `limite`: "Lovable bloqueou temporariamente, próxima tentativa automática"
-     - `falha`: mostrar `erro`
-     - `sucesso` parcial: "Mais N créditos restantes"
-     - meta atingida: muda para tela de sucesso (já existente).
-
-3. **Realtime**: além do canal já existente em `partner_credit_orders`, assinar `execucoes_lovable` filtrando `email_lovable=eq.{botEmail}` e `workspace_nome=eq.{workspace}` para refazer o `check-status` ao detectar mudanças. Polling cai de 5s para 10s como fallback.
-
-4. **`OrdersHistorySection`**: cada card de pedido em andamento mostra mini-barra `farmed/target` para o cliente ter noção mesmo sem abrir o dialog.
-
-### 4. Worker Python (fora do escopo desta entrega — só anotar)
-
-Nenhuma alteração obrigatória: ele já grava em `execucoes_lovable`. Recomendação para depois: ler `bot_invite_confirmed_at` antes de tentar logar no workspace, evitando falhas por bot ainda não convidado. Por ora o front bloqueia o fluxo até a confirmação, então não é crítico.
-
-## Ordem de execução
-
-1. Migration (coluna + RPC + realtime publication).
-2. Atualizar 3 edge functions e criar a nova.
-3. Atualizar `ComprarParceiro.tsx` (componentes `OrderTrackingInline`, `OrdersHistorySection`).
-4. QA: criar pedido teste, conferir progresso atualizando ao vivo via realtime.
+Atualizar a interface local `OrderItem`/`Progress` no `ComprarParceiro.tsx` para incluir `lastStatus`, `lastMessage`, `lastEventAt`, `attempts`. Nenhuma migration necessária — só leitura.
 
 ## O que NÃO muda
 
-- Fluxo de pagamento Pix, fingerprint, cancelamento, atribuição de bot, RLS existentes.
-- Worker Python.
-- Painel admin.
+- Schema do banco, RPC, RLS, worker Python, fluxo Pix, fingerprint, realtime subscriptions.
+- `partner-shop-check-status` já entrega o dado; só o consumo no front muda.
+
+## Ordem de execução
+
+1. Ajustar `partner-shop-list-orders` (query + payload).
+2. Ajustar `OrderTrackingInline` para exibir mensagem da execução atual + erro nas linhas do `recent`.
+3. Ajustar `OrdersHistorySection` para exibir `progress.lastMessage` por card.
+4. QA: criar pedido teste, conferir que mensagens "Workspaces detectados…" e "Workspace encontrado…" aparecem ao vivo no card e no painel.

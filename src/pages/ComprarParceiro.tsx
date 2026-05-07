@@ -1874,3 +1874,72 @@ function OrderTrackingInline({
     </>
   );
 }
+
+// ============================================================
+// Botão "Já paguei — verificar agora" (cliente final)
+// ============================================================
+function AlreadyPaidButton({
+  orderId,
+  onResolved,
+}: {
+  orderId: string;
+  onResolved: (state: OrderState) => void;
+}) {
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const id = window.setInterval(() => setCooldown((c) => Math.max(0, c - 1)), 1000);
+    return () => window.clearInterval(id);
+  }, [cooldown]);
+
+  const onClick = async () => {
+    if (loading || cooldown > 0) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("partner-shop-check-status", {
+        body: { orderId },
+      });
+      if (error) throw error;
+      const d = data as OrderState | null;
+      if (!d?.status) throw new Error("Resposta inválida");
+      onResolved(d);
+      if (d.status === "pending") {
+        toast({
+          title: "Ainda aguardando confirmação",
+          description:
+            "Não recebemos a confirmação do banco ainda. Pode levar alguns minutos. Se já passou de 10 minutos, fale com o suporte e tenha o comprovante em mãos.",
+        });
+        setCooldown(10);
+      } else {
+        toast({ title: "Pagamento confirmado!" });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Erro";
+      toast({ title: "Falha ao verificar", description: msg, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      onClick={onClick}
+      disabled={loading || cooldown > 0}
+      className="border-primary/40"
+    >
+      {loading ? (
+        <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Verificando...</>
+      ) : cooldown > 0 ? (
+        `Aguarde ${cooldown}s`
+      ) : (
+        "Já paguei — verificar agora"
+      )}
+    </Button>
+  );
+}

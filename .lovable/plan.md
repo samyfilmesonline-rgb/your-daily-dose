@@ -1,117 +1,97 @@
-## Sistema de Atualização do App Desktop (Python)
 
-Vou montar um **gerenciador de releases** no painel admin + um **canal de push em tempo real** para os clientes detectarem novas versões instantaneamente.
+## Auditoria — sistema de atualização do app desktop
 
-### Arquitetura
+### O que já está pronto (verificado)
 
-```text
-[Admin painel web]
-    │ cria release (versão, URL R2, changelog, sha256)
-    ▼
-[Supabase: tabela app_releases]
-    │ Realtime (postgres_changes INSERT)
-    ▼
-[App Python desktop]
-    │ assina canal → recebe push instantâneo
-    │ compara versão atual × latest
-    │ mostra popup "Nova versão X disponível — atualizar agora?"
-    │ se sim: baixa ZIP do R2 → valida sha256 → instala
+- **Tabela `public.app_releases`** com colunas `version` (unique), `download_url`, `sha256`, `file_size_bytes`, `changelog`, `is_mandatory`, `min_supported_version`, `is_published`, `published_at`, `created_by`, timestamps.
+- **RLS**: anon + authenticated leem somente `is_published = true`; admin tem CRUD total.
+- **Realtime** ativo: `app_releases` está em `supabase_realtime` com `replica identity full`.
+- **Trigger** `set_app_releases_updated_at` atualiza `updated_at` e seta `published_at = now()` ao publicar.
+- **Painel admin** `/dashboard/atualizacoes` com tabela, badge LATEST, criar/editar/publicar/despublicar/deletar.
+- **Edge function** `app-version-check` (GET, pública) retorna `{ update_available, mandatory, latest_version, download_url, sha256, file_size_bytes, changelog, published_at }`.
+- **Documentação Python** em `docs/desktop-updater.md` com listener Realtime + fallback HTTP + verificação SHA256.
+
+### Gaps encontrados que ainda atrapalham o "100% funcional"
+
+1. **Despublicar sem zerar `published_at`** — hoje, ao despublicar uma release o `published_at` é mantido; ao republicar, o trigger não reseta o timestamp porque a coluna não está nula. Resultado: badge "publicada em" mostra data antiga. Ajustar trigger.
+2. **`min_supported_version` no form aceita string vazia, mas zod marca `.optional()` junto com `.refine`** — string vazia entra no caminho do refine e às vezes barra o submit. Validar antes do trim.
+3. **Edge function não valida o param `current`** — se o cliente enviar lixo, `cmp` retorna `NaN`, e a comparação vira `false`. Validar com regex semver e tratar como `0.0.0`.
+4. **Edge function com cache** — desktop pode receber resposta cacheada por proxies/CDN. Adicionar `Cache-Control: no-store`.
+5. **Doc Python desatualizada** — a chamada `channel.on_postgres_changes` da `supabase-py` v2 exige `event` com valor explícito (`INSERT` ou `UPDATE`), não `*`. Também filtramos `is_published = true` no callback para evitar disparar em rascunho.
+6. **Sem feedback visual de "release ativa hoje"** — adicionar destaque do `latest_published` no topo da página com botão "Copiar payload de teste" (útil para validar o fluxo no app desktop).
+7. **Reaproveitar a função para forçar versão mínima** — quando admin sobe `min_supported_version`, qualquer cliente abaixo recebe `mandatory=true`. Já está implementado, apenas documentar no painel para o admin entender.
+
+### Mudanças propostas
+
+#### Banco (1 migration)
+
+```sql
+-- Trigger: ao despublicar, zerar published_at; ao republicar, setar de novo.
+CREATE OR REPLACE FUNCTION public.set_app_releases_updated_at()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN
+  NEW.updated_at = now();
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.is_published = true AND NEW.published_at IS NULL THEN
+      NEW.published_at = now();
+    END IF;
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF NEW.is_published = true AND OLD.is_published = false THEN
+      NEW.published_at = now();
+    ELSIF NEW.is_published = false AND OLD.is_published = true THEN
+      NEW.published_at = NULL;
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
 ```
 
-Cloudflare R2 continua hospedando o ZIP. Supabase só guarda os **metadados** da release (rápido, barato, com Realtime nativo).
+#### Edge function `app-version-check`
 
----
+- Validar `current` com regex semver, fallback `0.0.0`.
+- Adicionar `Cache-Control: no-store, max-age=0` no header da resposta.
+- Retornar `current_version` ecoado para debug.
 
-### 1. Banco — tabela `app_releases`
+#### Painel `/dashboard/atualizacoes`
 
-Campos:
-- `version` (semver, ex: `1.4.2`) — único
-- `download_url` (URL pública do R2)
-- `sha256` (hash do ZIP, para validar integridade)
-- `file_size_bytes`
-- `changelog` (markdown — mostrado no popup)
-- `is_mandatory` (bool, default false — já deixa pronto pra futuro, mesmo que hoje seja só "opcional")
-- `min_supported_version` (opcional — abaixo disso força update)
-- `is_published` (bool — admin publica/despublica sem deletar)
-- `published_at`, `created_at`, `updated_at`, `created_by`
+- Card destacado para a release LATEST com:
+  - botão "Copiar payload JSON" (formato igual ao do edge function);
+  - botão "Testar edge function" (faz GET com `current=0.0.0` e mostra a resposta em toast).
+- Aviso explicando que `min_supported_version` força atualização para todos abaixo dessa versão.
 
-**RLS:**
-- `SELECT` público (anon + authenticated) — apenas releases com `is_published = true`. O app desktop usa a anon key pra ler.
-- `INSERT/UPDATE/DELETE` apenas admin (via `has_role`).
+#### Form `ReleaseFormDialog.tsx`
 
-**Realtime:** habilitar replicação na tabela (`alter publication supabase_realtime add table app_releases`) e `replica identity full` para o desktop receber o payload completo.
+- Tratar `min_supported_version` vazio antes do refine.
+- Toast específico para erro de versão duplicada (`23505`).
 
----
+#### Doc Python `docs/desktop-updater.md`
 
-### 2. Painel admin — nova aba "Atualizações"
+- Atualizar listener para `event="INSERT"` + filtro `is_published=true` no callback.
+- Adicionar exemplo de updater Windows (extrair em pasta temp + `updater.bat`).
+- Adicionar comparação semver via `packaging.version.Version` para evitar bugs de string.
 
-- Rota: `/dashboard/atualizacoes`
-- Registrar em `src/lib/sidebar-tabs.ts` (ícone `Download` ou `Package`) — fica automaticamente disponível no painel de permissões.
-- Protegida por `AdminRoute`.
+### Como funciona ponta-a-ponta (recap para o admin)
 
-**UI (tema Matrix consistente):**
-- **Lista de releases** (tabela): versão, status (publicado/rascunho), data, downloads previstos, ações (editar, publicar/despublicar, deletar).
-- **Botão "Nova release"** → dialog com:
-  - Versão (validação semver)
-  - URL do ZIP no R2
-  - Changelog (textarea markdown)
-  - Botão "Calcular SHA256 da URL" (chama edge function que baixa o head + hash, ou pede pro admin colar manualmente — vamos no manual pra evitar custo de egress; mostro como gerar com `sha256sum` no rodapé do dialog)
-  - Tamanho do arquivo (auto-fetch via HEAD na URL, com fallback manual)
-  - Toggle "Publicar imediatamente"
-- **Badge "Latest"** na release publicada mais recente.
+```text
+[Admin] painel /dashboard/atualizacoes
+   │
+   ├── insere row em app_releases (version, download_url, sha256, …, is_published=true)
+   │
+   ▼
+[Postgres] trigger seta published_at=now()
+   │
+   ├──► supabase_realtime envia INSERT em app_releases
+   │       │
+   │       ▼
+   │   [App desktop] listener recebe → compara semver → popup "Atualizar agora?"
+   │
+   └──► fallback: app no boot chama GET /functions/v1/app-version-check?current=X
+           ▼
+       resposta JSON com download_url + sha256 → app baixa, valida hash, instala, reinicia.
+```
 
----
-
-### 3. Endpoint para o app Python
-
-Edge function pública `app-version-check` (sem JWT):
-- `GET /app-version-check?current=1.3.0`
-- Retorna: `{ latest_version, download_url, sha256, file_size, changelog, is_mandatory, update_available: bool }`
-- Usado como **fallback de polling** (a cada inicialização do app) caso o Realtime esteja desconectado.
-
----
-
-### 4. Integração no app desktop Python (instruções)
-
-Como você não me deu acesso ao código Python, vou entregar um **snippet pronto** documentado dentro de um arquivo `docs/desktop-updater.md` com:
-
-- Conexão Realtime via `realtime-py` (oficial Supabase): assina `postgres_changes` na tabela `app_releases` filtrando `event=INSERT` e `is_published=true`.
-- Função `check_for_updates()` que chama a edge function no boot.
-- Comparação semver com `packaging.version`.
-- Download com barra de progresso, validação `hashlib.sha256`, e instalação (descompactar sobre o diretório atual + restart).
-- Snippet do popup (Tk/PyQt — adaptável).
-
----
-
-### 5. Detalhes técnicos
-
-- **Sem custo de storage no Supabase**: ZIP fica no R2, só URL é guardada.
-- **Realtime authoritativo**: cliente recebe push em < 1s após admin publicar.
-- **Integridade**: sha256 obrigatório evita ZIP corrompido/adulterado.
-- **Idempotente**: app guarda última versão vista localmente; se receber duplicata, ignora.
-- **Sem segredos no client**: anon key + RLS de leitura pública na tabela cobrem o caso.
-
----
-
-### Arquivos a criar/editar
-
-**Migração SQL:** tabela `app_releases` + RLS + trigger `updated_at` + habilitar realtime.
-
-**Frontend:**
-- `src/pages/dashboard/Atualizacoes.tsx` — listagem
-- `src/components/dashboard/atualizacoes/ReleaseFormDialog.tsx` — criar/editar
-- `src/components/dashboard/atualizacoes/ReleaseRowActions.tsx` — publicar/despublicar/deletar
-- `src/lib/releases.ts` — helpers (semver, fetch, mutations)
-- `src/lib/sidebar-tabs.ts` — adicionar entrada
-- `src/App.tsx` — registrar rota
-
-**Edge function:** `supabase/functions/app-version-check/index.ts`
-
-**Doc:** `docs/desktop-updater.md` — código Python pronto pra colar no seu app, com exemplo de Realtime + popup + download + instalação.
-
----
-
-### Fora de escopo (deixados para depois, fáceis de adicionar)
-
-- Canais beta/stable, rollout gradual por licença, telemetria de "quem atualizou".
-- Auto-instalação obrigatória — campo `is_mandatory` já fica no schema, é só ligar no app Python depois.
+### Fora de escopo
+- Canais beta/stable separados.
+- Rollout gradual por % de usuários.
+- Telemetria de quem atualizou.
+- Auto-instalação silenciosa (mantém apenas o flag `is_mandatory`).

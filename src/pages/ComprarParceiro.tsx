@@ -982,7 +982,13 @@ export default function ComprarParceiro() {
               </p>
             </div>
             <Button type="submit" className="w-full" size="lg" disabled={submitting}>
-              {submitting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Gerando Pix...</> : "Gerar Pix"}
+              {submitting ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Gerando pedido...</>
+              ) : selected && totalAvailableBalance >= selected.credits && useBalance ? (
+                <>Confirmar pedido GRÁTIS com saldo</>
+              ) : (
+                "Gerar Pix"
+              )}
             </Button>
           </form>
         </DialogContent>

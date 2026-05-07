@@ -1,92 +1,117 @@
-## Plano: Aba "Minha Conta" no sidebar
+## Sistema de Atualização do App Desktop (Python)
 
-Adicionar uma nova aba sempre visível no sidebar onde o usuário vê seus dados pessoais, avatar, contato e a quantidade de créditos disponíveis.
+Vou montar um **gerenciador de releases** no painel admin + um **canal de push em tempo real** para os clientes detectarem novas versões instantaneamente.
 
-### Onde aparece
+### Arquitetura
 
-- Nova entrada no catálogo `src/lib/sidebar-tabs.ts`:
-  - `key: "minha-conta"`, `title: "Minha Conta"`, `url: "/dashboard/minha-conta"`, `icon: UserCircle`, `alwaysOn: true`.
-- Posicionada logo após "Visão geral" (antes de "Loja").
-- Como `alwaysOn: true`, aparece para todo usuário sem necessidade de permissão (segue padrão de `overview` e `loja`).
+```text
+[Admin painel web]
+    │ cria release (versão, URL R2, changelog, sha256)
+    ▼
+[Supabase: tabela app_releases]
+    │ Realtime (postgres_changes INSERT)
+    ▼
+[App Python desktop]
+    │ assina canal → recebe push instantâneo
+    │ compara versão atual × latest
+    │ mostra popup "Nova versão X disponível — atualizar agora?"
+    │ se sim: baixa ZIP do R2 → valida sha256 → instala
+```
 
-### Página `/dashboard/minha-conta`
+Cloudflare R2 continua hospedando o ZIP. Supabase só guarda os **metadados** da release (rápido, barato, com Realtime nativo).
 
-Arquivo novo: `src/pages/dashboard/MinhaConta.tsx`. Estilo Matrix consistente com Overview/Loja (MatrixCard, fonte mono, neon verde).
+---
 
-Layout em duas colunas no desktop, empilhado no mobile:
+### 1. Banco — tabela `app_releases`
 
-**Coluna esquerda — Perfil (card)**
-- Avatar grande (128px) com glow verde, lido de `profiles.avatar_url`. Fallback: iniciais do nome/email.
-- Nome (`profiles.nome`) com `GlitchText`.
-- Email (read-only, do `auth.user.email`).
-- WhatsApp (`profiles.whatsapp`).
-- Badge do papel: "ADMIN", "PARCEIRO ATIVO", "PARCEIRO PENDENTE" ou "USUÁRIO".
-- Botão "Editar perfil" → abre dialog para editar `nome`, `whatsapp` e trocar avatar (reusa `AvatarPicker` de `src/components/ativar/AvatarPicker.tsx`).
-- Botão secundário "Trocar senha" → dialog simples com `supabase.auth.updateUser({ password })`.
+Campos:
+- `version` (semver, ex: `1.4.2`) — único
+- `download_url` (URL pública do R2)
+- `sha256` (hash do ZIP, para validar integridade)
+- `file_size_bytes`
+- `changelog` (markdown — mostrado no popup)
+- `is_mandatory` (bool, default false — já deixa pronto pra futuro, mesmo que hoje seja só "opcional")
+- `min_supported_version` (opcional — abaixo disso força update)
+- `is_published` (bool — admin publica/despublica sem deletar)
+- `published_at`, `created_at`, `updated_at`, `created_by`
 
-**Coluna direita — Créditos (card)**
-- Título "CRÉDITOS DISPONÍVEIS".
-- Número grande: `limite_creditos - creditos_consumidos` (do `parceiro` no `useAuth`).
-- Linha secundária: `consumidos / limite` (ex.: `1.250 / 5.000`).
-- Barra de progresso (verde / âmbar ≥80% / vermelho ≥100%, mesma lógica do `QuotaBadge`).
-- Status do parceiro (ativo/pendente/suspenso) como badge.
-- CTA "Comprar mais créditos" → `Link` para `/dashboard/loja`.
-- Quando não há `parceiro` (usuário comum), mostrar estado "Sem licença ativa" com CTA para a Loja.
+**RLS:**
+- `SELECT` público (anon + authenticated) — apenas releases com `is_published = true`. O app desktop usa a anon key pra ler.
+- `INSERT/UPDATE/DELETE` apenas admin (via `has_role`).
 
-**Card inferior — Conta (full width)**
-- Data de criação da conta (`profiles.criado_em`).
-- ID do usuário (com botão copiar).
-- Botão "Sair" (chama `signOut`).
+**Realtime:** habilitar replicação na tabela (`alter publication supabase_realtime add table app_releases`) e `replica identity full` para o desktop receber o payload completo.
 
-### Edição de perfil (dialog)
+---
 
-Componente novo: `src/components/dashboard/minha-conta/EditProfileDialog.tsx`.
-- Campos: `nome` (text), `whatsapp` (text), avatar (via `AvatarPicker`).
-- Salvar:
-  - Se avatar trocado: upload para bucket `avatars` em `{user_id}/avatar-{timestamp}.{ext}` e pegar `publicUrl`. Avatares preset (importados como asset) são copiados para o bucket no upload, ou salvos como string-key — usar mesma abordagem que `ativar-conta` (upload do blob).
-  - `update` em `profiles` com `nome`, `whatsapp`, `avatar_url`.
-- Após salvar: chamar `refreshProfile()` (novo no `useAuth`) e fechar dialog.
+### 2. Painel admin — nova aba "Atualizações"
 
-### Trocar senha (dialog)
+- Rota: `/dashboard/atualizacoes`
+- Registrar em `src/lib/sidebar-tabs.ts` (ícone `Download` ou `Package`) — fica automaticamente disponível no painel de permissões.
+- Protegida por `AdminRoute`.
 
-Componente novo: `src/components/dashboard/minha-conta/ChangePasswordDialog.tsx`.
-- Campos: nova senha + confirmação (mín 8 chars, barra visual reusada).
-- `supabase.auth.updateUser({ password })`.
+**UI (tema Matrix consistente):**
+- **Lista de releases** (tabela): versão, status (publicado/rascunho), data, downloads previstos, ações (editar, publicar/despublicar, deletar).
+- **Botão "Nova release"** → dialog com:
+  - Versão (validação semver)
+  - URL do ZIP no R2
+  - Changelog (textarea markdown)
+  - Botão "Calcular SHA256 da URL" (chama edge function que baixa o head + hash, ou pede pro admin colar manualmente — vamos no manual pra evitar custo de egress; mostro como gerar com `sha256sum` no rodapé do dialog)
+  - Tamanho do arquivo (auto-fetch via HEAD na URL, com fallback manual)
+  - Toggle "Publicar imediatamente"
+- **Badge "Latest"** na release publicada mais recente.
 
-### Ajuste no `useAuth`
+---
 
-`src/hooks/useAuth.tsx`:
-- Adicionar estado `profile: { id, email, nome, whatsapp, avatar_url, criado_em, onboarding_completed } | null`.
-- Função `fetchProfile(uid)` que faz `select * from profiles where id = uid`.
-- Expor `profile` e `refreshProfile()` no contexto.
-- Chamar junto com `fetchParceiro` no `onAuthStateChange` e no `getSession`.
+### 3. Endpoint para o app Python
 
-### Reflexo no header
+Edge function pública `app-version-check` (sem JWT):
+- `GET /app-version-check?current=1.3.0`
+- Retorna: `{ latest_version, download_url, sha256, file_size, changelog, is_mandatory, update_available: bool }`
+- Usado como **fallback de polling** (a cada inicialização do app) caso o Realtime esteja desconectado.
 
-Atualizar `src/components/dashboard/AppSidebar.tsx` (footer com email) para mostrar o mini-avatar (24px) ao lado do email quando `profile.avatar_url` existir. Pequeno polimento, opcional mas barato.
+---
 
-### Roteamento
+### 4. Integração no app desktop Python (instruções)
 
-`src/App.tsx`: adicionar `<Route path="minha-conta" element={<MinhaConta />} />` dentro de `/dashboard`.
+Como você não me deu acesso ao código Python, vou entregar um **snippet pronto** documentado dentro de um arquivo `docs/desktop-updater.md` com:
 
-### Arquivos
+- Conexão Realtime via `realtime-py` (oficial Supabase): assina `postgres_changes` na tabela `app_releases` filtrando `event=INSERT` e `is_published=true`.
+- Função `check_for_updates()` que chama a edge function no boot.
+- Comparação semver com `packaging.version`.
+- Download com barra de progresso, validação `hashlib.sha256`, e instalação (descompactar sobre o diretório atual + restart).
+- Snippet do popup (Tk/PyQt — adaptável).
 
-**Novos**
-- `src/pages/dashboard/MinhaConta.tsx`
-- `src/components/dashboard/minha-conta/EditProfileDialog.tsx`
-- `src/components/dashboard/minha-conta/ChangePasswordDialog.tsx`
+---
 
-**Modificados**
-- `src/lib/sidebar-tabs.ts` — registrar a aba.
-- `src/App.tsx` — registrar a rota.
-- `src/hooks/useAuth.tsx` — expor `profile` e `refreshProfile`.
-- `src/components/dashboard/AppSidebar.tsx` — mini-avatar no footer (opcional).
+### 5. Detalhes técnicos
 
-### Fora de escopo
+- **Sem custo de storage no Supabase**: ZIP fica no R2, só URL é guardada.
+- **Realtime authoritativo**: cliente recebe push em < 1s após admin publicar.
+- **Integridade**: sha256 obrigatório evita ZIP corrompido/adulterado.
+- **Idempotente**: app guarda última versão vista localmente; se receber duplicata, ignora.
+- **Sem segredos no client**: anon key + RLS de leitura pública na tabela cobrem o caso.
 
-- Histórico de compras de créditos (pode virar um card depois).
-- Gerenciamento de sessões/dispositivos.
-- Exclusão de conta.
-- Recuperação de senha por email (já existe fluxo separado).
+---
 
-Sem mudanças de banco de dados — a tabela `profiles` já tem `avatar_url`, `nome`, `whatsapp`, `onboarding_completed` (criados no fluxo `/ativar`) e o bucket `avatars` já existe e é público.
+### Arquivos a criar/editar
+
+**Migração SQL:** tabela `app_releases` + RLS + trigger `updated_at` + habilitar realtime.
+
+**Frontend:**
+- `src/pages/dashboard/Atualizacoes.tsx` — listagem
+- `src/components/dashboard/atualizacoes/ReleaseFormDialog.tsx` — criar/editar
+- `src/components/dashboard/atualizacoes/ReleaseRowActions.tsx` — publicar/despublicar/deletar
+- `src/lib/releases.ts` — helpers (semver, fetch, mutations)
+- `src/lib/sidebar-tabs.ts` — adicionar entrada
+- `src/App.tsx` — registrar rota
+
+**Edge function:** `supabase/functions/app-version-check/index.ts`
+
+**Doc:** `docs/desktop-updater.md` — código Python pronto pra colar no seu app, com exemplo de Realtime + popup + download + instalação.
+
+---
+
+### Fora de escopo (deixados para depois, fáceis de adicionar)
+
+- Canais beta/stable, rollout gradual por licença, telemetria de "quem atualizou".
+- Auto-instalação obrigatória — campo `is_mandatory` já fica no schema, é só ligar no app Python depois.

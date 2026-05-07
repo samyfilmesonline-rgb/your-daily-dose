@@ -18,6 +18,7 @@ import {
   History, ShoppingCart, RefreshCw, Trash2, Eye,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Progress } from "@/components/ui/progress";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -54,6 +55,33 @@ type OrderState = {
   deliveredAt: string | null;
   failedReason: string | null;
   paidAt: string | null;
+  botInviteConfirmedAt?: string | null;
+  botStatus?: string | null;
+  botHeartbeatAt?: string | null;
+  progress?: {
+    farmed: number;
+    target: number;
+    percent: number;
+    attempts: number;
+    lastEventAt: string | null;
+    currentExecution: {
+      id: string;
+      status: string;
+      creditosIniciais: number | null;
+      creditosFinais: number | null;
+      creditosAdicionados: number | null;
+      atualizadoEm: string | null;
+      iniciadoEm: string | null;
+      erro: string | null;
+    } | null;
+    recent: Array<{
+      id: string;
+      status: string;
+      creditosAdicionados: number | null;
+      atualizadoEm: string | null;
+      erro: string | null;
+    }>;
+  };
 };
 
 type OrderHistoryItem = {
@@ -74,6 +102,8 @@ type OrderHistoryItem = {
   txId: string | null;
   customerEmail: string;
   ownDevice: boolean;
+  botInviteConfirmedAt?: string | null;
+  progress?: { farmed: number; percent: number };
 };
 
 const FP_KEY = "mf_client_fp";

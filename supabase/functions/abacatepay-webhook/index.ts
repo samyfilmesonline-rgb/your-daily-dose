@@ -98,6 +98,12 @@ Deno.serve(async (req) => {
           status === "PIXQRCODE.PAID";
         if (isPaid) {
           if (order.status === "pending") {
+            // Busca dados completos para aplicar saldo se necessário
+            const { data: fullOrder } = await supabase
+              .from("partner_credit_orders")
+              .select("partner_id, customer_email, balance_applied_credits")
+              .eq("id", order.id)
+              .maybeSingle();
             await supabase
               .from("partner_credit_orders")
               .update({
@@ -106,6 +112,21 @@ Deno.serve(async (req) => {
                 raw_payload: payload as unknown as Record<string, unknown>,
               })
               .eq("id", order.id);
+            if (fullOrder && Number(fullOrder.balance_applied_credits) > 0) {
+              const { data: applied } = await supabase.rpc("apply_balance_to_order", {
+                _partner_id: fullOrder.partner_id,
+                _customer_email: fullOrder.customer_email,
+                _amount: Number(fullOrder.balance_applied_credits),
+                _order_id: order.id,
+              });
+              if (!applied || Number(applied) === 0) {
+                // Saldo evaporou — zera o registro mas mantém o pedido
+                await supabase
+                  .from("partner_credit_orders")
+                  .update({ balance_applied_credits: 0, balance_applied_cents: 0 })
+                  .eq("id", order.id);
+              }
+            }
           }
           // Tenta atribuir bot — idempotente p/ paid/queued sem bot.
           if (["pending", "paid", "queued"].includes(order.status)) {

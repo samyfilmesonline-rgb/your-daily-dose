@@ -48,21 +48,21 @@ import threading
 supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 def on_new_release(payload):
-    new = payload["data"]["record"]
-    if not new.get("is_published"):
+    rec = payload.get("data", {}).get("record") or {}
+    if not rec.get("is_published"):
         return
-    if Version(new["version"]) > Version(CURRENT_VERSION):
-        # disparar popup na thread de UI
-        show_update_popup(new)
+    try:
+        if Version(rec["version"]) > Version(CURRENT_VERSION):
+            show_update_popup(rec)  # disparar na thread de UI
+    except Exception as e:
+        print(f"[updater] realtime parse falhou: {e}")
 
 def start_realtime_listener():
     channel = supabase.channel("app-releases")
-    channel.on_postgres_changes(
-        event="*",
-        schema="public",
-        table="app_releases",
-        callback=on_new_release,
-    ).subscribe()
+    # supabase-py v2 exige evento explícito. Escutamos INSERT e UPDATE separadamente.
+    channel.on_postgres_changes(event="INSERT", schema="public", table="app_releases", callback=on_new_release)
+    channel.on_postgres_changes(event="UPDATE", schema="public", table="app_releases", callback=on_new_release)
+    channel.subscribe()
 
 # rodar em background ao iniciar o app
 threading.Thread(target=start_realtime_listener, daemon=True).start()

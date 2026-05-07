@@ -1336,7 +1336,7 @@ function OrderTrackingDialog({
 
 function OrdersHistorySection({
   history, loading, email, onEmailChange, onRefresh,
-  onTrack, onCancel, onStop, partnerWhatsapp,
+  onTrack, onCancel, onStop, onReorder, hasBalance, partnerWhatsapp,
 }: {
   history: OrderHistoryItem[] | null;
   loading: boolean;
@@ -1346,6 +1346,8 @@ function OrdersHistorySection({
   onTrack: (item: OrderHistoryItem) => void;
   onCancel: (id: string) => void;
   onStop: (id: string) => void;
+  onReorder: (item: OrderHistoryItem) => void;
+  hasBalance: boolean;
   partnerWhatsapp: string | null;
 }) {
   return (

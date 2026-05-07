@@ -261,6 +261,13 @@ export default function ComprarParceiro() {
     };
   }, [tab, fetchHistory]);
 
+  // Carrega saldo do cliente uma vez ao montar (para mostrar no checkout)
+  useEffect(() => {
+    if (!isValidPartnerId) return;
+    fetchHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isValidPartnerId]);
+
   // Auto-detecta pedido em aberto ao abrir página
   useEffect(() => {
     if (!isValidPartnerId) return;

@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Activity, Search, AlertTriangle, Clock, Loader2, CheckCircle2, Plus } from "lucide-react";
+import { Activity, Search, AlertTriangle, Clock, Loader2, CheckCircle2, Plus, XCircle } from "lucide-react";
 import GlitchText from "@/components/landing/GlitchText";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
@@ -27,6 +27,7 @@ type Order = {
   amount_cents: number;
   status: OrderStatus;
   tx_id: string | null;
+  is_manual: boolean | null;
   pix_qrcode: string | null;
   pix_copy_paste: string | null;
   pix_expires_at: string | null;
@@ -74,6 +75,7 @@ export default function Pedidos() {
   const [forcePaidNotes, setForcePaidNotes] = useState("");
   const [forcePaidLoading, setForcePaidLoading] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
 
   const { data: orders = [] } = useQuery({
     queryKey: ["my-orders", user?.id],
@@ -285,6 +287,11 @@ export default function Pedidos() {
                       {o.customer_whatsapp && (
                         <div className="text-xs text-muted-foreground font-mono">{o.customer_whatsapp}</div>
                       )}
+                      {o.is_manual && (
+                        <div className="mt-0.5 inline-block text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-primary/40 text-primary bg-primary/10">
+                          Manual
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="text-xs font-mono">
                       {o.target_workspace ?? <span className="text-destructive">— faltando</span>}
@@ -418,6 +425,48 @@ export default function Pedidos() {
                       <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Processando...</>
                     ) : (
                       <><CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Confirmar pagamento manual</>
+                    )}
+                  </Button>
+                </div>
+              )}
+              {detail.is_manual && ["paid", "queued", "processing"].includes(detail.status) && (
+                <div className="rounded border border-destructive/40 bg-destructive/5 p-3 space-y-2">
+                  <div className="text-xs font-medium text-destructive flex items-center gap-1">
+                    <XCircle className="w-3.5 h-3.5" /> Cancelar recarga manual
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Apenas a parte ainda não farmada será estornada para a cota do parceiro. O que já foi entregue é mantido.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={cancelLoading}
+                    onClick={async () => {
+                      if (!detail) return;
+                      setCancelLoading(true);
+                      try {
+                        const { data, error } = await supabase.functions.invoke(
+                          "partner-shop-cancel-manual-order",
+                          { body: { orderId: detail.id } }
+                        );
+                        if (error) throw error;
+                        const refunded = (data as { refundedCredits?: number } | null)?.refundedCredits ?? 0;
+                        toast({ title: "Recarga cancelada", description: `Estornados ${refunded} créditos.` });
+                        setDetail(null);
+                        qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                        qc.invalidateQueries({ queryKey: ["my-bots-mini", user?.id] });
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : "Erro";
+                        toast({ title: "Falha ao cancelar", description: msg, variant: "destructive" });
+                      } finally {
+                        setCancelLoading(false);
+                      }
+                    }}
+                  >
+                    {cancelLoading ? (
+                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Cancelando...</>
+                    ) : (
+                      <><XCircle className="w-3.5 h-3.5 mr-1" /> Cancelar e estornar</>
                     )}
                   </Button>
                 </div>

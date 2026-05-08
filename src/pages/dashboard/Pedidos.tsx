@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Activity, Search, AlertTriangle, Clock, Loader2, CheckCircle2, Plus, XCircle, RotateCw } from "lucide-react";
+import { Activity, Search, AlertTriangle, Clock, Loader2, CheckCircle2, Plus, XCircle, RotateCw, Square } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
 import GlitchText from "@/components/landing/GlitchText";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
@@ -33,6 +34,7 @@ type Order = {
   pix_expires_at: string | null;
   paid_at: string | null;
   assigned_bot_id: string | null;
+  assigned_at: string | null;
   delivered_at: string | null;
   failed_reason: string | null;
   created_at: string;
@@ -173,6 +175,36 @@ export default function Pedidos() {
     if (h < 24) return `há ${h}h`;
     return `há ${Math.floor(h / 24)}d`;
   };
+
+  const detailBot = detail?.assigned_bot_id ? botById.get(detail.assigned_bot_id) ?? null : null;
+
+  const { data: progress } = useQuery({
+    queryKey: ["order-progress", detail?.id, detailBot?.email_lovable, detail?.target_workspace],
+    enabled: !!detail?.id && !!detailBot?.email_lovable && !!detail?.target_workspace,
+    refetchInterval: 5000,
+    queryFn: async () => {
+      const since = detail!.assigned_at ?? detail!.paid_at;
+      let q = supabase
+        .from("execucoes_lovable")
+        .select("status, creditos_adicionados, erro, atualizado_em, iniciado_em")
+        .eq("id_do_usuario", detail!.partner_id)
+        .eq("email_lovable", detailBot!.email_lovable)
+        .eq("workspace_nome", detail!.target_workspace!)
+        .order("iniciado_em", { ascending: false })
+        .limit(20);
+      if (since) q = q.gte("iniciado_em", since);
+      const { data } = await q;
+      const list = (data ?? []) as Array<{
+        status: string;
+        creditos_adicionados: number | string | null;
+        erro: string | null;
+        atualizado_em: string | null;
+        iniciado_em: string | null;
+      }>;
+      const farmed = list.reduce((a, r) => a + (Number(r.creditos_adicionados) || 0), 0);
+      return { farmed, attempts: list.length, last: list[0] ?? null };
+    },
+  });
 
   return (
     <div className="space-y-6">
@@ -383,6 +415,52 @@ export default function Pedidos() {
                 <div><span className="text-muted-foreground">Pix expira:</span> {detail.pix_expires_at ? new Date(detail.pix_expires_at).toLocaleString("pt-BR") : "—"}</div>
                 <div><span className="text-muted-foreground">Bot:</span> {detail.assigned_bot_id ? (botById.get(detail.assigned_bot_id)?.email_lovable ?? detail.assigned_bot_id) : "—"}</div>
               </div>
+              {(() => {
+                const showProgress = ["paid", "queued", "processing", "delivered", "refunded", "failed"].includes(detail.status);
+                if (!showProgress) return null;
+                const farmed = detail.status === "delivered" ? detail.credits : (progress?.farmed ?? 0);
+                const pct = detail.credits > 0 ? Math.min(100, Math.round((farmed / detail.credits) * 100)) : 0;
+                const tenMinAgo = Date.now() - 10 * 60 * 1000;
+                const hbMs = detailBot?.last_heartbeat_at ? new Date(detailBot.last_heartbeat_at).getTime() : 0;
+                const stale = detail.status === "processing" && !!detailBot && hbMs < tenMinAgo;
+                const last = progress?.last;
+                return (
+                  <div className="rounded border border-primary/30 bg-primary/5 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-mono uppercase tracking-wider text-primary/80">Progresso ao vivo</div>
+                      <div className="text-lg font-bold font-mono text-primary">{pct}%</div>
+                    </div>
+                    <Progress value={pct} className="h-2" />
+                    <div className="text-xs font-mono text-muted-foreground">
+                      {farmed} / {detail.credits} créditos farmados
+                    </div>
+                    {detailBot && (
+                      <div className="text-[11px] flex items-center gap-2 flex-wrap">
+                        <span className="text-muted-foreground">Bot:</span>
+                        <span className="font-mono">{detailBot.nickname ?? detailBot.email_lovable}</span>
+                        <span className="text-[9px] uppercase px-1.5 py-0.5 rounded border border-primary/30 text-primary/80">{detailBot.status}</span>
+                        <span className={stale ? "text-amber-400 flex items-center gap-1" : "text-muted-foreground"}>
+                          {stale && <AlertTriangle className="w-3 h-3" />}
+                          heartbeat {fmtAgo(detailBot.last_heartbeat_at)}
+                        </span>
+                      </div>
+                    )}
+                    {progress && progress.attempts > 0 && (
+                      <div className="text-[11px] text-muted-foreground">
+                        Tentativas do worker: <span className="font-mono">{progress.attempts}</span>
+                        {last && (
+                          <> · última: <span className="font-mono">{last.status}</span> {fmtAgo(last.atualizado_em ?? last.iniciado_em)}</>
+                        )}
+                      </div>
+                    )}
+                    {last?.erro && (
+                      <div className="text-[11px] text-destructive/90 break-words">
+                        Último erro: {last.erro}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               {detail.status === "failed" && detail.failed_reason && (
                 <div className="rounded border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
                   <strong>Motivo da falha:</strong> {detail.failed_reason}
@@ -445,17 +523,19 @@ export default function Pedidos() {
               {detail.is_manual && ["paid", "queued", "processing"].includes(detail.status) && (
                 <div className="rounded border border-destructive/40 bg-destructive/5 p-3 space-y-2">
                   <div className="text-xs font-medium text-destructive flex items-center gap-1">
-                    <XCircle className="w-3.5 h-3.5" /> Cancelar recarga manual
+                    <Square className="w-3.5 h-3.5" /> Parar farm / cancelar recarga
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    Apenas a parte ainda não farmada será estornada para a cota do parceiro. O que já foi entregue é mantido.
+                    Para o bot agora. Apenas a parte ainda não farmada é estornada para sua cota — o que já foi entregue é mantido.
                   </p>
+                  <div className="flex flex-wrap gap-2">
                   <Button
                     size="sm"
                     variant="destructive"
                     disabled={cancelLoading}
                     onClick={async () => {
                       if (!detail) return;
+                      if (!confirm("Parar o farm agora? O restante será estornado para sua cota.")) return;
                       setCancelLoading(true);
                       try {
                         const { data, error } = await supabase.functions.invoke(
@@ -464,24 +544,25 @@ export default function Pedidos() {
                         );
                         if (error) throw error;
                         const refunded = (data as { refundedCredits?: number } | null)?.refundedCredits ?? 0;
-                        toast({ title: "Recarga cancelada", description: `Estornados ${refunded} créditos.` });
+                        toast({ title: "Farm parado", description: `Estornados ${refunded} créditos para sua cota.` });
                         setDetail(null);
                         qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
                         qc.invalidateQueries({ queryKey: ["my-bots-mini", user?.id] });
                       } catch (err) {
                         const msg = err instanceof Error ? err.message : "Erro";
-                        toast({ title: "Falha ao cancelar", description: msg, variant: "destructive" });
+                        toast({ title: "Falha ao parar", description: msg, variant: "destructive" });
                       } finally {
                         setCancelLoading(false);
                       }
                     }}
                   >
                     {cancelLoading ? (
-                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Cancelando...</>
+                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Parando...</>
                     ) : (
-                      <><XCircle className="w-3.5 h-3.5 mr-1" /> Cancelar e estornar</>
+                      <><Square className="w-3.5 h-3.5 mr-1" /> Parar e estornar</>
                     )}
                   </Button>
+                  </div>
                 </div>
               )}
               {detail.is_manual && ["refunded", "failed"].includes(detail.status) && (

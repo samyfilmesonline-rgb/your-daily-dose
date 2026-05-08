@@ -57,6 +57,12 @@ Deno.serve(async (req) => {
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+    if (!charge.activation_token) {
+      return new Response(
+        JSON.stringify({ error: "Token já utilizado." }),
+        { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
     if (charge.status !== "paid") {
       return new Response(
         JSON.stringify({ error: "Pagamento ainda não confirmado." }),
@@ -147,6 +153,12 @@ Deno.serve(async (req) => {
       .update({ id_do_usuario: userId })
       .eq("customer_email", email)
       .is("id_do_usuario", null);
+
+    // 6. Invalidar o token de ativação para impedir reuso
+    await supabase
+      .from("pix_charges")
+      .update({ activation_token: null })
+      .eq("id", charge.id);
 
     return new Response(
       JSON.stringify({ ok: true, email }),

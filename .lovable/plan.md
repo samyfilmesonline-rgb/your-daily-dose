@@ -1,49 +1,55 @@
-# Botão "Resgatar saldo" para gastar créditos sem Pix
+## Objetivo
 
-## Problema
+Permitir que parceiros (e admins) criem e iniciem recargas manualmente direto da página **/dashboard/pedidos**, escolhendo um bot específico. Se o bot estiver ocioso, o farm começa imediatamente; se estiver ocupado, o pedido entra na fila do parceiro e é puxado automaticamente quando o bot liberar (mesma fila já existente).
 
-O único pacote do parceiro custa **R$ 1,00 por 200 créditos** (= R$ 0,005 por crédito). O AbacatePay exige Pix mínimo de R$ 1,00. Por isso, qualquer saldo parcial (ex: 160 créditos) não cabe no fluxo atual:
+## Fluxo de usuário
 
-- Sem o limitador → Pix de R$ 0,20 é rejeitado.
-- Com o limitador atual → o saldo é zerado e o cliente paga o pacote inteiro de novo, sem usar o saldo.
+1. Na página **Pedidos**, novo botão **"Nova recarga manual"** no topo (ao lado da busca).
+2. Abre dialog com:
+   - Nome do cliente, e-mail, WhatsApp (opcional)
+   - Workspace alvo (obrigatório)
+   - Créditos (número, > 0)
+   - Valor manual em R$ (apenas registro financeiro, sem PIX)
+   - Observações (motivo da recarga manual)
+   - Select **Bot**: lista bots do parceiro com status (idle/busy). Admin vê também um seletor de parceiro antes (opcional).
+3. Ao confirmar:
+   - Se o bot escolhido está **idle** → pedido vira `processing` e o bot é atribuído imediatamente.
+   - Se está **busy/disabled** → pedido vira `queued` (atribuído ao parceiro). Quando qualquer bot daquele parceiro liberar, `assign_next_queued_order` puxa o próximo da fila por ordem de criação (comportamento atual respeitado).
 
-Solução: criar um caminho que **entrega só os créditos do saldo**, sem passar pelo Pix nem pelo conceito de "pacote".
+## Implementação técnica
 
-## Como vai funcionar (UX)
+### 1. Edge function `partner-shop-create-manual-order` (nova)
+- Auth obrigatória (Bearer token), valida com `getClaims`.
+- Body (zod): `partnerId?` (admin only), `customerName`, `customerEmail`, `customerWhatsapp?`, `targetWorkspace`, `credits` (int 1..100000), `amountCents` (int ≥ 0), `notes` (3..500), `botId?` (uuid).
+- Authorization:
+  - `callerId === partnerId` (parceiro criando para si) **ou** `has_role(callerId,'admin')`.
+  - Se `partnerId` omitido → usa `callerId`.
+  - Se `botId` informado → confere que o bot pertence a `partnerId`.
+- Insere em `partner_credit_orders` com `status='paid'`, `paid_at=now()`, `tx_id='manual:<uuid>'`, `pack_id=null`, `raw_payload={ manualOrder: { by, notes, at } }`.
+- Atribuição:
+  - Se `botId` informado e o bot está `idle`: marca bot como `busy`, atualiza pedido para `processing`, `assigned_bot_id`, `assigned_at=now()`.
+  - Se `botId` informado mas o bot está `busy/disabled`: pedido fica `queued` (sem `assigned_bot_id`). A fila por parceiro já existente (`assign_next_queued_order`) cuidará — qualquer bot livre puxa por ordem de criação.
+  - Se `botId` ausente: chama `assign_bot_to_order` (comportamento atual — usa qualquer idle ou cai para `queued`).
+- Insere entrada em `partner_credit_ledger` com `delta=0`, `reason='manual_order:<notes>'` para auditoria.
+- Retorna `{ ok: true, orderId, status }`.
 
-Na aba **"Meus pedidos"**, no card "Saldo disponível" (já existe), adicionar:
+### 2. Frontend — `src/pages/dashboard/Pedidos.tsx`
+- Novo componente `ManualOrderDialog` (mesmo arquivo ou `components/ManualOrderDialog.tsx`).
+- Botão "Nova recarga manual" (variant default) abre o dialog.
+- Form com `react-hook-form` + zod schema espelhando o backend.
+- Query para listar bots do parceiro (já existe `my-bots-mini`); se admin, query adicional para listar parceiros (`parceiros` + `profiles`) e refetch de bots ao trocar.
+- Select de bot mostra: nickname/email + badge de status (idle/busy/disabled). Bots `disabled` ficam desabilitados; `busy` permitidos com aviso "entrará na fila".
+- Ao submit: `supabase.functions.invoke('partner-shop-create-manual-order', { body })`. Em sucesso, `qc.invalidateQueries(['my-orders'])` e toast "Recarga criada · status: processando/na fila".
 
-1. **Botão "Resgatar saldo em workspace"** — visível quando `customerBalance.credits > 0`.
-2. Ao clicar, abre um diálogo com:
-   - Quantidade a resgatar (default = saldo total; min 1; max = saldo).
-   - Campo "Workspace de destino" (mesmo padrão do checkout).
-   - Botão "Entregar agora" (sem Pix).
-3. Após confirmar, cria pedido `status=paid` `amount_cents=0` com os créditos pedidos, debita o saldo e dispara o bot — exatamente o mesmo fluxo do "saldo cobre 100%" que já existe em `partner-shop-create-pix`.
-4. O pedido aparece no histórico e o cliente acompanha a entrega como qualquer outro.
+### 3. Sem mudanças de schema
+- Reusa `partner_credit_orders`, `farm_bots`, `assign_bot_to_order`, `assign_next_queued_order`, `release_bot`. A fila e a liberação de bots já funcionam pelo trigger atual.
 
-## Mudanças técnicas
+### 4. Segurança
+- Validação client + server (zod) em todos os campos.
+- Edge function usa service-role apenas após validar caller via JWT.
+- Nenhuma alteração de RLS necessária (insert/update via service role na função).
 
-### Nova edge function `partner-shop-redeem-balance`
-Recebe: `{ partnerId, customerEmail, clientFingerprint, targetWorkspace, credits, customerName?, customerWhatsapp? }`.
+## Fora de escopo
 
-Lógica:
-- Valida fingerprint contra `partner_customer_balances` (mesmo padrão das outras functions).
-- Confere `credits <= saldo disponível` e `credits >= 1`.
-- Insere `partner_credit_orders` com `status='paid'`, `amount_cents=0`, `paid_at=now()`, `balance_applied_credits=credits`, `balance_applied_cents=0`, `pack_id=null`.
-- Chama `apply_balance_to_order` (RPC já existente) para debitar o saldo.
-- Chama `assign_bot_to_order` (RPC já existente) para iniciar a entrega.
-- Retorna `{ orderId }`.
-
-Sem secrets novos. `verify_jwt = false` (mesmo padrão das outras `partner-shop-*`).
-
-### Frontend `src/pages/ComprarParceiro.tsx`
-- No card de saldo (aba "Meus pedidos"), adicionar botão **"Resgatar saldo"**.
-- Novo dialog `RedeemBalanceDialog` com input de créditos + workspace.
-- Após sucesso: refazer `fetchHistory()` e abrir o tracking do pedido criado.
-
-### Banco
-Nenhuma migração. Usa tabelas e RPCs existentes (`partner_credit_orders`, `apply_balance_to_order`, `assign_bot_to_order`).
-
-## Fora do escopo
-- Não muda o fluxo de compra de pacote.
-- Não mexe no limitador de Pix mínimo (continua válido para casos onde o saldo cobre apenas parte e ainda sobra um valor pagável ≥ R$ 1,00).
+- Cobrança real (PIX) para recarga manual — fica como "valor manual" só para registro.
+- Edição/cancelamento de recarga manual após criada (já tratado pelos fluxos de "stop" / refund existentes).

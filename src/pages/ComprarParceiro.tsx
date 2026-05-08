@@ -1168,12 +1168,6 @@ export default function ComprarParceiro() {
       </AlertDialog>
 
       {/* Saldo de outro e-mail (Plano C) */}
-      <Dialog open={crossOpen} onOpenChange={(o) => {
-        // Resgatar saldo (sem Pix) — inserido acima do dialog de cross-email
-        return undefined as unknown as void;
-      }}>
-        <></>
-      </Dialog>
       <Dialog open={redeemOpen} onOpenChange={setRedeemOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>

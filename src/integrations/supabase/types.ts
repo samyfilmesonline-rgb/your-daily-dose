@@ -517,6 +517,7 @@ export type Database = {
           delivered_at: string | null
           failed_reason: string | null
           id: string
+          is_manual: boolean
           pack_id: string | null
           paid_at: string | null
           partner_id: string
@@ -549,6 +550,7 @@ export type Database = {
           delivered_at?: string | null
           failed_reason?: string | null
           id?: string
+          is_manual?: boolean
           pack_id?: string | null
           paid_at?: string | null
           partner_id: string
@@ -581,6 +583,7 @@ export type Database = {
           delivered_at?: string | null
           failed_reason?: string | null
           id?: string
+          is_manual?: boolean
           pack_id?: string | null
           paid_at?: string | null
           partner_id?: string
@@ -1028,6 +1031,10 @@ export type Database = {
         Args: { _partner_id: string }
         Returns: string
       }
+      cancel_manual_order: {
+        Args: { _order_id: string; _reason: string }
+        Returns: number
+      }
       confirm_bot_invite: {
         Args: { _fingerprint: string; _order_id: string }
         Returns: {
@@ -1048,6 +1055,7 @@ export type Database = {
           delivered_at: string | null
           failed_reason: string | null
           id: string
+          is_manual: boolean
           pack_id: string | null
           paid_at: string | null
           partner_id: string
@@ -1082,6 +1090,15 @@ export type Database = {
       }
       current_partner_name: { Args: never; Returns: string }
       current_partner_whatsapp: { Args: never; Returns: string }
+      debit_partner_quota: {
+        Args: {
+          _amount: number
+          _order_id: string
+          _partner_id: string
+          _reason: string
+        }
+        Returns: undefined
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -1113,6 +1130,15 @@ export type Database = {
       refund_order_remainder: {
         Args: { _order_id: string; _reason: string }
         Returns: number
+      }
+      refund_partner_quota: {
+        Args: {
+          _amount: number
+          _order_id: string
+          _partner_id: string
+          _reason: string
+        }
+        Returns: undefined
       }
       release_bot: {
         Args: {

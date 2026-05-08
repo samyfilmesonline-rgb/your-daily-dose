@@ -40,9 +40,9 @@ Deno.serve(async (req) => {
     const callerClient = createClient(url, anon, {
       global: { headers: { Authorization: authHeader } },
     });
-    const { data: claimsData, error: claimsErr } = await callerClient.auth.getClaims(token);
-    if (claimsErr || !claimsData?.claims) return json(401, { error: "Unauthorized" });
-    const callerId = claimsData.claims.sub as string;
+    const { data: userData, error: userErr } = await callerClient.auth.getUser(token);
+    if (userErr || !userData?.user?.id) return json(401, { error: "Unauthorized" });
+    const callerId = userData.user.id;
 
     const parsed = Body.safeParse(await req.json());
     if (!parsed.success) {
@@ -76,6 +76,22 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Quota check: partner must have enough remaining credits
+    {
+      const { data: pq, error: pqErr } = await sb
+        .from("parceiros")
+        .select("limite_creditos, creditos_consumidos, status")
+        .eq("user_id", partnerId)
+        .maybeSingle();
+      if (pqErr || !pq) return json(404, { error: "Parceiro não encontrado" });
+      const remaining = Number(pq.limite_creditos) - Number(pq.creditos_consumidos);
+      if (remaining < b.credits) {
+        return json(400, {
+          error: `Limite de créditos do parceiro insuficiente (restam ${Math.max(0, Math.floor(remaining))})`,
+        });
+      }
+    }
+
     // Validate bot ownership / status
     let bot: { id: string; status: string; partner_id: string } | null = null;
     if (b.botId) {
@@ -106,6 +122,7 @@ Deno.serve(async (req) => {
         credits: b.credits,
         amount_cents: b.amountCents,
         status: "paid",
+        is_manual: true,
         paid_at: nowIso,
         tx_id: `manual:${crypto.randomUUID()}`,
         raw_payload: {
@@ -124,14 +141,18 @@ Deno.serve(async (req) => {
 
     const orderId = created.id as string;
 
-    // Audit ledger
-    await sb.from("partner_credit_ledger").insert({
-      partner_id: partnerId,
-      customer_email: b.customerEmail.toLowerCase(),
-      order_id: orderId,
-      delta: 0,
-      reason: `manual_order:${b.notes.slice(0, 200)}`,
+    // Debit partner quota (transactional via RPC)
+    const { error: debitErr } = await sb.rpc("debit_partner_quota", {
+      _partner_id: partnerId,
+      _amount: b.credits,
+      _order_id: orderId,
+      _reason: `manual_order:${b.notes.slice(0, 180)}`,
     });
+    if (debitErr) {
+      // Rollback: delete the order we just created
+      await sb.from("partner_credit_orders").delete().eq("id", orderId);
+      return json(400, { error: debitErr.message });
+    }
 
     // Assignment
     let finalStatus: "processing" | "queued" | "paid" = "paid";

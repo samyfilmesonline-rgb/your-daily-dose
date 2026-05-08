@@ -1169,6 +1169,115 @@ export default function ComprarParceiro() {
 
       {/* Saldo de outro e-mail (Plano C) */}
       <Dialog open={crossOpen} onOpenChange={(o) => {
+        // Resgatar saldo (sem Pix) — inserido acima do dialog de cross-email
+        return undefined as unknown as void;
+      }}>
+        <></>
+      </Dialog>
+      <Dialog open={redeemOpen} onOpenChange={setRedeemOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wallet className="w-5 h-5 text-emerald-400" /> Resgatar saldo
+            </DialogTitle>
+            <DialogDescription>
+              Use seu saldo ({customerBalance.credits} créditos) direto em um workspace,
+              sem precisar pagar nenhum Pix.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-4 mt-2"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const n = parseInt(redeemCredits, 10);
+              if (!Number.isFinite(n) || n < 1) {
+                toast({ title: "Quantidade inválida", variant: "destructive" });
+                return;
+              }
+              if (n > customerBalance.credits) {
+                toast({ title: "Maior que o saldo", variant: "destructive" });
+                return;
+              }
+              if (redeemWorkspace.trim().length < 2) {
+                toast({ title: "Workspace obrigatório", variant: "destructive" });
+                return;
+              }
+              if (!customerBalance.email) {
+                toast({ title: "Saldo sem e-mail vinculado", variant: "destructive" });
+                return;
+              }
+              setRedeeming(true);
+              try {
+                const { data, error } = await supabase.functions.invoke(
+                  "partner-shop-redeem-balance",
+                  {
+                    body: {
+                      partnerId,
+                      customerEmail: customerBalance.email,
+                      clientFingerprint: fingerprint,
+                      targetWorkspace: redeemWorkspace.trim(),
+                      credits: n,
+                    },
+                  }
+                );
+                if (error) {
+                  const ctx = (error as { context?: Response }).context;
+                  if (ctx && typeof ctx.json === "function") {
+                    try {
+                      const body = await ctx.json();
+                      const msg = typeof body?.error === "string" ? body.error : error.message;
+                      throw new Error(msg);
+                    } catch (parseErr) {
+                      if (parseErr instanceof Error && parseErr.message !== error.message) throw parseErr;
+                      throw error;
+                    }
+                  }
+                  throw error;
+                }
+                const orderId = (data as { orderId?: string })?.orderId;
+                toast({ title: "Resgate enviado!", description: `${n} créditos a caminho.` });
+                setRedeemOpen(false);
+                await fetchHistory();
+                if (orderId) {
+                  setTrackingOrderId(orderId);
+                }
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : "Erro";
+                toast({ title: "Falha no resgate", description: msg, variant: "destructive" });
+              } finally {
+                setRedeeming(false);
+              }
+            }}
+          >
+            <div>
+              <Label className="text-xs uppercase tracking-wider">Quantidade de créditos</Label>
+              <Input
+                type="number"
+                min={1}
+                max={customerBalance.credits}
+                value={redeemCredits}
+                onChange={(e) => setRedeemCredits(e.target.value)}
+              />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Disponível: {customerBalance.credits} créditos.
+              </p>
+            </div>
+            <div>
+              <Label className="text-xs uppercase tracking-wider">Workspace de destino</Label>
+              <Input
+                value={redeemWorkspace}
+                onChange={(e) => setRedeemWorkspace(e.target.value)}
+                placeholder="Nome exato do workspace Lovable"
+              />
+            </div>
+            <Button type="submit" className="w-full" disabled={redeeming}>
+              {redeeming ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Enviando...</> : "Entregar agora"}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={crossOpen} onOpenChange={(o) => {
         setCrossOpen(o);
         if (!o) { setCrossLookup(null); setCrossEmail(""); }
       }}>

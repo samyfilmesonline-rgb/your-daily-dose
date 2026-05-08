@@ -415,6 +415,52 @@ export default function Pedidos() {
                 <div><span className="text-muted-foreground">Pix expira:</span> {detail.pix_expires_at ? new Date(detail.pix_expires_at).toLocaleString("pt-BR") : "—"}</div>
                 <div><span className="text-muted-foreground">Bot:</span> {detail.assigned_bot_id ? (botById.get(detail.assigned_bot_id)?.email_lovable ?? detail.assigned_bot_id) : "—"}</div>
               </div>
+              {(() => {
+                const showProgress = ["paid", "queued", "processing", "delivered", "refunded", "failed"].includes(detail.status);
+                if (!showProgress) return null;
+                const farmed = detail.status === "delivered" ? detail.credits : (progress?.farmed ?? 0);
+                const pct = detail.credits > 0 ? Math.min(100, Math.round((farmed / detail.credits) * 100)) : 0;
+                const tenMinAgo = Date.now() - 10 * 60 * 1000;
+                const hbMs = detailBot?.last_heartbeat_at ? new Date(detailBot.last_heartbeat_at).getTime() : 0;
+                const stale = detail.status === "processing" && !!detailBot && hbMs < tenMinAgo;
+                const last = progress?.last;
+                return (
+                  <div className="rounded border border-primary/30 bg-primary/5 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-mono uppercase tracking-wider text-primary/80">Progresso ao vivo</div>
+                      <div className="text-lg font-bold font-mono text-primary">{pct}%</div>
+                    </div>
+                    <Progress value={pct} className="h-2" />
+                    <div className="text-xs font-mono text-muted-foreground">
+                      {farmed} / {detail.credits} créditos farmados
+                    </div>
+                    {detailBot && (
+                      <div className="text-[11px] flex items-center gap-2 flex-wrap">
+                        <span className="text-muted-foreground">Bot:</span>
+                        <span className="font-mono">{detailBot.nickname ?? detailBot.email_lovable}</span>
+                        <span className="text-[9px] uppercase px-1.5 py-0.5 rounded border border-primary/30 text-primary/80">{detailBot.status}</span>
+                        <span className={stale ? "text-amber-400 flex items-center gap-1" : "text-muted-foreground"}>
+                          {stale && <AlertTriangle className="w-3 h-3" />}
+                          heartbeat {fmtAgo(detailBot.last_heartbeat_at)}
+                        </span>
+                      </div>
+                    )}
+                    {progress && progress.attempts > 0 && (
+                      <div className="text-[11px] text-muted-foreground">
+                        Tentativas do worker: <span className="font-mono">{progress.attempts}</span>
+                        {last && (
+                          <> · última: <span className="font-mono">{last.status}</span> {fmtAgo(last.atualizado_em ?? last.iniciado_em)}</>
+                        )}
+                      </div>
+                    )}
+                    {last?.erro && (
+                      <div className="text-[11px] text-destructive/90 break-words">
+                        Último erro: {last.erro}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               {detail.status === "failed" && detail.failed_reason && (
                 <div className="rounded border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
                   <strong>Motivo da falha:</strong> {detail.failed_reason}

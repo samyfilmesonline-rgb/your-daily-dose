@@ -523,17 +523,19 @@ export default function Pedidos() {
               {detail.is_manual && ["paid", "queued", "processing"].includes(detail.status) && (
                 <div className="rounded border border-destructive/40 bg-destructive/5 p-3 space-y-2">
                   <div className="text-xs font-medium text-destructive flex items-center gap-1">
-                    <XCircle className="w-3.5 h-3.5" /> Cancelar recarga manual
+                    <Square className="w-3.5 h-3.5" /> Parar farm / cancelar recarga
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    Apenas a parte ainda não farmada será estornada para a cota do parceiro. O que já foi entregue é mantido.
+                    Para o bot agora. Apenas a parte ainda não farmada é estornada para sua cota — o que já foi entregue é mantido.
                   </p>
+                  <div className="flex flex-wrap gap-2">
                   <Button
                     size="sm"
                     variant="destructive"
                     disabled={cancelLoading}
                     onClick={async () => {
                       if (!detail) return;
+                      if (!confirm("Parar o farm agora? O restante será estornado para sua cota.")) return;
                       setCancelLoading(true);
                       try {
                         const { data, error } = await supabase.functions.invoke(
@@ -542,24 +544,25 @@ export default function Pedidos() {
                         );
                         if (error) throw error;
                         const refunded = (data as { refundedCredits?: number } | null)?.refundedCredits ?? 0;
-                        toast({ title: "Recarga cancelada", description: `Estornados ${refunded} créditos.` });
+                        toast({ title: "Farm parado", description: `Estornados ${refunded} créditos para sua cota.` });
                         setDetail(null);
                         qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
                         qc.invalidateQueries({ queryKey: ["my-bots-mini", user?.id] });
                       } catch (err) {
                         const msg = err instanceof Error ? err.message : "Erro";
-                        toast({ title: "Falha ao cancelar", description: msg, variant: "destructive" });
+                        toast({ title: "Falha ao parar", description: msg, variant: "destructive" });
                       } finally {
                         setCancelLoading(false);
                       }
                     }}
                   >
                     {cancelLoading ? (
-                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Cancelando...</>
+                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Parando...</>
                     ) : (
-                      <><XCircle className="w-3.5 h-3.5 mr-1" /> Cancelar e estornar</>
+                      <><Square className="w-3.5 h-3.5 mr-1" /> Parar e estornar</>
                     )}
                   </Button>
+                  </div>
                 </div>
               )}
               {detail.is_manual && ["refunded", "failed"].includes(detail.status) && (

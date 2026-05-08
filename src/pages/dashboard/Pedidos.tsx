@@ -484,6 +484,56 @@ export default function Pedidos() {
                   </Button>
                 </div>
               )}
+              {detail.is_manual && ["refunded", "failed"].includes(detail.status) && (
+                <div className="rounded border border-amber-500/40 bg-amber-500/5 p-3 space-y-2">
+                  <div className="text-xs font-medium text-amber-400 flex items-center gap-1">
+                    <RotateCw className="w-3.5 h-3.5" /> Tentar farmar novamente
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Re-debita os créditos restantes da cota do parceiro e atribui um bot. Se nenhum estiver livre, entra na fila.
+                  </p>
+                  <Button
+                    size="sm"
+                    disabled={retryLoading}
+                    onClick={async () => {
+                      if (!detail) return;
+                      if (!confirm(`Re-debitar ${detail.credits} créditos da cota e tentar farmar de novo?`)) return;
+                      setRetryLoading(true);
+                      try {
+                        const { data, error } = await supabase.functions.invoke(
+                          "partner-shop-retry-manual-order",
+                          { body: { orderId: detail.id } }
+                        );
+                        if (error) throw error;
+                        const status = (data as { status?: string } | null)?.status;
+                        toast({
+                          title: "Reprocessando",
+                          description:
+                            status === "processing"
+                              ? "Bot iniciou o farm agora."
+                              : status === "queued"
+                                ? "Sem bot livre — entrou na fila."
+                                : `Status: ${status ?? "ok"}`,
+                        });
+                        setDetail(null);
+                        qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                        qc.invalidateQueries({ queryKey: ["my-bots-mini", user?.id] });
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : "Erro";
+                        toast({ title: "Falha ao reprocessar", description: msg, variant: "destructive" });
+                      } finally {
+                        setRetryLoading(false);
+                      }
+                    }}
+                  >
+                    {retryLoading ? (
+                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Reprocessando...</>
+                    ) : (
+                      <><RotateCw className="w-3.5 h-3.5 mr-1" /> Tentar novamente</>
+                    )}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </DialogContent>

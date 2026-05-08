@@ -7,10 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Activity, Search, AlertTriangle, Clock, Loader2, CheckCircle2 } from "lucide-react";
+import { Activity, Search, AlertTriangle, Clock, Loader2, CheckCircle2, Plus } from "lucide-react";
 import GlitchText from "@/components/landing/GlitchText";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import ManualOrderDialog from "@/components/dashboard/ManualOrderDialog";
 
 type OrderStatus = "pending" | "paid" | "queued" | "processing" | "delivered" | "failed" | "expired" | "refunded";
 
@@ -72,6 +73,7 @@ export default function Pedidos() {
   const [detail, setDetail] = useState<Order | null>(null);
   const [forcePaidNotes, setForcePaidNotes] = useState("");
   const [forcePaidLoading, setForcePaidLoading] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
 
   const { data: orders = [] } = useQuery({
     queryKey: ["my-orders", user?.id],
@@ -226,9 +228,14 @@ export default function Pedidos() {
         <CardHeader className="pb-3 flex flex-col gap-3">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <CardTitle className="text-base">Lista de pedidos</CardTitle>
-            <div className="relative w-full sm:w-72">
-              <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar cliente, email, workspace..." className="pl-9" />
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button size="sm" onClick={() => setManualOpen(true)}>
+                <Plus className="w-4 h-4 mr-1" /> Nova recarga manual
+              </Button>
+              <div className="relative w-full sm:w-72">
+                <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar cliente, email, workspace..." className="pl-9" />
+              </div>
             </div>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -419,6 +426,7 @@ export default function Pedidos() {
           )}
         </DialogContent>
       </Dialog>
+      <ManualOrderDialog open={manualOpen} onOpenChange={setManualOpen} />
     </div>
   );
 }

@@ -124,6 +124,8 @@ Deno.serve(async (req) => {
         status: "paid",
         is_manual: true,
         paid_at: nowIso,
+        bot_invite_confirmed_at: nowIso,
+        bot_invite_confirmed_fingerprint: "manual",
         tx_id: `manual:${crypto.randomUUID()}`,
         raw_payload: {
           manualOrder: {

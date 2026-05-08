@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Activity, Search, AlertTriangle, Clock, Loader2, CheckCircle2, Plus, XCircle } from "lucide-react";
+import { Activity, Search, AlertTriangle, Clock, Loader2, CheckCircle2, Plus, XCircle, RotateCw } from "lucide-react";
 import GlitchText from "@/components/landing/GlitchText";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
@@ -36,6 +36,7 @@ type Order = {
   delivered_at: string | null;
   failed_reason: string | null;
   created_at: string;
+  raw_payload: Record<string, unknown> | null;
 };
 
 type BotMini = {
@@ -76,6 +77,7 @@ export default function Pedidos() {
   const [forcePaidLoading, setForcePaidLoading] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [retryLoading, setRetryLoading] = useState(false);
 
   const { data: orders = [] } = useQuery({
     queryKey: ["my-orders", user?.id],

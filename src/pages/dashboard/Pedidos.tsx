@@ -175,6 +175,36 @@ export default function Pedidos() {
     return `há ${Math.floor(h / 24)}d`;
   };
 
+  const detailBot = detail?.assigned_bot_id ? botById.get(detail.assigned_bot_id) ?? null : null;
+
+  const { data: progress } = useQuery({
+    queryKey: ["order-progress", detail?.id, detailBot?.email_lovable, detail?.target_workspace],
+    enabled: !!detail?.id && !!detailBot?.email_lovable && !!detail?.target_workspace,
+    refetchInterval: 5000,
+    queryFn: async () => {
+      const since = detail!.assigned_at ?? detail!.paid_at;
+      let q = supabase
+        .from("execucoes_lovable")
+        .select("status, creditos_adicionados, erro, atualizado_em, iniciado_em")
+        .eq("id_do_usuario", detail!.partner_id)
+        .eq("email_lovable", detailBot!.email_lovable)
+        .eq("workspace_nome", detail!.target_workspace!)
+        .order("iniciado_em", { ascending: false })
+        .limit(20);
+      if (since) q = q.gte("iniciado_em", since);
+      const { data } = await q;
+      const list = (data ?? []) as Array<{
+        status: string;
+        creditos_adicionados: number | string | null;
+        erro: string | null;
+        atualizado_em: string | null;
+        iniciado_em: string | null;
+      }>;
+      const farmed = list.reduce((a, r) => a + (Number(r.creditos_adicionados) || 0), 0);
+      return { farmed, attempts: list.length, last: list[0] ?? null };
+    },
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-2">

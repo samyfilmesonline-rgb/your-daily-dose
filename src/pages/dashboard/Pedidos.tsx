@@ -294,6 +294,17 @@ export default function Pedidos() {
                           Manual
                         </div>
                       )}
+                      {(() => {
+                        const retries = (o.raw_payload as { manualOrder?: { retries?: unknown[] } } | null)
+                          ?.manualOrder?.retries;
+                        const n = Array.isArray(retries) ? retries.length : 0;
+                        if (!n) return null;
+                        return (
+                          <div className="mt-0.5 ml-1 inline-block text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-400 bg-amber-500/10">
+                            Tentativa #{n + 1}
+                          </div>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell className="text-xs font-mono">
                       {o.target_workspace ?? <span className="text-destructive">— faltando</span>}

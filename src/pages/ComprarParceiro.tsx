@@ -234,6 +234,12 @@ export default function ComprarParceiro() {
   const [confirmStopId, setConfirmStopId] = useState<string | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
 
+  // Resgatar saldo (entrega sem Pix)
+  const [redeemOpen, setRedeemOpen] = useState(false);
+  const [redeemCredits, setRedeemCredits] = useState<string>("");
+  const [redeemWorkspace, setRedeemWorkspace] = useState("");
+  const [redeeming, setRedeeming] = useState(false);
+
   // Prefill / "Refazer pedido" — quando vier do card de pedido reembolsado
   const [prefillOrderId, setPrefillOrderId] = useState<string | null>(null);
   const packsListRef = useRef<HTMLDivElement | null>(null);
@@ -777,6 +783,17 @@ export default function ComprarParceiro() {
                 </div>
                 <Button size="sm" variant="outline" onClick={() => setTab("comprar")}>
                   Usar saldo
+                </Button>
+                <Button
+                  size="sm"
+                  className="bg-emerald-500 hover:bg-emerald-400 text-black font-bold"
+                  onClick={() => {
+                    setRedeemCredits(String(customerBalance.credits));
+                    setRedeemWorkspace("");
+                    setRedeemOpen(true);
+                  }}
+                >
+                  Resgatar agora
                 </Button>
               </div>
             )}

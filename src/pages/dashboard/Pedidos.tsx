@@ -34,6 +34,7 @@ type Order = {
   pix_expires_at: string | null;
   paid_at: string | null;
   assigned_bot_id: string | null;
+  assigned_at: string | null;
   delivered_at: string | null;
   failed_reason: string | null;
   created_at: string;

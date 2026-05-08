@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Activity, Search, AlertTriangle, Clock, Loader2, CheckCircle2, Plus, XCircle } from "lucide-react";
+import { Activity, Search, AlertTriangle, Clock, Loader2, CheckCircle2, Plus, XCircle, RotateCw } from "lucide-react";
 import GlitchText from "@/components/landing/GlitchText";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
@@ -36,6 +36,7 @@ type Order = {
   delivered_at: string | null;
   failed_reason: string | null;
   created_at: string;
+  raw_payload: Record<string, unknown> | null;
 };
 
 type BotMini = {
@@ -76,6 +77,7 @@ export default function Pedidos() {
   const [forcePaidLoading, setForcePaidLoading] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [retryLoading, setRetryLoading] = useState(false);
 
   const { data: orders = [] } = useQuery({
     queryKey: ["my-orders", user?.id],
@@ -292,6 +294,17 @@ export default function Pedidos() {
                           Manual
                         </div>
                       )}
+                      {(() => {
+                        const retries = (o.raw_payload as { manualOrder?: { retries?: unknown[] } } | null)
+                          ?.manualOrder?.retries;
+                        const n = Array.isArray(retries) ? retries.length : 0;
+                        if (!n) return null;
+                        return (
+                          <div className="mt-0.5 ml-1 inline-block text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-400 bg-amber-500/10">
+                            Tentativa #{n + 1}
+                          </div>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell className="text-xs font-mono">
                       {o.target_workspace ?? <span className="text-destructive">— faltando</span>}
@@ -467,6 +480,56 @@ export default function Pedidos() {
                       <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Cancelando...</>
                     ) : (
                       <><XCircle className="w-3.5 h-3.5 mr-1" /> Cancelar e estornar</>
+                    )}
+                  </Button>
+                </div>
+              )}
+              {detail.is_manual && ["refunded", "failed"].includes(detail.status) && (
+                <div className="rounded border border-amber-500/40 bg-amber-500/5 p-3 space-y-2">
+                  <div className="text-xs font-medium text-amber-400 flex items-center gap-1">
+                    <RotateCw className="w-3.5 h-3.5" /> Tentar farmar novamente
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Re-debita os créditos restantes da cota do parceiro e atribui um bot. Se nenhum estiver livre, entra na fila.
+                  </p>
+                  <Button
+                    size="sm"
+                    disabled={retryLoading}
+                    onClick={async () => {
+                      if (!detail) return;
+                      if (!confirm(`Re-debitar ${detail.credits} créditos da cota e tentar farmar de novo?`)) return;
+                      setRetryLoading(true);
+                      try {
+                        const { data, error } = await supabase.functions.invoke(
+                          "partner-shop-retry-manual-order",
+                          { body: { orderId: detail.id } }
+                        );
+                        if (error) throw error;
+                        const status = (data as { status?: string } | null)?.status;
+                        toast({
+                          title: "Reprocessando",
+                          description:
+                            status === "processing"
+                              ? "Bot iniciou o farm agora."
+                              : status === "queued"
+                                ? "Sem bot livre — entrou na fila."
+                                : `Status: ${status ?? "ok"}`,
+                        });
+                        setDetail(null);
+                        qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                        qc.invalidateQueries({ queryKey: ["my-bots-mini", user?.id] });
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : "Erro";
+                        toast({ title: "Falha ao reprocessar", description: msg, variant: "destructive" });
+                      } finally {
+                        setRetryLoading(false);
+                      }
+                    }}
+                  >
+                    {retryLoading ? (
+                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Reprocessando...</>
+                    ) : (
+                      <><RotateCw className="w-3.5 h-3.5 mr-1" /> Tentar novamente</>
                     )}
                   </Button>
                 </div>

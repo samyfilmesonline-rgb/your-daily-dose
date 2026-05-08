@@ -1149,6 +1149,7 @@ export type Database = {
         }
         Returns: undefined
       }
+      retry_manual_order: { Args: { _order_id: string }; Returns: Json }
       stop_order_partial: {
         Args: { _fingerprint: string; _order_id: string }
         Returns: number

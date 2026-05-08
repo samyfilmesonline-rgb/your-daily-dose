@@ -1,55 +1,51 @@
-## Objetivo
+## Causa do erro atual
 
-Permitir que parceiros (e admins) criem e iniciem recargas manualmente direto da página **/dashboard/pedidos**, escolhendo um bot específico. Se o bot estiver ocioso, o farm começa imediatamente; se estiver ocupado, o pedido entra na fila do parceiro e é puxado automaticamente quando o bot liberar (mesma fila já existente).
+A edge function `partner-shop-create-manual-order` usa `callerClient.auth.getClaims(token)`, que **não existe** no `@supabase/supabase-js@2.45.0`. Por isso responde 500 → "Edge Function returned a non-2xx status code".
 
-## Fluxo de usuário
+**Fix:** trocar para `callerClient.auth.getUser(token)` (mesmo padrão das outras edges do projeto).
 
-1. Na página **Pedidos**, novo botão **"Nova recarga manual"** no topo (ao lado da busca).
-2. Abre dialog com:
-   - Nome do cliente, e-mail, WhatsApp (opcional)
-   - Workspace alvo (obrigatório)
-   - Créditos (número, > 0)
-   - Valor manual em R$ (apenas registro financeiro, sem PIX)
-   - Observações (motivo da recarga manual)
-   - Select **Bot**: lista bots do parceiro com status (idle/busy). Admin vê também um seletor de parceiro antes (opcional).
-3. Ao confirmar:
-   - Se o bot escolhido está **idle** → pedido vira `processing` e o bot é atribuído imediatamente.
-   - Se está **busy/disabled** → pedido vira `queued` (atribuído ao parceiro). Quando qualquer bot daquele parceiro liberar, `assign_next_queued_order` puxa o próximo da fila por ordem de criação (comportamento atual respeitado).
+## Modelo de débito/estorno (justo)
 
-## Implementação técnica
+- Hoje, em pedidos pagos via PIX, o `refund_order_remainder` calcula `farmed = SUM(execucoes_lovable.creditos_adicionados)` no bot/workspace desde `assigned_at`, e devolve `remainder = credits - farmed` como **saldo do cliente**.
+- Para **recargas manuais** isso está errado: o custo é do parceiro (cortesia), então débito e estorno têm que mexer em `parceiros.creditos_consumidos`, **não** em `partner_customer_balances`.
+- A regra "se pediu 200 e farmou 100, estorna 100" já existe no cálculo de `remainder` — basta direcioná-lo ao parceiro quando o pedido for manual.
 
-### 1. Edge function `partner-shop-create-manual-order` (nova)
-- Auth obrigatória (Bearer token), valida com `getClaims`.
-- Body (zod): `partnerId?` (admin only), `customerName`, `customerEmail`, `customerWhatsapp?`, `targetWorkspace`, `credits` (int 1..100000), `amountCents` (int ≥ 0), `notes` (3..500), `botId?` (uuid).
-- Authorization:
-  - `callerId === partnerId` (parceiro criando para si) **ou** `has_role(callerId,'admin')`.
-  - Se `partnerId` omitido → usa `callerId`.
-  - Se `botId` informado → confere que o bot pertence a `partnerId`.
-- Insere em `partner_credit_orders` com `status='paid'`, `paid_at=now()`, `tx_id='manual:<uuid>'`, `pack_id=null`, `raw_payload={ manualOrder: { by, notes, at } }`.
-- Atribuição:
-  - Se `botId` informado e o bot está `idle`: marca bot como `busy`, atualiza pedido para `processing`, `assigned_bot_id`, `assigned_at=now()`.
-  - Se `botId` informado mas o bot está `busy/disabled`: pedido fica `queued` (sem `assigned_bot_id`). A fila por parceiro já existente (`assign_next_queued_order`) cuidará — qualquer bot livre puxa por ordem de criação.
-  - Se `botId` ausente: chama `assign_bot_to_order` (comportamento atual — usa qualquer idle ou cai para `queued`).
-- Insere entrada em `partner_credit_ledger` com `delta=0`, `reason='manual_order:<notes>'` para auditoria.
-- Retorna `{ ok: true, orderId, status }`.
+## Mudanças
 
-### 2. Frontend — `src/pages/dashboard/Pedidos.tsx`
-- Novo componente `ManualOrderDialog` (mesmo arquivo ou `components/ManualOrderDialog.tsx`).
-- Botão "Nova recarga manual" (variant default) abre o dialog.
-- Form com `react-hook-form` + zod schema espelhando o backend.
-- Query para listar bots do parceiro (já existe `my-bots-mini`); se admin, query adicional para listar parceiros (`parceiros` + `profiles`) e refetch de bots ao trocar.
-- Select de bot mostra: nickname/email + badge de status (idle/busy/disabled). Bots `disabled` ficam desabilitados; `busy` permitidos com aviso "entrará na fila".
-- Ao submit: `supabase.functions.invoke('partner-shop-create-manual-order', { body })`. Em sucesso, `qc.invalidateQueries(['my-orders'])` e toast "Recarga criada · status: processando/na fila".
+### 1) Migração SQL
 
-### 3. Sem mudanças de schema
-- Reusa `partner_credit_orders`, `farm_bots`, `assign_bot_to_order`, `assign_next_queued_order`, `release_bot`. A fila e a liberação de bots já funcionam pelo trigger atual.
+- Adicionar coluna `is_manual boolean NOT NULL DEFAULT false` em `partner_credit_orders` (e backfill `true` para `tx_id LIKE 'manual:%'`).
+- Nova função `debit_partner_quota(_partner_id uuid, _amount int, _order_id uuid, _reason text) RETURNS void`:
+  - `UPDATE parceiros SET creditos_consumidos = creditos_consumidos + _amount` com guard `creditos_consumidos + _amount <= limite_creditos`; se estourar, RAISE.
+  - Insere ledger `delta = -_amount`, `reason = 'manual_debit:...'`.
+- Nova função `refund_partner_quota(_partner_id uuid, _amount int, _order_id uuid, _reason text)`:
+  - `UPDATE parceiros SET creditos_consumidos = GREATEST(creditos_consumidos - _amount, 0)`.
+  - Insere ledger `delta = +_amount`, `reason = 'manual_refund:...'`.
+- Atualizar `refund_order_remainder`: se `v_order.is_manual = true`, em vez de creditar `partner_customer_balances`, chamar `refund_partner_quota(partner_id, v_remainder, ...)`. Mantém status `delivered`/`refunded` e libera o bot exatamente como hoje.
+- Como `release_bot` já chama `refund_order_remainder` quando o worker reporta falha, e `stop_order_partial` também → cobre falha do bot, parada manual e cancelamento. Sem outras mudanças nessas funções.
+- Nova função `cancel_manual_order(_order_id uuid, _reason text)` (SECURITY DEFINER): valida pedido manual em `paid|queued|processing`, marca `stop_requested_at = now()`, chama `refund_order_remainder('canceled_manual')`. Será usada pelo botão de cancelar manual (admin/parceiro dono).
 
-### 4. Segurança
-- Validação client + server (zod) em todos os campos.
-- Edge function usa service-role apenas após validar caller via JWT.
-- Nenhuma alteração de RLS necessária (insert/update via service role na função).
+### 2) Edge function `partner-shop-create-manual-order`
+
+- Trocar `getClaims` → `getUser(token)`.
+- **Antes** de inserir o pedido, validar quota: ler `parceiros (limite_creditos, creditos_consumidos, status='ativo')` do `partnerId`. Se `creditos_consumidos + credits > limite_creditos` → 400 com mensagem clara.
+- Inserir pedido com `is_manual = true`.
+- Chamar `debit_partner_quota(partnerId, credits, orderId, 'manual_order:<notes>')` imediatamente após criar o pedido (substitui o ledger atual de `delta=0`).
+- Se a atribuição do bot falhar (claim race) e o pedido for para `queued`, **manter o débito** (será estornado se cancelar/falhar; consumido se farmar).
+
+### 3) Edge function `partner-shop-cancel-manual-order` (nova)
+
+- Auth: parceiro dono ou admin.
+- Body: `{ orderId }`. Valida `is_manual = true`. Chama `cancel_manual_order(orderId,'canceled_by_user')`.
+- Retorna `{ ok, refundedCredits }`.
+
+### 4) Frontend
+
+- `ManualOrderDialog`: tratar erro 400 de quota com toast claro ("Limite de créditos do parceiro insuficiente").
+- `Pedidos.tsx`: para linhas onde `is_manual = true` e status `paid|queued|processing`, mostrar botão **"Cancelar"** (admin ou parceiro dono) que chama a nova edge. Em sucesso, toast "Estornados X créditos" + invalidate.
+- Exibir badge "Manual" na linha do pedido para identificação.
 
 ## Fora de escopo
 
-- Cobrança real (PIX) para recarga manual — fica como "valor manual" só para registro.
-- Edição/cancelamento de recarga manual após criada (já tratado pelos fluxos de "stop" / refund existentes).
+- Mudar contabilidade dos pedidos PIX existentes (continuam creditando saldo do cliente).
+- Nova UI de auditoria de quota do parceiro (já visível em `parceiros.creditos_consumidos`).

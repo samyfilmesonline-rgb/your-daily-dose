@@ -1099,6 +1099,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      find_sticky_bot_for_order: {
+        Args: { _order_id: string }
+        Returns: string
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]

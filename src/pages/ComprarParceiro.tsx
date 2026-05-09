@@ -569,17 +569,17 @@ export default function ComprarParceiro() {
       <div className="fixed inset-0 z-[1] bg-background/85 pointer-events-none" />
       <div className="fixed top-0 left-0 w-full h-[40vh] bg-gradient-to-b from-primary/10 to-transparent z-[2] pointer-events-none" />
 
-      <main className="relative z-10 max-w-6xl mx-auto p-4 md:p-8 space-y-6">
-        <header className="rounded-2xl border-2 border-primary/30 bg-card/60 backdrop-blur p-6">
+      <main className="relative z-10 max-w-6xl mx-auto p-3 sm:p-4 md:p-8 space-y-4 sm:space-y-6">
+        <header className="rounded-2xl border-2 border-primary/30 bg-card/60 backdrop-blur p-4 sm:p-6">
           <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.3em] text-primary/70">
             <Sparkles className="w-3.5 h-3.5" /> Créditos Lovable
           </div>
-          <h1 className="mt-2 text-2xl md:text-4xl font-black font-mono">
+          <h1 className="mt-2 text-xl sm:text-2xl md:text-4xl font-black font-mono break-words">
             <GlitchText>
               {partner?.nome ? `${partner.nome.toUpperCase()} · CRÉDITOS LOVABLE` : "CRÉDITOS LOVABLE"}
             </GlitchText>
           </h1>
-          <p className="text-sm text-muted-foreground mt-2 max-w-3xl">
+          <p className="text-xs sm:text-sm text-muted-foreground mt-2 max-w-3xl">
             Créditos entregues direto na sua workspace via convite da conta-mãe.
             Pedido único, sem assinatura, com reembolso proporcional automático.
           </p>
@@ -587,16 +587,16 @@ export default function ComprarParceiro() {
 
         {/* Banner de saldo (visível em ambas as abas) */}
         {totalAvailableBalance > 0 && (
-          <div className="rounded-2xl border-2 border-emerald-500/50 bg-emerald-500/10 p-5 flex flex-col md:flex-row md:items-center gap-4 shadow-[0_0_30px_hsl(142_70%_50%/0.15)]">
-            <Wallet className="w-10 h-10 text-emerald-400 flex-none" />
+          <div className="rounded-2xl border-2 border-emerald-500/50 bg-emerald-500/10 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 shadow-[0_0_30px_hsl(142_70%_50%/0.15)]">
+            <Wallet className="w-8 h-8 sm:w-10 sm:h-10 text-emerald-400 flex-none" />
             <div className="flex-1">
               <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-emerald-400">
                 Crédito disponível pra usar agora
               </div>
-              <div className="text-3xl font-black font-mono text-emerald-400">
+              <div className="text-2xl sm:text-3xl font-black font-mono text-emerald-400">
                 {totalAvailableBalance} créditos
               </div>
-              <div className="text-xs text-muted-foreground mt-1">
+              <div className="text-[11px] sm:text-xs text-muted-foreground mt-1 break-words">
                 {customerBalance.email
                   ? <>Vinculado a <strong className="text-foreground">{customerBalance.email}</strong>. </>
                   : null}
@@ -605,7 +605,7 @@ export default function ComprarParceiro() {
             </div>
             <Button
               size="lg"
-              className="bg-emerald-500 hover:bg-emerald-600 text-background font-bold"
+              className="bg-emerald-500 hover:bg-emerald-600 text-background font-bold w-full sm:w-auto"
               onClick={() => {
                 setTab("comprar");
                 setUseBalance(true);
@@ -622,12 +622,12 @@ export default function ComprarParceiro() {
 
         {/* Tabs principais */}
         <Tabs value={tab} onValueChange={(v) => setTab(v as "comprar" | "pedidos")}>
-          <TabsList className="grid grid-cols-2 w-full max-w-md mx-auto">
-            <TabsTrigger value="comprar" className="gap-2">
-              <ShoppingCart className="w-4 h-4" /> Comprar créditos
+          <TabsList className="grid grid-cols-2 w-full sm:max-w-md sm:mx-auto">
+            <TabsTrigger value="comprar" className="gap-1.5 sm:gap-2 text-xs sm:text-sm">
+              <ShoppingCart className="w-4 h-4" /> <span className="truncate">Comprar</span>
             </TabsTrigger>
-            <TabsTrigger value="pedidos" className="gap-2">
-              <History className="w-4 h-4" /> Meus pedidos
+            <TabsTrigger value="pedidos" className="gap-1.5 sm:gap-2 text-xs sm:text-sm">
+              <History className="w-4 h-4" /> <span className="truncate">Pedidos</span>
               {history && history.length > 0 && (
                 <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary">
                   {history.length}
@@ -636,9 +636,9 @@ export default function ComprarParceiro() {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="comprar" className="space-y-6 mt-6">
+          <TabsContent value="comprar" className="space-y-4 sm:space-y-6 mt-4 sm:mt-6">
         {/* Requisitos */}
-        <section className="rounded-2xl border-2 border-amber-500/30 bg-amber-500/5 backdrop-blur p-5">
+        <section className="rounded-2xl border-2 border-amber-500/30 bg-amber-500/5 backdrop-blur p-4 sm:p-5">
           <div className="flex items-center justify-center gap-2 text-amber-400 text-xs font-mono uppercase tracking-[0.3em] mb-4">
             <AlertTriangle className="w-3.5 h-3.5" /> Requisitos importantes
           </div>
@@ -677,7 +677,7 @@ export default function ComprarParceiro() {
             return (
               <section
                 key={p.id}
-                className="grid md:grid-cols-[1fr_360px] gap-4 rounded-2xl border-2 border-primary/30 bg-card/60 backdrop-blur p-6"
+                className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-4 rounded-2xl border-2 border-primary/30 bg-card/60 backdrop-blur p-4 sm:p-6"
               >
                 <div>
                   <div className="flex items-center gap-2 mb-3">
@@ -692,28 +692,28 @@ export default function ComprarParceiro() {
                       </span>
                     )}
                   </div>
-                  <h2 className="text-3xl md:text-4xl font-black font-mono leading-tight">
+                  <h2 className="text-xl sm:text-2xl lg:text-4xl font-black font-mono leading-tight break-words">
                     {p.credits} créditos na sua conta{" "}
                     <span className="text-primary">Lovable</span> por apenas {brl(p.price_cents)}.
                   </h2>
                   {p.description && (
-                    <p className="text-sm text-muted-foreground mt-3">{p.description}</p>
+                    <p className="text-xs sm:text-sm text-muted-foreground mt-3">{p.description}</p>
                   )}
-                  <ul className="mt-4 space-y-1 text-sm">
+                  <ul className="mt-4 space-y-1 text-xs sm:text-sm">
                     <li className="flex gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 flex-none" /> Plano Pro ativado durante a entrega</li>
                     <li className="flex gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 flex-none" /> {p.credits} créditos por pedido</li>
                     <li className="flex gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 flex-none" /> Cobrança proporcional ao que for entregue</li>
                     <li className="flex gap-2"><CheckCircle2 className="w-4 h-4 text-primary mt-0.5 flex-none" /> Reembolso automático se não completar</li>
                   </ul>
                 </div>
-                <div className="rounded-xl border border-primary/30 bg-background/60 p-5 flex flex-col">
+                <div className="rounded-xl border border-primary/30 bg-background/60 p-4 sm:p-5 flex flex-col">
                   <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-primary/70 mb-2">// Pacote</div>
-                  <div className="flex items-baseline gap-2">
+                  <div className="flex items-baseline gap-2 flex-wrap">
                     <Sparkles className="w-5 h-5 text-primary" />
-                    <span className="text-4xl font-black font-mono text-primary">{p.credits}</span>
+                    <span className="text-3xl sm:text-4xl font-black font-mono text-primary">{p.credits}</span>
                     <span className="text-xs text-muted-foreground">créditos / pedido</span>
                   </div>
-                  <div className="mt-4 flex items-baseline gap-2">
+                  <div className="mt-4 flex items-baseline gap-2 flex-wrap">
                     {orig && (
                       <span className="text-xs line-through text-muted-foreground">{brl(orig)}</span>
                     )}
@@ -721,10 +721,10 @@ export default function ComprarParceiro() {
                       <span className="text-[10px] font-mono uppercase bg-destructive/20 text-destructive px-2 py-0.5 rounded">-{discPct}%</span>
                     )}
                   </div>
-                  <div className="text-5xl font-black font-mono text-primary mt-1">
+                  <div className="text-4xl sm:text-5xl font-black font-mono text-primary mt-1 break-words">
                     {brl(p.price_cents)}
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">
+                  <div className="text-[11px] sm:text-xs text-muted-foreground mt-1">
                     ≈ {(p.price_cents / p.credits / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 3 })} por crédito
                   </div>
                   {hasBal && (
@@ -733,9 +733,9 @@ export default function ComprarParceiro() {
                         <span className="text-muted-foreground">Seu saldo</span>
                         <span className="text-emerald-400 font-bold">−{balCalc.balanceUsed} créditos</span>
                       </div>
-                      <div className="flex items-center justify-between mt-1">
+                      <div className="flex items-center justify-between mt-1 gap-2">
                         <span className="text-xs font-mono text-muted-foreground">Você paga via Pix</span>
-                        <span className={`text-2xl font-black font-mono ${balCalc.freeWithBalance ? "text-emerald-400" : "text-primary"}`}>
+                        <span className={`text-xl sm:text-2xl font-black font-mono ${balCalc.freeWithBalance ? "text-emerald-400" : "text-primary"}`}>
                           {balCalc.freeWithBalance ? "GRÁTIS" : brl(balCalc.payCents)}
                         </span>
                       </div>
@@ -743,7 +743,7 @@ export default function ComprarParceiro() {
                   )}
                   <Button
                     size="lg"
-                    className={`mt-5 w-full text-base ${balCalc.freeWithBalance ? "bg-emerald-500 hover:bg-emerald-600 text-background" : ""}`}
+                    className={`mt-5 w-full text-sm sm:text-base whitespace-normal h-auto py-3 leading-tight ${balCalc.freeWithBalance ? "bg-emerald-500 hover:bg-emerald-600 text-background" : ""}`}
                     onClick={() => { setSelected(p); setConfirmOpen(true); }}
                   >
                     <Sparkles className="w-4 h-4 mr-2" />

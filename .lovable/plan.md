@@ -1,62 +1,59 @@
-# Manter bot fixo por workspace nos retries
-
 ## Problema
 
-Hoje, quando um pedido é refeito (retry manual ou nova compra automática do mesmo cliente/workspace), o sistema escolhe **qualquer bot idle** do parceiro. Resultado:
+Na página de compra do cliente final (`/comprar/:partnerId`) o layout quebra em larguras intermediárias e mobile:
 
-- O bot que já tinha o convite aceito daquele workspace fica preterido.
-- Outro bot é convidado de novo → cliente vê convite duplicado, dados "trocando".
-- O card do bot mostra `current_order_id` apontando para o pedido novo, enquanto o histórico de execuções (`execucoes_lovable`) ainda referencia o bot antigo no mesmo workspace → parece mistura de informação.
-- Em `retry_manual_order`, o código zera `assigned_bot_id` antes de re-atribuir, garantindo que o bot mude se outro estiver mais "antigo" no critério `last_heartbeat_at`.
+- O card do pacote usa um título `text-3xl md:text-4xl` que estoura horizontalmente e o painel lateral fixo de 360px convive mal com larguras entre 768–1024px.
+- O painel de preço (R$ em `text-5xl`) ocupa espaço demais na coluna direita e força wrap feio.
+- O dialog de acompanhamento (`OrderTrackingInline` / `HistoryTrackingDialog`) usa `grid-cols-2` fixos em telas estreitas, gerando textos cortados / colunas espremidas.
+- O banner de saldo verde, header e seção de "requisitos" não respiram bem em mobile.
+- O histórico de pedidos tem coluna de ações `md:w-44` que quebra em larguras médias.
 
-## Objetivo
+## O que vai mudar (somente CSS/layout — nenhuma mudança de lógica)
 
-Sempre que houver retry (manual) ou novo pedido (automático) para o mesmo `customer_email` + `target_workspace` daquele parceiro, **reusar o bot que já farmou esse workspace**, mesmo que outro bot esteja idle. Se o bot histórico estiver ocupado/desabilitado, o pedido vai pra fila esperando ele liberar (não troca).
+Arquivo único: `src/pages/ComprarParceiro.tsx`.
 
-## Mudanças
+### 1. Container principal
+- Reduzir paddings em mobile (`p-3 sm:p-4 md:p-8`) e ajustar `space-y` responsivo.
 
-### 1. Nova função `find_sticky_bot_for_order(_order_id)` (SECURITY DEFINER)
+### 2. Header da loja
+- Reduzir tamanhos em mobile: `text-xl sm:text-2xl md:text-4xl`.
+- Padding `p-4 sm:p-6`.
 
-Lógica de escolha, em ordem de prioridade:
+### 3. Banner de saldo verde
+- Em mobile: empilhar com botão full-width.
+- Reduzir tamanho do número (`text-2xl sm:text-3xl`) e ícone.
 
-1. Se `partner_credit_orders.raw_payload->>'preferredBotId'` estiver setado e o bot for idle → usa ele.
-2. Senão, busca em `execucoes_lovable` o `email_lovable` mais recente que o parceiro já usou para `target_workspace` (mesmo cliente). Se existir bot correspondente em `farm_bots` (mesmo `partner_id`+`email_lovable`) e estiver idle → usa.
-3. Senão, busca pedidos anteriores do mesmo `customer_email`+`target_workspace` desse parceiro com `assigned_bot_id` não-nulo. Se aquele bot for idle → usa.
-4. Fallback: bot idle qualquer (comportamento atual).
+### 4. Tabs
+- `TabsList` full-width sem `max-w-md` em mobile, recuperar limite só em `sm:`.
+- Triggers com texto encurtado em mobile (ícone + label menor).
 
-Retorna `bot_id` ou NULL. **Não** faz fallback automático para "outro bot" se o sticky existir mas estiver busy — devolve NULL nesse caso e o caller coloca em `queued`.
+### 5. Card de pacote (principal foco)
+- Trocar grid para `grid-cols-1 lg:grid-cols-[1fr_340px]` (em vez de `md:`), evitando colunas espremidas em tablets.
+- Título: `text-2xl sm:text-3xl lg:text-4xl` com `break-words`.
+- Painel de preço: padding `p-4 sm:p-5`, valor `text-4xl sm:text-5xl`, alinhamento centralizado em mobile.
+- Botão CTA: texto adaptado, `whitespace-normal` para não estourar.
+- Lista de features com tamanho menor em mobile.
 
-### 2. Atualizar `assign_bot_to_order`
+### 6. Seção "Requisitos"
+- Padding e fontes ajustadas para mobile.
 
-Substituir a query "qualquer bot idle mais antigo" pela chamada à `find_sticky_bot_for_order`. Se retornar NULL → `status = 'queued'`. Mantém claim atômico (`UPDATE ... WHERE status='idle'`).
+### 7. Dialog de tracking (`OrderTrackingInline`)
+- `DialogContent` ganhar `w-[calc(100%-1rem)] max-w-lg max-h-[90vh] overflow-y-auto p-4 sm:p-6`.
+- Grid de info: `grid-cols-1 sm:grid-cols-2`.
+- Painel "Farm em andamento": números menores em mobile, sub-grid `grid-cols-1 xs:grid-cols-2`.
+- Bloco "Convide o bot": e-mail com `break-all` e botão full-width em mobile.
 
-### 3. Atualizar `retry_manual_order`
+### 8. Histórico de pedidos
+- Card do pedido: ações em mobile como linha rolável horizontal ou full-width abaixo do conteúdo; em md+ manter coluna lateral mais flexível (`md:w-auto md:min-w-[10rem]`).
+- Filtro de e-mail: input + botão empilhados em mobile.
 
-- **Não** zerar `assigned_bot_id` automaticamente. Guardar o original em `raw_payload.manualOrder.preferredBotId`.
-- Se o bot original existir e estiver idle → reatribui ele direto (claim atômico).
-- Se estiver busy → marca `queued` com `preferredBotId` setado; quando ele liberar, `assign_next_queued_order` (via `find_sticky_bot_for_order`) reatribui ao mesmo bot.
-- Se o bot original tiver sido deletado/disabled → cai na lógica sticky por workspace.
+### 9. Outros diálogos (`max-w-sm`/`max-w-md`/`max-w-lg`)
+- Adicionar `w-[calc(100%-1rem)]` e `max-h-[90vh] overflow-y-auto` para evitar dialogs cortados em telas pequenas (Android/iOS).
 
-### 4. Atualizar `assign_next_queued_order`
+## Verificação
 
-Já chama `assign_bot_to_order`, então herda o comportamento. Acrescentar: quando um bot fica idle, priorizar pedidos `queued` que tenham aquele bot como `preferredBotId` antes dos demais (FIFO só entre os "sem preferência").
+- Conferir no preview com viewports 375px, 414px, 768px, 948px e 1280px.
+- Testar abrir o dialog de acompanhamento em cada largura.
+- Garantir que nenhum texto fique cortado e que CTAs sejam clicáveis sem rolagem horizontal.
 
-### 5. Frontend — ManualOrderDialog (retry)
-
-Quando o usuário abrir um retry, pré-selecionar o bot do pedido anterior (se houver) e mostrar badge "Bot original do pedido". Não muda a lógica do servidor, só clareza visual.
-
-### 6. UI Bots — invalidar queries quando pedido muda
-
-Garantir que `PartnerBotsDialog` e listagem de bots façam `invalidateQueries` em mudanças de `partner_credit_orders` (já existe realtime em `Pedidos.tsx`; estender para o card do bot) para evitar exibir `current_order_id` defasado.
-
-## Arquivos afetados
-
-- `supabase/migrations/<novo>.sql` — funções `find_sticky_bot_for_order`, `assign_bot_to_order`, `retry_manual_order`, `assign_next_queued_order`.
-- `src/components/dashboard/ManualOrderDialog.tsx` — pré-seleção do bot original em retry.
-- `src/components/dashboard/partners/PartnerBotsDialog.tsx` — invalidação ao mudar pedidos.
-
-## Riscos / observações
-
-- Pedidos antigos sem `execucoes_lovable` no workspace simplesmente caem no fallback (comportamento atual) — sem regressão.
-- Se o bot "sticky" estiver `disabled`, pedido vira `queued` indefinidamente; mitigação: se o bot estiver disabled (não busy), permitir fallback para outro bot idle.
-- Watchdog de stalled segue funcionando — quando libera o bot, `assign_next_queued_order` reatribui priorizando `preferredBotId`.
+Sem mudanças em business logic, edge functions, schema ou tipos.

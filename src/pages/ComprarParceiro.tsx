@@ -1634,7 +1634,7 @@ function OrdersHistorySection({
                     </div>
                   )}
                 </div>
-                <div className="flex flex-wrap gap-2 md:flex-col md:items-stretch md:w-44">
+                <div className="flex flex-wrap gap-2 md:flex-col md:items-stretch md:w-auto md:min-w-[10rem]">
                   {canTrack && (
                     <Button size="sm" onClick={() => onTrack(o)}>
                       <Eye className="w-4 h-4 mr-1.5" />

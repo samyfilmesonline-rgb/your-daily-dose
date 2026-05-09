@@ -1470,7 +1470,7 @@ function OrderTrackingDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="w-[calc(100%-1rem)] max-w-lg max-h-[90vh] overflow-y-auto p-4 sm:p-6">
         <OrderTrackingInline
           order={order}
           fallbackWorkspace={fallbackWorkspace}
@@ -1744,7 +1744,7 @@ function HistoryTrackingDialog({
 
   return (
     <Dialog open={!!orderId} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="w-[calc(100%-1rem)] max-w-lg max-h-[90vh] overflow-y-auto p-4 sm:p-6">
         {showPix ? (
           <>
             <DialogHeader>
@@ -1893,7 +1893,7 @@ function OrderTrackingInline({
             : "Estamos preparando seu pedido. Esta tela atualiza sozinha."}
         </DialogDescription>
       </DialogHeader>
-      <div className="rounded-lg border border-primary/20 bg-card/60 p-3 text-xs grid grid-cols-2 gap-2">
+      <div className="rounded-lg border border-primary/20 bg-card/60 p-3 text-xs grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div><div className="text-muted-foreground">Workspace</div><div className="font-mono font-semibold break-all">{workspace ?? "—"}</div></div>
         <div><div className="text-muted-foreground">Créditos</div><div className="font-mono font-semibold">{credits ?? "—"}</div></div>
         <div><div className="text-muted-foreground">Valor</div><div className="font-mono font-semibold">{amount != null ? brl(amount) : "—"}</div></div>
@@ -1902,25 +1902,25 @@ function OrderTrackingInline({
 
       {/* Painel de progresso em tempo real */}
       {showProgress && progress && (
-        <div className="rounded-lg border-2 border-emerald-500/40 bg-emerald-500/5 p-4 space-y-3 mt-3">
-          <div className="flex items-center justify-between">
+        <div className="rounded-lg border-2 border-emerald-500/40 bg-emerald-500/5 p-3 sm:p-4 space-y-3 mt-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="text-xs font-mono uppercase tracking-widest text-emerald-400 flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5" /> Farm em andamento
             </div>
-            <div className="text-xs text-muted-foreground">
+            <div className="text-[11px] sm:text-xs text-muted-foreground">
               Convite confirmado {timeAgo(inviteConfirmedAt)}
             </div>
           </div>
           <div>
             <div className="flex items-baseline justify-between mb-1">
-              <div className="font-mono text-2xl font-bold text-emerald-400">
+              <div className="font-mono text-xl sm:text-2xl font-bold text-emerald-400">
                 {progress.farmed}<span className="text-base text-muted-foreground"> / {progress.target}</span>
               </div>
               <div className="font-mono text-sm text-emerald-400">{progress.percent}%</div>
             </div>
             <Progress value={progress.percent} className="h-2" />
           </div>
-          <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
             <div className="rounded border border-border bg-background/40 p-2">
               <div className="text-muted-foreground">Bot</div>
               <div className="font-mono">

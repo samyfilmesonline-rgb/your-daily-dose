@@ -113,6 +113,9 @@ type OrderHistoryItem = {
   txId: string | null;
   customerEmail: string;
   ownDevice: boolean;
+  customerName?: string | null;
+  customerWhatsapp?: string | null;
+  customerTaxId?: string | null;
   botInviteConfirmedAt?: string | null;
   stopRequestedAt?: string | null;
   balanceAppliedCredits?: number;
@@ -271,10 +274,12 @@ export default function ComprarParceiro() {
     if (!samePack) return;
     setSelected(samePack);
     setEmail(item.customerEmail || "");
+    if (item.customerName) setName(item.customerName);
+    if (item.customerWhatsapp) setWhatsapp(item.customerWhatsapp);
+    if (item.customerTaxId) setTaxId(item.customerTaxId);
     if (item.targetWorkspace) setWorkspace(item.targetWorkspace);
     setUseBalance(true);
     setPrefillOrderId(item.id);
-    setTab("comprar");
     setStep("form");
   };
 
@@ -925,10 +930,10 @@ export default function ComprarParceiro() {
           {prefillOrderId && (
             <div className="rounded-lg border-2 border-emerald-500/40 bg-emerald-500/10 p-3 text-xs">
               <div className="font-bold text-emerald-400 flex items-center gap-1.5">
-                <RefreshCw className="w-3.5 h-3.5" /> Dados do pedido anterior preenchidos
+                <RefreshCw className="w-3.5 h-3.5" /> Mesmos dados do pedido anterior
               </div>
               <div className="text-muted-foreground mt-0.5">
-                Revise e clique em "Gerar Pix" — vamos abater do seu saldo automaticamente.
+                Revise ou ajuste qualquer campo antes de confirmar.
               </div>
             </div>
           )}

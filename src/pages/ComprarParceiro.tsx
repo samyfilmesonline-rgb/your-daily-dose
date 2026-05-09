@@ -830,7 +830,7 @@ export default function ComprarParceiro() {
 
       {/* Confirmação */}
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="w-[calc(100%-1rem)] max-w-sm max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-primary" /> Confirmar pedido
@@ -915,7 +915,7 @@ export default function ComprarParceiro() {
 
       {/* Form do cliente */}
       <Dialog open={step === "form"} onOpenChange={(o) => { if (!o) { setStep("browse"); setPrefillOrderId(null); } }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="w-[calc(100%-1rem)] max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Seus dados</DialogTitle>
             <DialogDescription>
@@ -1007,7 +1007,7 @@ export default function ComprarParceiro() {
 
       {/* Pix */}
       <Dialog open={step === "pix"} onOpenChange={(o) => !o && setStep("browse")}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="w-[calc(100%-1rem)] max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <QrCode className="w-5 h-5 text-primary" /> Pague via Pix
@@ -1169,7 +1169,7 @@ export default function ComprarParceiro() {
 
       {/* Saldo de outro e-mail (Plano C) */}
       <Dialog open={redeemOpen} onOpenChange={setRedeemOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="w-[calc(100%-1rem)] max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Wallet className="w-5 h-5 text-emerald-400" /> Resgatar saldo
@@ -1275,7 +1275,7 @@ export default function ComprarParceiro() {
         setCrossOpen(o);
         if (!o) { setCrossLookup(null); setCrossEmail(""); }
       }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="w-[calc(100%-1rem)] max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Wallet className="w-5 h-5 text-emerald-400" /> Saldo em outro e-mail

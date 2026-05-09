@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
     const { data: orders, error } = await sb
       .from("partner_credit_orders")
       .select(
-        "id, status, credits, amount_cents, target_workspace, created_at, paid_at, delivered_at, failed_reason, assigned_bot_id, pix_qrcode, pix_copy_paste, pix_expires_at, tx_id, customer_email, client_fingerprint, partner_id, assigned_at, bot_invite_confirmed_at, stop_requested_at, balance_applied_credits, balance_applied_cents, refunded_credits"
+        "id, status, credits, amount_cents, target_workspace, created_at, paid_at, delivered_at, failed_reason, assigned_bot_id, pix_qrcode, pix_copy_paste, pix_expires_at, tx_id, customer_email, customer_name, customer_whatsapp, customer_tax_id, client_fingerprint, partner_id, assigned_at, bot_invite_confirmed_at, stop_requested_at, balance_applied_credits, balance_applied_cents, refunded_credits"
       )
       .eq("partner_id", partnerId)
       .or(filter)
@@ -179,6 +179,9 @@ Deno.serve(async (req) => {
         pixExpiresAt: o.pix_expires_at,
         txId: ownDevice ? o.tx_id : null,
         customerEmail: o.customer_email,
+        customerName: o.customer_name ?? null,
+        customerWhatsapp: ownDevice ? (o.customer_whatsapp ?? null) : null,
+        customerTaxId: ownDevice ? (o.customer_tax_id ?? null) : null,
         ownDevice,
         botInviteConfirmedAt: o.bot_invite_confirmed_at ?? null,
         stopRequestedAt: o.stop_requested_at ?? null,

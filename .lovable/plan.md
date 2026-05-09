@@ -1,59 +1,46 @@
 ## Problema
 
-Na página de compra do cliente final (`/comprar/:partnerId`) o layout quebra em larguras intermediárias e mobile:
+Em **Meus pedidos**, ao clicar em **Refazer pedido**, hoje o cliente é jogado pra aba "Comprar créditos" e cai na seleção de pacote/formulário. Isso confunde porque parece que o pedido sumiu e ele tem que começar do zero.
 
-- O card do pacote usa um título `text-3xl md:text-4xl` que estoura horizontalmente e o painel lateral fixo de 360px convive mal com larguras entre 768–1024px.
-- O painel de preço (R$ em `text-5xl`) ocupa espaço demais na coluna direita e força wrap feio.
-- O dialog de acompanhamento (`OrderTrackingInline` / `HistoryTrackingDialog`) usa `grid-cols-2` fixos em telas estreitas, gerando textos cortados / colunas espremidas.
-- O banner de saldo verde, header e seção de "requisitos" não respiram bem em mobile.
-- O histórico de pedidos tem coluna de ações `md:w-44` que quebra em larguras médias.
+Além disso, só `email` e `workspace` são reaproveitados — `nome`, `WhatsApp` e `CPF` ficam em branco, obrigando o cliente a redigitar tudo.
 
-## O que vai mudar (somente CSS/layout — nenhuma mudança de lógica)
+## O que muda
 
-Arquivo único: `src/pages/ComprarParceiro.tsx`.
+Comportamento desejado: clicar em **Refazer pedido** abre direto o modal "Seus dados" **por cima da aba Meus pedidos** (sem trocar de aba), com **todos os campos já preenchidos** exatamente como no pedido original. O cliente revisa, edita o que quiser e confirma.
 
-### 1. Container principal
-- Reduzir paddings em mobile (`p-3 sm:p-4 md:p-8`) e ajustar `space-y` responsivo.
+### 1. `supabase/functions/partner-shop-list-orders/index.ts`
 
-### 2. Header da loja
-- Reduzir tamanhos em mobile: `text-xl sm:text-2xl md:text-4xl`.
-- Padding `p-4 sm:p-6`.
+Incluir no `select` os campos `customer_name, customer_whatsapp, customer_tax_id` e devolver no item da lista:
 
-### 3. Banner de saldo verde
-- Em mobile: empilhar com botão full-width.
-- Reduzir tamanho do número (`text-2xl sm:text-3xl`) e ícone.
+- `customerName: o.customer_name`
+- `customerWhatsapp: ownDevice ? o.customer_whatsapp : null` (privacidade)
+- `customerTaxId: ownDevice ? o.customer_tax_id : null` (privacidade — só visível no próprio device)
 
-### 4. Tabs
-- `TabsList` full-width sem `max-w-md` em mobile, recuperar limite só em `sm:`.
-- Triggers com texto encurtado em mobile (ícone + label menor).
+### 2. `src/pages/ComprarParceiro.tsx`
 
-### 5. Card de pacote (principal foco)
-- Trocar grid para `grid-cols-1 lg:grid-cols-[1fr_340px]` (em vez de `md:`), evitando colunas espremidas em tablets.
-- Título: `text-2xl sm:text-3xl lg:text-4xl` com `break-words`.
-- Painel de preço: padding `p-4 sm:p-5`, valor `text-4xl sm:text-5xl`, alinhamento centralizado em mobile.
-- Botão CTA: texto adaptado, `whitespace-normal` para não estourar.
-- Lista de features com tamanho menor em mobile.
+a. Adicionar `customerName`, `customerWhatsapp`, `customerTaxId` ao type `OrderHistoryItem`.
 
-### 6. Seção "Requisitos"
-- Padding e fontes ajustadas para mobile.
+b. Em `reorderFromHistory(item)`:
+- **Remover** `setTab("comprar")` — manter o usuário na aba "Meus pedidos".
+- Pré-preencher também:
+  - `setName(item.customerName ?? "")`
+  - `setWhatsapp(item.customerWhatsapp ?? "")`
+  - `setTaxId(item.customerTaxId ?? "")`
+- Continuar fazendo `setStep("form")` para abrir o Dialog "Seus dados" como overlay sobre a aba atual.
 
-### 7. Dialog de tracking (`OrderTrackingInline`)
-- `DialogContent` ganhar `w-[calc(100%-1rem)] max-w-lg max-h-[90vh] overflow-y-auto p-4 sm:p-6`.
-- Grid de info: `grid-cols-1 sm:grid-cols-2`.
-- Painel "Farm em andamento": números menores em mobile, sub-grid `grid-cols-1 xs:grid-cols-2`.
-- Bloco "Convide o bot": e-mail com `break-all` e botão full-width em mobile.
+c. No `onOpenChange` do Dialog "Seus dados" (linha 917), ao fechar voltar para o estado anterior sem forçar `browse` quando o usuário veio de "Meus pedidos" — basta não trocar a tab (ela já está em "pedidos") e limpar `prefillOrderId`. Comportamento atual de `setStep("browse")` segue OK.
 
-### 8. Histórico de pedidos
-- Card do pedido: ações em mobile como linha rolável horizontal ou full-width abaixo do conteúdo; em md+ manter coluna lateral mais flexível (`md:w-auto md:min-w-[10rem]`).
-- Filtro de e-mail: input + botão empilhados em mobile.
+d. Ajustar o texto do banner verde dentro do dialog (linhas 925-934) para refletir que é uma cópia editável do pedido anterior:
+- Título: "Mesmos dados do pedido anterior"
+- Sub: "Revise ou ajuste qualquer campo antes de confirmar."
 
-### 9. Outros diálogos (`max-w-sm`/`max-w-md`/`max-w-lg`)
-- Adicionar `w-[calc(100%-1rem)]` e `max-h-[90vh] overflow-y-auto` para evitar dialogs cortados em telas pequenas (Android/iOS).
+### 3. Sem mudanças em
+
+- Schema, RLS, fluxos de pagamento, criação de pedido, saldo.
+- Aba "Comprar créditos" continua acessível normalmente.
 
 ## Verificação
 
-- Conferir no preview com viewports 375px, 414px, 768px, 948px e 1280px.
-- Testar abrir o dialog de acompanhamento em cada largura.
-- Garantir que nenhum texto fique cortado e que CTAs sejam clicáveis sem rolagem horizontal.
-
-Sem mudanças em business logic, edge functions, schema ou tipos.
+- Em "Meus pedidos", clicar **Refazer pedido** num pedido `refunded`/`failed`/`expired` próprio → o modal "Seus dados" abre por cima da lista, sem trocar de aba, com nome/email/whatsapp/CPF/workspace já preenchidos.
+- Fechar o modal volta direto pra lista de pedidos no mesmo lugar.
+- Editar qualquer campo e confirmar gera o pedido normalmente (com abate de saldo se aplicável).

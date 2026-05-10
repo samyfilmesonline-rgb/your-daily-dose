@@ -1847,6 +1847,23 @@ function OrderTrackingInline({
     (status === "paid" || status === "queued" || status === "processing") &&
     !order?.stopRequestedAt;
 
+  // Mensagens neutras estilo hacker — ciclam enquanto há execução em andamento.
+  // Nunca expõem o método de farm (sem citar billing/stripe/login/lovable/etc).
+  const HACKER_TICKS = [
+    "> conectando nó…",
+    "> sincronizando sessão…",
+    "> injetando rotina de farm…",
+    "> coletando créditos…",
+    "> validando saldo…",
+  ];
+  const [tickIdx, setTickIdx] = useState(0);
+  const isFarming = progress?.currentExecution?.status === "em_andamento";
+  useEffect(() => {
+    if (!isFarming) return;
+    const id = setInterval(() => setTickIdx((i) => (i + 1) % HACKER_TICKS.length), 2000);
+    return () => clearInterval(id);
+  }, [isFarming]);
+
   const confirmInvite = async () => {
     if (!order) return;
     // Recupera orderId do contexto via window? Não temos. Usamos progresso/state? Precisamos do id.

@@ -1090,6 +1090,9 @@ export default function ComprarParceiro() {
               <p className="text-xs text-muted-foreground mt-1">
                 Informe o nome <strong>exato</strong> do workspace Lovable onde os créditos devem ser adicionados.
               </p>
+              <p className="text-[11px] text-amber-400/90 mt-1">
+                Atenção: maiúsculas, minúsculas, espaços e acentos contam. Ex.: <code className="font-mono">PRO 03</code> é diferente de <code className="font-mono">pro 03</code> ou <code className="font-mono">PRO  03</code>.
+              </p>
             </div>
             {(() => {
               if (!selected) return null;

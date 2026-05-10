@@ -91,7 +91,7 @@ Deno.serve(async (req) => {
     const { data: order, error: ordErr } = await sb
       .from("partner_credit_orders")
       .select(
-        "id, partner_id, status, multi_workspace_mode, workspaces_total, workspaces_done, workspaces_plan, current_workspace, target_workspace, price_cents_per_workspace, credits, amount_cents, customer_name, customer_email, customer_whatsapp, assigned_bot_id, stop_requested_at, paid_at",
+        "id, partner_id, status, multi_workspace_mode, workspaces_total, workspaces_done, workspaces_plan, current_workspace, target_workspace, price_cents_per_workspace, credits, amount_cents, customer_name, customer_email, customer_whatsapp, assigned_bot_id, stop_requested_at, paid_at, schedule_id",
       )
       .eq("id", b.orderId)
       .maybeSingle();
@@ -308,6 +308,36 @@ Deno.serve(async (req) => {
         await sb.rpc("assign_next_queued_order", { _partner_id: order.partner_id });
       } catch (e) {
         console.warn("assign_next_queued_order err", e);
+      }
+
+      // Se veio de uma programação, contabiliza ok/falha — pausa após 2 falhas seguidas
+      if ((order as { schedule_id?: string | null }).schedule_id) {
+        try {
+          const sid = (order as { schedule_id: string }).schedule_id;
+          const { data: sch } = await sb
+            .from("partner_order_schedules")
+            .select("runs_completed, runs_failed, status")
+            .eq("id", sid)
+            .maybeSingle();
+          if (sch) {
+            const okIncr = finalStatus === "delivered" ? 1 : 0;
+            const failIncr = finalStatus === "delivered" ? 0 : 1;
+            const newFailed = (sch.runs_failed ?? 0) + failIncr;
+            const shouldPause = failIncr === 1 && newFailed >= 2 && sch.status === "active";
+            await sb
+              .from("partner_order_schedules")
+              .update({
+                runs_completed: (sch.runs_completed ?? 0) + okIncr,
+                runs_failed: newFailed,
+                status: shouldPause ? "paused" : sch.status,
+                last_run_at: nowIso,
+                updated_at: nowIso,
+              })
+              .eq("id", sid);
+          }
+        } catch (e) {
+          console.warn("schedule update err", e);
+        }
       }
     }
 

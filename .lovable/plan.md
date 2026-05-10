@@ -1,48 +1,52 @@
-Diagnóstico confirmado:
+Auditoria das regras vs. código atual:
 
-- Pedido atual: `26798938-85bb-4d73-8db3-1ffae1d1cfea` está `processing`, `workspaces_done = 0/2`, parado no workspace `close's Lovablee`, com `stop_requested_at` preenchido.
-- Existe execução com erro para esse workspace: `Pedido interrompido: parada solicitada no Supabase`, mas o worker não chamou `partner-shop-multi-workspace-tick` com `action: "fail"` depois disso.
-- O bot já foi liberado (`farm_bots.status = idle`), mas o pedido continuou `processing`.
-- Causa principal: a função SQL `refund_order_remainder` ainda tem um guard antigo que faz `RETURN 0` para qualquer pedido `multi_workspace_mode = true`. Então `partner-shop-stop-order` tenta refundar/parar, mas o banco ignora multi-ws e deixa o pedido aberto.
-- Segundo problema: quando o worker registra falha em `execucoes_lovable`, mas não chama o tick `fail`, o backend não converte essa falha em avanço para o próximo workspace nem em encerramento.
+Violações encontradas:
 
-Plano de correção:
+- **Regra 1/5 (nunca usar `canceled`)** — `partner-shop-multi-workspace-tick` ainda faz `finalStatus = "canceled"` quando há `stop_requested_at`. A migração `refund_order_remainder` que rodei agora também escreve `'canceled'` em alguns ramos. Precisa virar sempre `refunded` quando houver stop.
+- **Regra 5 (limpar `current_workspace`/`target_workspace`)** — o tick não nula esses campos ao finalizar. A função SQL precisa nular também.
+- **Regra 7 (stop só preenche `stop_requested_at`)** — eu havia mudado `partner-shop-stop-order` para chamar `refund_order_remainder` direto em multi-ws. Isso viola a regra. Precisa só marcar `stop_requested_at` e deixar o tick (ou watchdog) finalizar.
+- **Regra 3 (action `fail` deve avançar quando não houver stop)** — atualmente o tick já avança no `fail` (vai para o próximo `pending`), então essa parte está ok. Mas convém deixar explícito que o `fail` com stop finaliza como `refunded`.
+- **Regra 5 (`refund_partner_quota`)** — o tick chama `refund_order_remainder` (que internamente roteia para `refund_partner_quota` quando `is_manual = true`). Mantém esse caminho desde que a função SQL respeite tudo.
 
-1. Corrigir `refund_order_remainder` para pedidos multi-workspace
-   - Remover o bloqueio que ignora todo pedido `multi_workspace_mode = true`.
-   - Calcular créditos já entregues pelo `workspaces_plan` e/ou execuções registradas.
-   - Se o pedido foi parado antes de concluir qualquer workspace, marcar como `refunded`, devolver o saldo/cota corretamente e liberar o bot.
-   - Manter idempotência para não creditar duas vezes se a função for chamada de novo.
+Plano de correção (sem tocar fluxo single-workspace):
 
-2. Corrigir `partner-shop-stop-order`
-   - Para multi-ws com `workspaces_done = 0` ou `stop_requested_at` recente/antigo, encerrar imediatamente como `refunded`/`canceled` em vez de depender do worker.
-   - Para multi-ws já em progresso, manter a parada graciosa apenas quando houver workspace concluído e worker ativo; caso contrário encerrar direto.
-   - Retornar `immediate: true` e `refundedCredits` reais para o front.
+1) Edge Function `partner-shop-multi-workspace-tick`
+   - Trocar `finalStatus = "canceled"` por `finalStatus = "refunded"` quando `stopRequested`.
+   - No payload de update final, sempre setar `current_workspace = null` e `target_workspace = null`.
+   - Recalcular `workspaces_done` como `done + failed + skipped` (já é, mas garantir).
+   - Manter chamada a `refund_order_remainder` (que já cuida de quota/saldo, libera bot e pausa programação) e `assign_next_queued_order`.
+   - Garantir que o `action: "fail"` quando não há stop avança para o próximo `pending` (já avança, manter).
+   - Garantir que o `action: "fail"` com stop marque pendentes como `skipped`, finalize como `refunded` e libere bot.
 
-3. Melhorar `partner-shop-stalled-watchdog`
-   - Detectar pedidos multi-ws onde o bot já está `idle` mas o pedido continua `processing`.
-   - Detectar execução em `execucoes_lovable` com `status = falha` no workspace atual sem tick `fail` correspondente.
-   - Nesses casos: se houver próximo workspace pendente, avançar o `workspaces_plan` para o próximo; se houve stop solicitado, encerrar e refundar.
-   - Pausar a programação quando o pedido veio de `schedule_id` e falhou/parou.
+2) Edge Function `partner-shop-stop-order`
+   - Para multi-workspace: NÃO chamar `refund_order_remainder` direto. Apenas preencher `stop_requested_at` e retornar `{ ok: true, immediate: false, refundedCredits: 0 }`.
+   - Para single-workspace: manter o caminho legado (`stop_order_partial`).
+   - O watchdog continua sendo a rede de segurança quando o worker está morto.
 
-4. Fortalecer `partner-shop-multi-workspace-tick`
-   - No `action: fail`, garantir que o workspace atual vire `failed` e o próximo `pending` vire `running`.
-   - Se `stop_requested_at` estiver preenchido, marcar pendentes como `skipped`, refundar o restante e finalizar o pedido.
-   - Atualizar contador da programação (`runs_failed`/`runs_completed`) de forma consistente.
+3) Função SQL `refund_order_remainder` (migração nova)
+   - Remover qualquer atribuição de `'canceled'`. No ramo multi-workspace, terminal só pode ser:
+     - `delivered` se `done_count >= total` e SEM stop.
+     - `failed` se `done_count = 0` e SEM stop.
+     - `refunded` em todo resto (qualquer stop OU done parcial).
+   - Sempre setar `current_workspace = NULL`, `target_workspace = NULL` no UPDATE final do multi-ws.
+   - Manter idempotência (já trata estados terminais).
+   - Manter roteamento de refund: `is_manual` → `refund_partner_quota`; senão saldo do cliente.
+   - Manter pausa da `partner_order_schedules` quando o pedido veio de uma programação e não terminou em `delivered`.
 
-5. Limpeza do pedido atual
-   - Rodar uma migração one-shot para encerrar o pedido `26798938-85bb-4d73-8db3-1ffae1d1cfea`, devolver os créditos restantes, liberar qualquer vínculo residual do bot e pausar a programação `f5a92a5d-cea7-4d3d-8440-b63d3442941f`.
+4) Watchdog `partner-shop-stalled-watchdog`
+   - Continua chamando `refund_order_remainder` (agora 100% compatível com as regras). Sem mudança lógica adicional.
 
-Arquivos/funções afetados:
+5) Validação
+   - Conferir que enum `partner_order_status` aceita os valores listados (regra 1) — ok.
+   - Não criar nem alterar triggers; apenas a função SQL.
+   - Após mudanças, testar manualmente: parar pedido multi-ws → verificar `status = refunded`, `current_workspace = null`, `target_workspace = null`, bot `idle`.
 
-- Migração SQL: atualizar `refund_order_remainder` e limpar o pedido atual.
-- `supabase/functions/partner-shop-stop-order/index.ts`
-- `supabase/functions/partner-shop-stalled-watchdog/index.ts`
+Arquivos afetados:
 - `supabase/functions/partner-shop-multi-workspace-tick/index.ts`
+- `supabase/functions/partner-shop-stop-order/index.ts`
+- 1 migração nova substituindo o corpo de `refund_order_remainder` (sem `canceled`, com cleanup de `current_workspace`/`target_workspace`).
 
-Resultado esperado:
-
-- Ao clicar em “Parar”, o pedido multi-workspace não fica mais preso em `processing`.
-- Se o primeiro workspace der erro e o worker não chamar `fail`, o watchdog recupera o estado.
-- Se o worker chamar `fail`, o backend pula para o próximo workspace automaticamente.
-- Se houver parada solicitada, o pedido fecha e reembolsa sem depender do navegador/worker continuar vivo.
+Fora de escopo:
+- Fluxo single-workspace.
+- Triggers e outras tabelas.
+- Loop de login do worker desktop (problema do app Python).

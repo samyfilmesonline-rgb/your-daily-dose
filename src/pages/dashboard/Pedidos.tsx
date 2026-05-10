@@ -349,8 +349,17 @@ export default function Pedidos() {
                       })()}
                     </TableCell>
                     <TableCell className="text-xs font-mono">
-                      {o.target_workspace ?? <span className="text-destructive">— faltando</span>}
-                      {wsMissing && (
+                      {o.multi_workspace_mode ? (
+                        <>
+                          <div>{o.current_workspace ?? "—"}</div>
+                          <div className="text-[10px] text-primary mt-0.5">
+                            todos os ws · {o.workspaces_done ?? 0}/{o.workspaces_total ?? "?"}
+                          </div>
+                        </>
+                      ) : (
+                        o.target_workspace ?? <span className="text-destructive">— faltando</span>
+                      )}
+                      {wsMissing && !o.multi_workspace_mode && (
                         <div className="text-[10px] text-destructive mt-0.5 flex items-center gap-1">
                           <AlertTriangle className="w-3 h-3" /> precisa contato
                         </div>

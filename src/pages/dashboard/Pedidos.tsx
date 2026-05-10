@@ -158,7 +158,7 @@ export default function Pedidos() {
     const oneDayAgo = Date.now() - 24 * 3600 * 1000;
     const tenMinAgo = Date.now() - 10 * 60 * 1000;
     const noWs = orders.filter(
-      (o) => !o.target_workspace && ["paid", "queued", "processing"].includes(o.status)
+      (o) => !o.target_workspace && !o.multi_workspace_mode && ["paid", "queued", "processing"].includes(o.status)
     ).length;
     const stale = orders.filter((o) => {
       if (o.status !== "processing" || !o.assigned_bot_id) return false;

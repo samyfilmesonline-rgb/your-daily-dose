@@ -45,37 +45,19 @@ Deno.serve(async (req) => {
       });
     }
 
-    const assignedMs = order?.assigned_at ? Date.parse(order.assigned_at) : 0;
-    const ageMin = assignedMs ? (Date.now() - assignedMs) / 60_000 : Infinity;
-    const canRefundNow =
-      !!order &&
-      (order.status === "processing" || order.status === "queued" || order.status === "paid") &&
-      (
-        // multi-ws sempre encerra direto pelo backend; o worker pode estar morto
-        order.multi_workspace_mode === true ||
-        // single-ws sem progresso há mais de 2 min
-        (order.workspaces_done === 0 && ageMin >= 2)
-      );
-
-    if (canRefundNow) {
-      // Marca stop e refunda direto (libera bot, devolve cota/saldo)
-      await sb
-        .from("partner_credit_orders")
-        .update({ stop_requested_at: new Date().toISOString() })
-        .eq("id", orderId);
-
-      const { data: refunded, error: refErr } = await sb.rpc("refund_order_remainder", {
-        _order_id: orderId,
-        _reason: "stopped_by_customer_pre_start",
-      });
-      if (refErr) {
-        return new Response(JSON.stringify({ error: refErr.message }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+    // Multi-workspace: apenas marca stop_requested_at. A finalização (status=refunded,
+    // refund de créditos, liberação do bot, limpeza de current/target_workspace) é
+    // responsabilidade do partner-shop-multi-workspace-tick (quando o worker chamar
+    // next/fail) ou do partner-shop-stalled-watchdog (rede de segurança).
+    if (order?.multi_workspace_mode === true) {
+      if (order.status === "processing" || order.status === "queued" || order.status === "paid") {
+        await sb
+          .from("partner_credit_orders")
+          .update({ stop_requested_at: new Date().toISOString() })
+          .eq("id", orderId);
       }
       return new Response(
-        JSON.stringify({ ok: true, refundedCredits: Number(refunded ?? 0), immediate: true }),
+        JSON.stringify({ ok: true, refundedCredits: 0, immediate: false, multiWorkspace: true }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }

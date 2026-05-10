@@ -1,53 +1,65 @@
-## Objetivo
+## Aba "Checkout" no painel admin
 
-Quando o bot tentar farmar e não encontrar o workspace que o cliente digitou (erro `workspace_not_found` em `execucoes_lovable.erro`), o pedido deve falhar imediatamente, devolver 100% dos créditos para o saldo do email e abrir uma UI clara avisando o motivo, pedindo para revisar o nome do workspace (mostrando apenas a orientação — sem listar workspaces de terceiros).
+Nova aba unificada para o admin acompanhar todos os pagamentos da plataforma (parceiros + licenças/loja), com base para remarketing futuro via WhatsApp/webhook.
 
-## O que muda
+### 1. Banco de dados
 
-### 1. Backend — `supabase/functions/partner-shop-check-status/index.ts`
+**Nova tabela `payment_events`** (timeline imutável de eventos de pagamento, alimentada por triggers em `partner_credit_orders` e `pix_charges`):
 
-Após carregar `progress.currentExecution` (que já lê `execucoes_lovable.erro`), detectar a string `workspace_not_found`:
+Campos: `id`, `source` (`partner_order` | `pix_charge`), `source_id`, `event_type` (`pix_generated`, `paid`, `failed`, `canceled`, `expired`, `refunded`, `delivered`), `customer_email`, `customer_name`, `customer_whatsapp`, `partner_id`, `amount_cents`, `credits`, `status_before`, `status_after`, `metadata` (jsonb), `created_at`.
 
-- Se o pedido ainda está em `processing`/`queued`/`paid` E a execução mais recente contém `workspace_not_found`:
-  - Chamar `refund_order_remainder(_order_id, _reason: 'workspace_not_found')` para devolver o restante (ou tudo, se nada foi farmado) ao saldo do cliente.
-  - Marcar o pedido com `failed_reason = 'workspace_not_found'` e `status = 'failed'` (via update direto, pois o RPC de refund pode não tocar o status quando ainda há tempo).
-  - Liberar o bot (`farm_bots.status = 'idle'`, `current_order_id = null`) se ainda estiver atribuído ao pedido.
-  - Tentar `assign_next_queued_order` para o parceiro.
-- Adicionar campos no JSON de resposta:
-  - `workspaceNotFound: boolean`
-  - `attemptedWorkspace: string | null` (extraído do erro: `alvo='...'`)
-  - `failedReason` continua sendo retornado.
+- Índices em `customer_email`, `customer_whatsapp`, `partner_id`, `created_at`, `event_type`.
+- RLS: só admin lê/escreve. Triggers usam `SECURITY DEFINER`.
+- 2 triggers `AFTER INSERT OR UPDATE`: uma em `partner_credit_orders`, outra em `pix_charges`. Detectam mudança de status e gravam o evento correspondente.
+- Backfill: insert inicial dos pedidos/charges existentes como evento "snapshot" para a tela já mostrar histórico.
 
-Regex sugerida para extrair o alvo: `workspace_not_found:\s*alvo='([^']+)'`. A lista de "disponiveis" é descartada (não exposta ao cliente).
+### 2. Edge function `admin-checkout-list`
 
-### 2. Frontend — `src/pages/ComprarParceiro.tsx`
+Lista unificada paginada que junta `partner_credit_orders` + `pix_charges` numa estrutura comum:
 
-a) **Tipos**: estender `OrderState` com `workspaceNotFound?: boolean` e `attemptedWorkspace?: string | null`.
+```text
+{ id, source, status, customer_name, customer_email, customer_whatsapp,
+  partner_id, partner_name, amount_cents, credits, created_at, paid_at,
+  pix_expires_at, last_event_type, last_event_at, raw }
+```
 
-b) **Tela "paid" (acompanhamento do farm)**: quando `order.workspaceNotFound === true`, substituir o painel atual de progresso por um aviso destacado (vermelho/âmbar) com:
-   - Título: "Workspace não encontrado"
-   - Texto: "O bot não encontrou o workspace **{attemptedWorkspace}** na sua conta Lovable. Confira se digitou o nome **exatamente igual** ao que aparece no Lovable (incluindo maiúsculas, minúsculas, espaços e acentos)."
-   - Aviso: "Seus {credits} créditos foram devolvidos ao saldo do email **{customerEmail}** e você já pode refazer o pedido com o nome correto."
-   - Botão primário: "Refazer pedido com nome correto" → abre o modal de refazer pré-preenchido (workspace, name, email, whatsapp), mas com o campo Workspace **vazio e em foco**, e dica visível abaixo do input: "Copie o nome exatamente como aparece no Lovable (case-sensitive)".
+Filtros aceitos:
+- `source`: all | partner | pix
+- `status`: pending, pix_generated, paid, failed, canceled, expired, refunded, delivered
+- `from`, `to` (datas)
+- `q` (busca em email, nome, whatsapp)
+- `page`, `pageSize`
 
-c) **Histórico (lista de pedidos anteriores)**: pedidos com `failed_reason = 'workspace_not_found'` ganham um badge "Workspace não encontrado" e o botão "Refazer pedido" usa o mesmo fluxo do item (b).
+Usa service role; valida JWT + `has_role(admin)` no início. Retorna também totais agregados (faturado, pago, pendente, falho) do filtro atual.
 
-d) **Form principal**: reforçar a dica abaixo do input Workspace (já existe um texto "Informe o nome **exato**...") com um exemplo curto: "Ex.: 'PRO 03' é diferente de 'pro 03' ou 'PRO  03'".
+### 3. Frontend
 
-### 3. Sem mudanças em
+**Nova rota** `/dashboard/checkout` registrada em `App.tsx` dentro de `AdminRoute`.
 
-- Schema do banco (todos os campos necessários já existem: `failed_reason`, `refunded_credits`, `partner_customer_balances`).
-- RPCs (`refund_order_remainder` já existe e é usado pelo watchdog).
-- Watchdog (`partner-shop-stalled-watchdog`) — continua cobrindo casos de stall sem erro explícito.
+**Nova aba** em `src/lib/sidebar-tabs.ts`:
+```text
+{ key: "checkout", title: "Checkout", url: "/dashboard/checkout",
+  icon: Receipt, defaultVisibility: "adminOnly" }
+```
 
-## Fora de escopo
+**Nova página** `src/pages/dashboard/Checkout.tsx`:
+- Cards no topo: Faturado, Pago, Pendente/PIX gerado, Falho/Cancelado (do filtro atual).
+- Barra de filtros: select de origem (Todos/Parceiros/Loja), select de status, range de datas, input de busca.
+- Tabela com colunas: Data · Cliente (nome + email + whatsapp) · Origem · Parceiro · Valor · Créditos · Status (badge colorido) · Ações.
+- Ações por linha: botão "Detalhes" abre modal com timeline de `payment_events` + payload bruto + botões "copiar email" / "copiar whatsapp".
+- Paginação simples (Próx/Anterior).
+- Sem CSV nem tags por enquanto (decisão do usuário).
 
-- Listar para o cliente os workspaces disponíveis na conta-mãe.
-- Validar o nome do workspace antes de criar o pedido (não temos acesso à conta Lovable do cliente).
-- Outros tipos de erro do worker (timeouts, falha de rede) — continuam tratados pelo watchdog/refund manual.
+### 4. Detalhes técnicos relevantes
 
-## Detalhes técnicos
+- A tabela `payment_events` já é o ponto de integração futuro com webhook: basta uma function `on-payment-event` (não criada agora) que escute novos rows e dispare WhatsApp.
+- Status normalizados na UI para um vocabulário só, mesmo vindos de tabelas diferentes:
+  - `pix_charges.status` (pending, paid, …) → mapeado.
+  - `partner_credit_orders.status` (pending, paid, queued, processing, delivered, failed, refunded, expired, canceled) → mapeado.
+- Telefone/whatsapp formatado quando disponível; "—" quando não.
+- Página segue tema Matrix (mesma estilização das outras tabelas admin).
 
-- O detector de `workspace_not_found` roda dentro de `partner-shop-check-status` porque essa função já é chamada em polling pelo frontend e já carrega `execucoes_lovable`. Isso garante que a falha seja detectada em até ~5s sem precisar de cron extra.
-- A atualização do pedido (`status='failed'`, `failed_reason`) é feita com guard `eq('status', currentStatus)` para evitar race com o webhook de pagamento.
-- O refund usa o RPC já existente, então o saldo do cliente é creditado de forma transacional e auditada em `partner_credit_ledger`.
+### Fora do escopo (decidido)
+- Exportar CSV.
+- Tags/notas de lead.
+- Disparo de WhatsApp em si (só preparamos a base de eventos).

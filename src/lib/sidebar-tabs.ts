@@ -1,4 +1,4 @@
-import { LayoutDashboard, Users as UsersIcon, Boxes, Shield, Handshake, KeyRound, ShoppingBag, UserCircle, Package, Bot, Coins, Activity, type LucideIcon } from "lucide-react";
+import { LayoutDashboard, Users as UsersIcon, Boxes, Shield, Handshake, KeyRound, ShoppingBag, UserCircle, Package, Bot, Coins, Activity, Receipt, type LucideIcon } from "lucide-react";
 
 export type TabVisibility =
   | "always"
@@ -110,6 +110,13 @@ export const SIDEBAR_TABS: SidebarTab[] = [
     url: "/dashboard/pedidos",
     icon: Activity,
     defaultVisibility: "adminOrActivePartner",
+  },
+  {
+    key: "checkout",
+    title: "Checkout",
+    url: "/dashboard/checkout",
+    icon: Receipt,
+    defaultVisibility: "adminOnly",
   },
 ];
 

@@ -23,6 +23,7 @@ import Atualizacoes from "./pages/dashboard/Atualizacoes.tsx";
 import Bots from "./pages/dashboard/Bots.tsx";
 import Pacotes from "./pages/dashboard/Pacotes.tsx";
 import Pedidos from "./pages/dashboard/Pedidos.tsx";
+import Checkout from "./pages/dashboard/Checkout.tsx";
 import ComprarParceiro from "./pages/ComprarParceiro.tsx";
 import ProtectedRoute from "./components/auth/ProtectedRoute.tsx";
 import AdminRoute from "./components/auth/AdminRoute.tsx";
@@ -64,6 +65,7 @@ const App = () => (
             <Route path="bots" element={<Bots />} />
             <Route path="pacotes" element={<Pacotes />} />
             <Route path="pedidos" element={<Pedidos />} />
+            <Route path="checkout" element={<AdminRoute><Checkout /></AdminRoute>} />
           </Route>
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />

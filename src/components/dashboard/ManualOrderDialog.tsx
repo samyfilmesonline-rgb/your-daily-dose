@@ -22,8 +22,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Zap, Clock, Layers } from "lucide-react";
+import { Loader2, Zap, Clock, Layers, CalendarClock } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { z } from "zod";
 
 type Bot = {
@@ -52,6 +53,12 @@ const schemaMulti = z.object({
   ...baseSchema,
   pricePerWorkspaceReais: z.coerce.number().min(0.01, "Mínimo R$ 0,01").max(100000),
 });
+const schemaSchedule = z.object({
+  ...baseSchema,
+  pricePerWorkspaceReais: z.coerce.number().min(0.01, "Mínimo R$ 0,01").max(100000),
+  totalDays: z.coerce.number().int().min(1).max(365).optional(),
+  endAt: z.string().optional(),
+});
 
 export default function ManualOrderDialog({
   open,
@@ -68,6 +75,8 @@ export default function ManualOrderDialog({
   const [botId, setBotId] = useState<string>("auto");
   const [submitting, setSubmitting] = useState(false);
   const [multiWs, setMultiWs] = useState(false);
+  const [recurring, setRecurring] = useState(false);
+  const [endMode, setEndMode] = useState<"days" | "until_date">("days");
   const [form, setForm] = useState({
     customerName: "",
     customerEmail: "",
@@ -76,6 +85,8 @@ export default function ManualOrderDialog({
     credits: "",
     amountReais: "",
     pricePerWorkspaceReais: "",
+    totalDays: "7",
+    endAt: "",
     notes: "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -86,6 +97,8 @@ export default function ManualOrderDialog({
       setBotId("auto");
       setErrors({});
       setMultiWs(false);
+      setRecurring(false);
+      setEndMode("days");
     }
   }, [open, user?.id]);
 
@@ -93,6 +106,11 @@ export default function ManualOrderDialog({
   useEffect(() => {
     if (botId === "auto" && multiWs) setMultiWs(false);
   }, [botId, multiWs]);
+
+  // Recorrência só com multi-ws
+  useEffect(() => {
+    if (!multiWs && recurring) setRecurring(false);
+  }, [multiWs, recurring]);
 
   // Admin: load partner list
   const { data: partners = [] } = useQuery({
@@ -144,7 +162,11 @@ export default function ManualOrderDialog({
 
   async function handleSubmit() {
     setErrors({});
-    const parsed = multiWs ? schemaMulti.safeParse(form) : schemaSingle.safeParse(form);
+    const parsed = recurring
+      ? schemaSchedule.safeParse(form)
+      : multiWs
+        ? schemaMulti.safeParse(form)
+        : schemaSingle.safeParse(form);
     if (!parsed.success) {
       const flat = parsed.error.flatten().fieldErrors;
       const e: Record<string, string> = {};
@@ -164,13 +186,33 @@ export default function ManualOrderDialog({
       toast({ title: "Bot desabilitado", description: "Escolha outro bot ou use atribuição automática.", variant: "destructive" });
       return;
     }
+    if (recurring && endMode === "until_date" && !form.endAt) {
+      setErrors((e) => ({ ...e, endAt: "Selecione a data final" }));
+      return;
+    }
     setSubmitting(true);
     try {
-      const v = parsed.data as typeof form & { credits?: number; amountReais?: number; targetWorkspace?: string; pricePerWorkspaceReais?: number };
+      const v = parsed.data as typeof form & { credits?: number; amountReais?: number; targetWorkspace?: string; pricePerWorkspaceReais?: number; totalDays?: number; endAt?: string };
+      const fnName = recurring
+        ? "partner-shop-create-order-schedule"
+        : "partner-shop-create-manual-order";
       const { data, error } = await supabase.functions.invoke(
-        "partner-shop-create-manual-order",
+        fnName,
         {
-          body: multiWs
+          body: recurring
+            ? {
+                partnerId: isAdmin ? effectivePartnerId : undefined,
+                botId,
+                customerName: v.customerName,
+                customerEmail: v.customerEmail,
+                customerWhatsapp: v.customerWhatsapp || null,
+                notes: v.notes,
+                pricePerWorkspaceCents: Math.round(Number(v.pricePerWorkspaceReais) * 100),
+                endMode,
+                totalDays: endMode === "days" ? Number(v.totalDays ?? form.totalDays) : undefined,
+                endAt: endMode === "until_date" ? new Date(form.endAt).toISOString() : undefined,
+              }
+            : multiWs
             ? {
                 partnerId: isAdmin ? effectivePartnerId : undefined,
                 customerName: v.customerName,
@@ -195,16 +237,24 @@ export default function ManualOrderDialog({
         },
       );
       if (error) throw error;
-      const status = (data as { status?: string } | null)?.status ?? "paid";
-      toast({
-        title: "Recarga criada",
-        description:
-          status === "processing"
-            ? "Bot iniciou o farm agora."
-            : status === "queued"
-              ? "Sem bot livre — entrou na fila."
-              : `Status: ${status}`,
-      });
+      if (recurring) {
+        toast({
+          title: "Programação criada",
+          description: "O farm vai rodar todo dia no mesmo horário até o fim do prazo.",
+        });
+        qc.invalidateQueries({ queryKey: ["my-schedules", user?.id] });
+      } else {
+        const status = (data as { status?: string } | null)?.status ?? "paid";
+        toast({
+          title: "Recarga criada",
+          description:
+            status === "processing"
+              ? "Bot iniciou o farm agora."
+              : status === "queued"
+                ? "Sem bot livre — entrou na fila."
+                : `Status: ${status}`,
+        });
+      }
       qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
       qc.invalidateQueries({ queryKey: ["my-bots-mini", user?.id] });
       onOpenChange(false);
@@ -216,11 +266,13 @@ export default function ManualOrderDialog({
         credits: "",
         amountReais: "",
         pricePerWorkspaceReais: "",
+        totalDays: "7",
+        endAt: "",
         notes: "",
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro";
-      toast({ title: "Falha ao criar recarga", description: msg, variant: "destructive" });
+      toast({ title: "Falha ao criar", description: msg, variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
@@ -359,6 +411,69 @@ export default function ManualOrderDialog({
             </div>
           )}
 
+          {multiWs && (
+            <div className={`flex items-start gap-3 rounded-md border p-3 ${!multiWs ? "opacity-50" : ""}`}>
+              <Switch
+                checked={recurring}
+                onCheckedChange={setRecurring}
+                disabled={!multiWs}
+                id="recurring"
+              />
+              <div className="flex-1">
+                <label htmlFor="recurring" className="text-xs font-medium flex items-center gap-1 cursor-pointer">
+                  <CalendarClock className="w-3 h-3" /> Repetir diariamente (programação)
+                </label>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Cria um pedido novo todo dia no mesmo horário desta criação,
+                  durante o período definido. A cada execução debita 200 × workspaces.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {recurring && (
+            <div className="rounded-md border p-3 space-y-3">
+              <RadioGroup value={endMode} onValueChange={(v) => setEndMode(v as "days" | "until_date")} className="flex gap-4">
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="days" id="m-days" />
+                  <label htmlFor="m-days" className="text-xs cursor-pointer">Por X dias</label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="until_date" id="m-until" />
+                  <label htmlFor="m-until" className="text-xs cursor-pointer">Até data</label>
+                </div>
+              </RadioGroup>
+
+              {endMode === "days" ? (
+                <div>
+                  <Label className="text-xs">Quantidade de dias (1–365)</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={form.totalDays}
+                    onChange={(e) => field("totalDays", e.target.value)}
+                  />
+                </div>
+              ) : (
+                <div>
+                  <Label className="text-xs">Data final</Label>
+                  <Input
+                    type="datetime-local"
+                    value={form.endAt}
+                    onChange={(e) => field("endAt", e.target.value)}
+                  />
+                  {errors.endAt && <p className="text-[10px] text-destructive mt-0.5">{errors.endAt}</p>}
+                </div>
+              )}
+
+              <p className="text-[10px] text-muted-foreground">
+                Disparo diário no mesmo horário da criação. Se o bot estiver ocupado,
+                o pedido daquele dia entra na fila e roda assim que o bot liberar.
+              </p>
+            </div>
+          )}
+
           <div>
             <Label className="text-xs">Observações (motivo / referência)</Label>
             <Textarea
@@ -374,7 +489,7 @@ export default function ManualOrderDialog({
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>Cancelar</Button>
           <Button onClick={handleSubmit} disabled={submitting}>
-            {submitting ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Criando...</> : "Criar recarga"}
+            {submitting ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Criando...</> : recurring ? "Criar programação" : "Criar recarga"}
           </Button>
         </DialogFooter>
       </DialogContent>

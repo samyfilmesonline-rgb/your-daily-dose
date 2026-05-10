@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
     // 1) Pega pedidos em processing com assigned_at antigo o suficiente
     const { data: orders, error: ordErr } = await sb
       .from("partner_credit_orders")
-      .select("id, partner_id, assigned_bot_id, target_workspace, assigned_at, paid_at, credits, customer_email, multi_workspace_mode, workspaces_total, workspaces_done, stop_requested_at, schedule_id")
+      .select("id, partner_id, assigned_bot_id, target_workspace, current_workspace, assigned_at, paid_at, credits, customer_email, multi_workspace_mode, workspaces_total, workspaces_done, stop_requested_at, schedule_id")
       .eq("status", "processing")
       .lt("assigned_at", cutoffAssigned)
       .order("assigned_at", { ascending: true })
@@ -51,13 +51,17 @@ Deno.serve(async (req) => {
     for (const o of orders) {
       // Descobre email do bot atribuído
       let botEmail: string | null = null;
+      let botStatus: string | null = null;
+      let botCurrentOrderId: string | null = null;
       if (o.assigned_bot_id) {
         const { data: bot } = await sb
           .from("farm_bots")
-          .select("email_lovable")
+          .select("email_lovable, status, current_order_id")
           .eq("id", o.assigned_bot_id)
           .maybeSingle();
         botEmail = bot?.email_lovable ?? null;
+        botStatus = bot?.status ?? null;
+        botCurrentOrderId = bot?.current_order_id ?? null;
       }
 
       const since = o.assigned_at ?? o.paid_at;
@@ -87,12 +91,44 @@ Deno.serve(async (req) => {
       // - Multi-ws nunca iniciou (workspaces_total NULL) e assigned há > cutoffStall
       // - Sem execução desde assigned_at e assigned_at < cutoffStall
       // - Última execução com atualizado_em < cutoffStall
+      // Última execução em falha do worker (worker errou mas não chamou tick/fail)
+      let lastFailedAt: string | null = null;
+      if (botEmail && since) {
+        const wsName = o.multi_workspace_mode ? o.current_workspace : o.target_workspace;
+        let qf = sb
+          .from("execucoes_lovable")
+          .select("atualizado_em")
+          .eq("id_do_usuario", o.partner_id)
+          .eq("email_lovable", botEmail)
+          .eq("status", "falha")
+          .gte("iniciado_em", since)
+          .order("atualizado_em", { ascending: false })
+          .limit(1);
+        if (wsName) qf = qf.eq("workspace_nome", wsName);
+        const { data: failed } = await qf.maybeSingle();
+        lastFailedAt = failed?.atualizado_em ?? null;
+      }
+
       const stopMs = o.stop_requested_at ? Date.parse(o.stop_requested_at) : 0;
       const stopOld = stopMs > 0 && Date.now() - stopMs > 2 * 60_000;
       const multiNeverStarted = o.multi_workspace_mode === true && o.workspaces_total == null;
       const assignedOld = o.assigned_at && o.assigned_at < cutoffStall;
       const execOld = lastUpdate && lastUpdate < cutoffStall;
-      const isStalled = stopOld || (multiNeverStarted && assignedOld) || (!lastUpdate && assignedOld) || execOld;
+      // Bot já liberado mas pedido continua processing → órfão
+      const botOrphan =
+        !!o.assigned_bot_id &&
+        botStatus === "idle" &&
+        botCurrentOrderId !== o.id;
+      // Worker registrou falha há mais de 1 min mas não chamou tick/fail
+      const failedNoTick =
+        !!lastFailedAt && Date.now() - Date.parse(lastFailedAt) > 60_000;
+      const isStalled =
+        stopOld ||
+        (multiNeverStarted && assignedOld) ||
+        (!lastUpdate && assignedOld) ||
+        execOld ||
+        botOrphan ||
+        failedNoTick;
 
       if (!isStalled) {
         skipped.push({ orderId: o.id, reason: "still_progressing" });
@@ -101,6 +137,10 @@ Deno.serve(async (req) => {
 
       const reasonTag = stopOld
         ? "stop_unresponsive"
+        : botOrphan
+        ? "bot_orphan"
+        : failedNoTick
+        ? "exec_failed_no_tick"
         : multiNeverStarted
         ? "multi_ws_never_started"
         : lastUpdate

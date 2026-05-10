@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
     // 1) Pega pedidos em processing com assigned_at antigo o suficiente
     const { data: orders, error: ordErr } = await sb
       .from("partner_credit_orders")
-      .select("id, partner_id, assigned_bot_id, target_workspace, assigned_at, paid_at, credits, customer_email")
+      .select("id, partner_id, assigned_bot_id, target_workspace, assigned_at, paid_at, credits, customer_email, multi_workspace_mode, workspaces_total, workspaces_done, stop_requested_at, schedule_id")
       .eq("status", "processing")
       .lt("assigned_at", cutoffAssigned)
       .order("assigned_at", { ascending: true })
@@ -62,41 +62,74 @@ Deno.serve(async (req) => {
 
       const since = o.assigned_at ?? o.paid_at;
 
-      // Última atividade em execucoes_lovable para esse pedido
+      // Última atividade em execucoes_lovable
+      // - Single-ws: filtra por workspace
+      // - Multi-ws: filtra só por bot/parceiro (workspace varia)
       let lastUpdate: string | null = null;
-      if (botEmail && o.target_workspace && since) {
-        const { data: exec } = await sb
+      if (botEmail && since) {
+        let q = sb
           .from("execucoes_lovable")
           .select("atualizado_em")
           .eq("id_do_usuario", o.partner_id)
           .eq("email_lovable", botEmail)
-          .eq("workspace_nome", o.target_workspace)
           .gte("iniciado_em", since)
           .order("atualizado_em", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+          .limit(1);
+        if (!o.multi_workspace_mode && o.target_workspace) {
+          q = q.eq("workspace_nome", o.target_workspace);
+        }
+        const { data: exec } = await q.maybeSingle();
         lastUpdate = exec?.atualizado_em ?? null;
       }
 
-      // Critério de stall:
-      // - Nenhuma execução desde assigned_at (lastUpdate null) E assigned_at < cutoffStall, OU
+      // Critérios de stall (qualquer um):
+      // - Stop foi pedido há > 2 min e ainda processing → worker não respondeu
+      // - Multi-ws nunca iniciou (workspaces_total NULL) e assigned há > cutoffStall
+      // - Sem execução desde assigned_at e assigned_at < cutoffStall
       // - Última execução com atualizado_em < cutoffStall
+      const stopMs = o.stop_requested_at ? Date.parse(o.stop_requested_at) : 0;
+      const stopOld = stopMs > 0 && Date.now() - stopMs > 2 * 60_000;
+      const multiNeverStarted = o.multi_workspace_mode === true && o.workspaces_total == null;
       const assignedOld = o.assigned_at && o.assigned_at < cutoffStall;
       const execOld = lastUpdate && lastUpdate < cutoffStall;
-      const isStalled = (!lastUpdate && assignedOld) || execOld;
+      const isStalled = stopOld || (multiNeverStarted && assignedOld) || (!lastUpdate && assignedOld) || execOld;
 
       if (!isStalled) {
         skipped.push({ orderId: o.id, reason: "still_progressing" });
         continue;
       }
 
+      const reasonTag = stopOld
+        ? "stop_unresponsive"
+        : multiNeverStarted
+        ? "multi_ws_never_started"
+        : lastUpdate
+        ? "exec_update_stalled"
+        : "no_exec_since_assigned";
+
       const { data: refundedCredits, error: refErr } = await sb.rpc("refund_order_remainder", {
         _order_id: o.id,
-        _reason: "worker_stalled_auto",
+        _reason: `worker_stalled_auto:${reasonTag}`,
       });
       if (refErr) {
         skipped.push({ orderId: o.id, reason: `rpc_error:${refErr.message}` });
         continue;
+      }
+
+      // Se veio de uma programação, pausa pra evitar repetir o problema amanhã
+      if (o.schedule_id) {
+        try {
+          await sb
+            .from("partner_order_schedules")
+            .update({
+              status: "paused",
+              runs_failed: ((o as { runs_failed?: number }).runs_failed ?? 0) + 1,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", o.schedule_id);
+        } catch (e) {
+          console.warn("pause schedule err", e);
+        }
       }
 
       // Tenta puxar próximo da fila do parceiro
@@ -105,7 +138,7 @@ Deno.serve(async (req) => {
       refunded.push({
         orderId: o.id,
         refunded: Number(refundedCredits ?? 0),
-        reason: lastUpdate ? "exec_update_stalled" : "no_exec_since_assigned",
+        reason: reasonTag,
       });
     }
 

@@ -50,7 +50,7 @@ const schemaSingle = z.object({
 });
 const schemaMulti = z.object({
   ...baseSchema,
-  pricePerWorkspaceReais: z.coerce.number().min(0).max(100000),
+  pricePerWorkspaceReais: z.coerce.number().min(0.01, "Mínimo R$ 0,01").max(100000),
 });
 
 export default function ManualOrderDialog({
@@ -350,6 +350,14 @@ export default function ManualOrderDialog({
               </p>
             </div>
           </div>
+
+          {multiWs && (
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-[10px] text-amber-200">
+              ⚠️ Requer worker desktop atualizado (com suporte a multi-workspace).
+              O pedido fica em "Aguardando worker iniciar" até o desktop enviar a lista
+              de workspaces. Sem essa atualização, o farm não inicia.
+            </div>
+          )}
 
           <div>
             <Label className="text-xs">Observações (motivo / referência)</Label>

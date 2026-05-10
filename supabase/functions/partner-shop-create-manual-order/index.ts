@@ -22,7 +22,9 @@ const Body = z.object({
 }).superRefine((v, ctx) => {
   if (v.multiWorkspaceMode) {
     if (!v.botId) ctx.addIssue({ code: "custom", message: "botId é obrigatório no modo multi-workspace", path: ["botId"] });
-    if (v.pricePerWorkspaceCents == null) ctx.addIssue({ code: "custom", message: "pricePerWorkspaceCents é obrigatório", path: ["pricePerWorkspaceCents"] });
+    if (v.pricePerWorkspaceCents == null || v.pricePerWorkspaceCents < 1) {
+      ctx.addIssue({ code: "custom", message: "pricePerWorkspaceCents deve ser >= 1", path: ["pricePerWorkspaceCents"] });
+    }
   } else {
     if (!v.targetWorkspace) ctx.addIssue({ code: "custom", message: "targetWorkspace é obrigatório", path: ["targetWorkspace"] });
     if (v.credits == null) ctx.addIssue({ code: "custom", message: "credits é obrigatório", path: ["credits"] });

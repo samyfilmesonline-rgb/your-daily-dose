@@ -353,7 +353,9 @@ export default function Pedidos() {
                         <>
                           <div>{o.current_workspace ?? "—"}</div>
                           <div className="text-[10px] text-primary mt-0.5">
-                            todos os ws · {o.workspaces_done ?? 0}/{o.workspaces_total ?? "?"}
+                            {o.workspaces_total == null
+                              ? "aguardando worker iniciar (multi-ws)"
+                              : `todos os ws · ${o.workspaces_done ?? 0}/${o.workspaces_total}`}
                           </div>
                         </>
                       ) : (

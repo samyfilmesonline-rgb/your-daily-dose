@@ -510,6 +510,7 @@ export type Database = {
           client_fingerprint: string | null
           created_at: string
           credits: number
+          current_workspace: string | null
           customer_email: string
           customer_name: string
           customer_tax_id: string | null
@@ -518,12 +519,14 @@ export type Database = {
           failed_reason: string | null
           id: string
           is_manual: boolean
+          multi_workspace_mode: boolean
           pack_id: string | null
           paid_at: string | null
           partner_id: string
           pix_copy_paste: string | null
           pix_expires_at: string | null
           pix_qrcode: string | null
+          price_cents_per_workspace: number | null
           raw_payload: Json | null
           refunded_credits: number
           status: Database["public"]["Enums"]["partner_order_status"]
@@ -531,6 +534,9 @@ export type Database = {
           target_workspace: string | null
           tx_id: string | null
           updated_at: string
+          workspaces_done: number
+          workspaces_plan: Json | null
+          workspaces_total: number | null
         }
         Insert: {
           amount_cents: number
@@ -543,6 +549,7 @@ export type Database = {
           client_fingerprint?: string | null
           created_at?: string
           credits: number
+          current_workspace?: string | null
           customer_email: string
           customer_name: string
           customer_tax_id?: string | null
@@ -551,12 +558,14 @@ export type Database = {
           failed_reason?: string | null
           id?: string
           is_manual?: boolean
+          multi_workspace_mode?: boolean
           pack_id?: string | null
           paid_at?: string | null
           partner_id: string
           pix_copy_paste?: string | null
           pix_expires_at?: string | null
           pix_qrcode?: string | null
+          price_cents_per_workspace?: number | null
           raw_payload?: Json | null
           refunded_credits?: number
           status?: Database["public"]["Enums"]["partner_order_status"]
@@ -564,6 +573,9 @@ export type Database = {
           target_workspace?: string | null
           tx_id?: string | null
           updated_at?: string
+          workspaces_done?: number
+          workspaces_plan?: Json | null
+          workspaces_total?: number | null
         }
         Update: {
           amount_cents?: number
@@ -576,6 +588,7 @@ export type Database = {
           client_fingerprint?: string | null
           created_at?: string
           credits?: number
+          current_workspace?: string | null
           customer_email?: string
           customer_name?: string
           customer_tax_id?: string | null
@@ -584,12 +597,14 @@ export type Database = {
           failed_reason?: string | null
           id?: string
           is_manual?: boolean
+          multi_workspace_mode?: boolean
           pack_id?: string | null
           paid_at?: string | null
           partner_id?: string
           pix_copy_paste?: string | null
           pix_expires_at?: string | null
           pix_qrcode?: string | null
+          price_cents_per_workspace?: number | null
           raw_payload?: Json | null
           refunded_credits?: number
           status?: Database["public"]["Enums"]["partner_order_status"]
@@ -597,6 +612,9 @@ export type Database = {
           target_workspace?: string | null
           tx_id?: string | null
           updated_at?: string
+          workspaces_done?: number
+          workspaces_plan?: Json | null
+          workspaces_total?: number | null
         }
         Relationships: [
           {
@@ -1099,6 +1117,7 @@ export type Database = {
           client_fingerprint: string | null
           created_at: string
           credits: number
+          current_workspace: string | null
           customer_email: string
           customer_name: string
           customer_tax_id: string | null
@@ -1107,12 +1126,14 @@ export type Database = {
           failed_reason: string | null
           id: string
           is_manual: boolean
+          multi_workspace_mode: boolean
           pack_id: string | null
           paid_at: string | null
           partner_id: string
           pix_copy_paste: string | null
           pix_expires_at: string | null
           pix_qrcode: string | null
+          price_cents_per_workspace: number | null
           raw_payload: Json | null
           refunded_credits: number
           status: Database["public"]["Enums"]["partner_order_status"]
@@ -1120,6 +1141,9 @@ export type Database = {
           target_workspace: string | null
           tx_id: string | null
           updated_at: string
+          workspaces_done: number
+          workspaces_plan: Json | null
+          workspaces_total: number | null
         }
         SetofOptions: {
           from: "*"

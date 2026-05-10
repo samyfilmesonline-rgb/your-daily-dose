@@ -1,102 +1,43 @@
-## Recarga manual em modo "todos os workspaces do bot"
 
-Adiciona, no diálogo **Nova recarga manual**, uma opção que faz o bot farmar **200 créditos em cada workspace** que ele listar no Lovable, em sequência, até terminar todos.
+## Diagnóstico
 
-### 1. Banco de dados (1 migration)
+Você criou o pedido `2dd628c1…` com **modo multi-workspace** habilitado. Ele foi gravado corretamente (`multi_workspace_mode=true`, `target_workspace=null`, `credits=0`, `workspaces_total=null`) e atribuído ao bot. Porém:
 
-Novas colunas em `partner_credit_orders`:
+- O **app desktop (worker em Python)** ainda **não conhece** o novo endpoint `partner-shop-multi-workspace-tick`. Ele continua rodando o fluxo antigo, que olha para `target_workspace` / `credits`.
+- Como `credits = 0`, alguma rotina de fechamento (watchdog ou release_bot) executou `refund_order_remainder` e a função antiga concluiu: `v_farmed (0) >= v_order.credits (0)` → marcou o pedido como **`delivered`** instantaneamente, com 0 créditos farmados. Por isso "o farm não iniciou".
 
-- `multi_workspace_mode boolean not null default false` — liga o modo "varrer todos os ws".
-- `workspaces_total integer` — quantos ws o bot encontrou (preenchido pelo worker no início).
-- `workspaces_done integer not null default 0` — quantos já bateram 200 créditos.
-- `workspaces_plan jsonb` — `[{ name, status: 'pending'|'running'|'done'|'failed', farmed, started_at, finished_at, error }]`, atualizado pelo worker.
-- `current_workspace text` — nome do workspace que está rodando agora (substitui `target_workspace` durante o ciclo).
-- `price_cents_per_workspace integer` — preço por ws de 200 créditos (definido no momento da criação).
+Ou seja, há **duas frentes**: (1) blindar o backend para nunca auto-entregar pedidos multi-workspace antes do worker chamar `start`; (2) o desktop precisa ser atualizado para usar o novo contrato — só com isso o farm de fato roda.
 
-`target_workspace` continua existindo: no modo single segue como hoje; no modo multi fica `null` na criação e é espelhado em `current_workspace` a cada troca, para reaproveitar todo o código atual de progresso/`workspace_not_found`/watchdog.
+## O que vou implementar (lado Lovable)
 
-`credits` e `amount_cents` começam em `0` e são recalculados quando o worker reporta `workspaces_total` (ver §3): `credits = total*200`, `amount_cents = total * price_cents_per_workspace`.
+### 1. Migração SQL — guards no fluxo legado
+- `refund_order_remainder`: se `multi_workspace_mode = true` **e** `workspaces_total IS NULL` (worker ainda não iniciou), não fazer nada — apenas retornar 0 sem alterar status. Se `workspaces_total IS NOT NULL`, delegar ao tick (já é o caminho atual).
+- `release_bot(_success=true)`: se for pedido multi-workspace, **não** marcar como `delivered`; apenas devolver bot ao `idle` se a função tick já tiver finalizado (status já em `delivered/failed/canceled`). Caso contrário, ignora.
+- `assign_bot_to_order` / watchdog (`partner-shop-stalled-watchdog`): pular pedidos multi-workspace com `workspaces_total IS NULL` há menos de X minutos (sem timeout agressivo); para >X minutos sem `start`, marcar como `failed` com motivo `worker_did_not_start_multi_ws` e liberar bot.
+- Reabrir/limpar o pedido travado `2dd628c1…`: apagá-lo (já não consumiu cota) e liberar o bot — vou rodar via migração `DELETE` segura escopada por id.
 
-### 2. Frontend — `ManualOrderDialog.tsx`
+### 2. Edge function `partner-shop-create-manual-order`
+- Validar `pricePerWorkspaceCents >= 1` (hoje permite 0; o pedido criado tinha 0).
+- Persistir `credits = NULL` em vez de 0 quando multi-mode (evita match acidental com `v_farmed >= credits`). Caso o tipo da coluna não permita NULL, manter 0 mas confiar no guard SQL.
 
-Novo switch **"Farmar todos os workspaces do bot (200 cada)"**. Disponível **só quando um bot específico foi escolhido** (não no modo "Automático").
+### 3. UI
+- `ManualOrderDialog.tsx`: quando o switch "Farmar todos os workspaces" estiver ligado, exibir aviso amarelo claro:
+  > ⚠️ Requer desktop atualizado (versão com suporte a multi-workspace). Pedidos criados nesse modo ficam aguardando o worker enviar a lista de workspaces; o farm só inicia depois disso.
+- `Pedidos.tsx`: para pedidos multi com `workspaces_total IS NULL`, mostrar status "Aguardando worker iniciar (multi-ws)" em vez do estado genérico.
 
-Quando ligado:
-- Esconde o campo "Workspace alvo" e "Créditos".
-- Substitui o campo "Valor (R$)" por **"Valor por workspace (R$)"** com o mesmo input numérico.
-- Mostra um aviso: "O bot vai listar os workspaces dessa conta no Lovable e farmar 200 créditos em cada um, em ordem. Total de créditos e valor finais aparecem após o início."
-- Validação: `customerName`, `customerEmail`, `notes`, `pricePerWorkspaceReais`, `botId !== "auto"`.
+### 4. Documentação
+- Reforçar em `docs/desktop-updater.md` que **sem a atualização do worker, pedidos multi-workspace não rodam**, e adicionar exemplo Python mínimo: login → listar workspaces → POST `start` → loop `next/fail`.
 
-### 3. Edge function `partner-shop-create-manual-order`
+## O que precisa ser feito FORA do Lovable (responsabilidade sua)
 
-Aceita novos campos: `multiWorkspaceMode: boolean`, `pricePerWorkspaceCents: number`. Quando `true`:
+Atualizar o app desktop em Python para:
+1. Detectar `multi_workspace_mode === true` no payload do pedido.
+2. Logar na conta do bot, listar todos os workspaces.
+3. Chamar `POST /functions/v1/partner-shop-multi-workspace-tick` com `action: "start"` enviando a lista.
+4. Farmar 200 créditos no `currentWorkspace` recebido; ao terminar chamar `next` (ou `fail`); repetir até `done: true`.
 
-- Ignora `targetWorkspace`, `credits`, `amountCents` do payload.
-- Insere o pedido com `multi_workspace_mode=true`, `target_workspace=null`, `current_workspace=null`, `credits=0`, `amount_cents=0`, `workspaces_total=null`, `price_cents_per_workspace=pricePerWorkspaceCents`, `status='paid'`.
-- **Não** chama `debit_partner_quota` ainda — o débito vira responsabilidade do passo de "iniciar workspace" (§4), porque ainda não sabemos o total. A quota é checada de forma frouxa: rejeita se o parceiro tem `< 200` créditos restantes (precisa de pelo menos 1 ws).
-- Atribuição: como é sempre um bot específico, segue a lógica atual (claim atômico do bot ou queue).
+Sem isso, mesmo com os guards o farm continuará parado em "Aguardando worker iniciar".
 
-### 4. Nova edge function `partner-shop-multi-workspace-tick`
-
-Endpoint que o worker desktop chama em três momentos. Validação por fingerprint do bot (mesmo padrão de `partner-shop-confirm-invite` e `partner-shop-stop-order`).
-
-Ações:
-
-- **`action: "start"`** — payload `{ orderId, fingerprint, workspaces: string[] }`. O worker lista os ws da conta e envia. A função:
-  - Salva `workspaces_total = workspaces.length`, monta `workspaces_plan` com todos como `pending`, atualiza `credits = total*200`, `amount_cents = total * price_cents_per_workspace`.
-  - Marca o primeiro ws como `running`, escreve `current_workspace` e `target_workspace = ws[0]`.
-  - Debita a quota do parceiro em `total*200` via `debit_partner_quota` (uma única vez). Se quota insuficiente, ajusta `workspaces_total` para o que cabe e trunca o plano.
-  - Responde com o `currentWorkspace` que o worker deve farmar.
-
-- **`action: "next"`** — payload `{ orderId, fingerprint, finishedWorkspace, farmed }`. Marca o ws atual como `done` (com `farmed`), incrementa `workspaces_done`. Se sobrar ws `pending`, promove o próximo a `running` e atualiza `current_workspace` + `target_workspace`. Responde `{ next: "<nome>" }` ou `{ done: true }`.
-
-- **`action: "fail"`** — payload `{ orderId, fingerprint, workspace, reason }`. Marca o ws como `failed` com `error=reason`, incrementa `workspaces_done` (para parar de tentá-lo), passa para o próximo. Refund parcial só acontece no fim (ver abaixo).
-
-Quando não há mais ws:
-- Recalcula `credits` e `amount_cents` baseados no que efetivamente rodou (ws com status `done`), faz `refund_order_remainder` se sobrou (ws falhados/pulados), atualiza `status='delivered'`, `delivered_at=now()`, libera o bot (`status='idle'`, `current_order_id=null`) e chama `assign_next_queued_order`.
-
-### 5. Cancelar / parar — `partner-shop-stop-order`
-
-Comportamento já existe (`stop_requested_at`). Adicionamos no `tick`:
-
-- No início de cada `next`/`fail`, se `stop_requested_at` está setado, finaliza o pedido como `canceled`, conta o `farmed` do ws atual no total realizado, faz refund da diferença, libera o bot. (Ou seja: "para no ws atual e encerra".)
-
-### 6. Tela `Pedidos.tsx` — visualização
-
-Quando `multi_workspace_mode`:
-- Mostra "Workspace" como `current_workspace ?? "—"` com sufixo `· (X/Y workspaces)`.
-- No modal de detalhes, lista `workspaces_plan` em uma tabela compacta (nome, status, créditos farmados, erro).
-- Demais campos (progresso por execução) continuam funcionando sem mudança, porque já são filtrados por `target_workspace = current_workspace`.
-
-### 7. Worker desktop (contrato — fora deste repo)
-
-Documentado em `docs/desktop-updater.md` como adendo. Resumo do contrato:
-
-```text
-1. Recebe pedido com multi_workspace_mode=true.
-2. Faz login, lista todos os workspaces da conta.
-3. POST /partner-shop-multi-workspace-tick { action: "start", workspaces } → recebe currentWorkspace.
-4. Loop:
-   - Farma currentWorkspace até atingir 200 créditos (ou erro irrecuperável).
-   - Em sucesso: POST { action: "next", finishedWorkspace, farmed: 200 } → next | done.
-   - Em erro de ws: POST { action: "fail", workspace, reason } → next | done.
-5. Em done=true, encerra a sessão.
-```
-
-Não alteramos o código do worker neste plano (é projeto separado), só publicamos o contrato.
-
-### Detalhes técnicos
-
-- `assign_bot_to_order` não é usado nesse fluxo: o bot já é escolhido na criação.
-- `partner-shop-stalled-watchdog` continua funcionando porque sempre usa `target_workspace`, que estará espelhando o `current_workspace`.
-- `payment_events` (timeline do checkout) ganha um evento extra do tipo `workspace_advanced` por troca, gravado pelo `tick` para o admin acompanhar. Sem nova trigger — insert direto.
-- RLS de `payment_events` já restringe leitura ao admin; insert via service role no tick.
-- Status do pedido no fim:
-  - todos `done` → `delivered`
-  - parou por stop → `canceled` com `refunded_credits` da parte não farmada
-  - todos falharam → `failed` com `failed_reason='all_workspaces_failed'`
-
-### Fora do escopo
-- Mudar o worker desktop em si (só publicamos o contrato).
-- Aplicar esse modo em pedidos PIX/loja (só recarga manual, como pedido).
-- Pricing por workspace variável dentro do mesmo pedido — preço fixo por ws.
+## Fora de escopo
+- Implementar/alterar código do worker desktop (não está no projeto Lovable).
+- Mudar o fluxo single-workspace existente.

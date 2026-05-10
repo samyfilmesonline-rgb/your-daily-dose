@@ -1,52 +1,63 @@
-Auditoria das regras vs. código atual:
+## Problema
 
-Violações encontradas:
+Ao clicar em "Tentar novamente" no pedido `26798938...`, a Edge Function `partner-shop-retry-manual-order` retorna erro 400 com mensagem **"Nada a re-debitar (já entregue na prática)"**.
 
-- **Regra 1/5 (nunca usar `canceled`)** — `partner-shop-multi-workspace-tick` ainda faz `finalStatus = "canceled"` quando há `stop_requested_at`. A migração `refund_order_remainder` que rodei agora também escreve `'canceled'` em alguns ramos. Precisa virar sempre `refunded` quando houver stop.
-- **Regra 5 (limpar `current_workspace`/`target_workspace`)** — o tick não nula esses campos ao finalizar. A função SQL precisa nular também.
-- **Regra 7 (stop só preenche `stop_requested_at`)** — eu havia mudado `partner-shop-stop-order` para chamar `refund_order_remainder` direto em multi-ws. Isso viola a regra. Precisa só marcar `stop_requested_at` e deixar o tick (ou watchdog) finalizar.
-- **Regra 3 (action `fail` deve avançar quando não houver stop)** — atualmente o tick já avança no `fail` (vai para o próximo `pending`), então essa parte está ok. Mas convém deixar explícito que o `fail` com stop finaliza como `refunded`.
-- **Regra 5 (`refund_partner_quota`)** — o tick chama `refund_order_remainder` (que internamente roteia para `refund_partner_quota` quando `is_manual = true`). Mantém esse caminho desde que a função SQL respeite tudo.
+Causa: o pedido é **multi-workspace** (`multi_workspace_mode = true`, 2 workspaces, ambos terminaram como `failed`/`skipped` por parada manual), mas a função SQL `retry_manual_order` foi escrita só para o fluxo **single-workspace**:
 
-Plano de correção (sem tocar fluxo single-workspace):
+- usa `v_order.credits` (que em pedidos multi-ws é `0` — o custo está em `price_cents_per_workspace`)
+- usa `v_order.target_workspace` (NULL em multi-ws)
+- não reabre o `workspaces_plan` nem zera `workspaces_done`
+- chama `assign_bot_to_order` direto, ignorando o ciclo do `partner-shop-multi-workspace-tick`
 
-1) Edge Function `partner-shop-multi-workspace-tick`
-   - Trocar `finalStatus = "canceled"` por `finalStatus = "refunded"` quando `stopRequested`.
-   - No payload de update final, sempre setar `current_workspace = null` e `target_workspace = null`.
-   - Recalcular `workspaces_done` como `done + failed + skipped` (já é, mas garantir).
-   - Manter chamada a `refund_order_remainder` (que já cuida de quota/saldo, libera bot e pausa programação) e `assign_next_queued_order`.
-   - Garantir que o `action: "fail"` quando não há stop avança para o próximo `pending` (já avança, manter).
-   - Garantir que o `action: "fail"` com stop marque pendentes como `skipped`, finalize como `refunded` e libere bot.
+Resultado: `v_to_redebit = 0 − 0 − 0 = 0` → exceção.
 
-2) Edge Function `partner-shop-stop-order`
-   - Para multi-workspace: NÃO chamar `refund_order_remainder` direto. Apenas preencher `stop_requested_at` e retornar `{ ok: true, immediate: false, refundedCredits: 0 }`.
-   - Para single-workspace: manter o caminho legado (`stop_order_partial`).
-   - O watchdog continua sendo a rede de segurança quando o worker está morto.
+## O que fazer
 
-3) Função SQL `refund_order_remainder` (migração nova)
-   - Remover qualquer atribuição de `'canceled'`. No ramo multi-workspace, terminal só pode ser:
-     - `delivered` se `done_count >= total` e SEM stop.
-     - `failed` se `done_count = 0` e SEM stop.
-     - `refunded` em todo resto (qualquer stop OU done parcial).
-   - Sempre setar `current_workspace = NULL`, `target_workspace = NULL` no UPDATE final do multi-ws.
-   - Manter idempotência (já trata estados terminais).
-   - Manter roteamento de refund: `is_manual` → `refund_partner_quota`; senão saldo do cliente.
-   - Manter pausa da `partner_order_schedules` quando o pedido veio de uma programação e não terminou em `delivered`.
+Reescrever `retry_manual_order` para detectar `multi_workspace_mode` e, nesse caso, seguir um caminho próprio. O fluxo single-workspace continua igual.
 
-4) Watchdog `partner-shop-stalled-watchdog`
-   - Continua chamando `refund_order_remainder` (agora 100% compatível com as regras). Sem mudança lógica adicional.
+### Caminho multi-workspace
 
-5) Validação
-   - Conferir que enum `partner_order_status` aceita os valores listados (regra 1) — ok.
-   - Não criar nem alterar triggers; apenas a função SQL.
-   - Após mudanças, testar manualmente: parar pedido multi-ws → verificar `status = refunded`, `current_workspace = null`, `target_workspace = null`, bot `idle`.
+1. Validar status (`refunded` ou `failed`), `is_manual = true`, `delivered_at IS NULL`.
+2. Identificar no `workspaces_plan` os itens com `status IN ('failed','skipped')` — são os que precisam ser refeitos. Itens com `status = 'done'` permanecem intactos.
+3. Calcular créditos a re-debitar: `count(workspaces_a_refazer) * (price_cents_per_workspace_em_créditos)`. Como `partner_credit_orders` em multi-ws guarda `price_cents_per_workspace` e o custo do pacote, derivar créditos por workspace a partir do `pack` (`partner_credit_packs.credits / workspaces_total`) ou do `raw_payload.multiWorkspace.creditsPerWorkspace` (verificar qual está disponível — caso necessário, ler do pack via join).
+4. Validar cota do parceiro (`limite_creditos − creditos_consumidos >= total_a_redebitar`).
+5. Chamar `debit_partner_quota` com `reason = 'manual_retry_multi_ws'`.
+6. Resetar no plano cada workspace alvo: `status = 'pending'`, limpar `error`, `started_at`, `finished_at`, `farmed`. Manter os `done`.
+7. Recalcular `workspaces_done = count(status='done')`.
+8. UPDATE no pedido:
+   - `status = 'paid'`
+   - `assigned_bot_id = NULL`, `assigned_at = NULL`
+   - `current_workspace = NULL`, `target_workspace = NULL`
+   - `failed_reason = NULL`, `stop_requested_at = NULL`
+   - `refunded_credits = 0`
+   - `workspaces_plan` atualizado, `workspaces_done` recalculado
+   - registrar entrada em `raw_payload.manualOrder.retries` (mesmo padrão atual)
+9. **NÃO** chamar `assign_bot_to_order` diretamente. O `partner-shop-multi-workspace-tick` (cron) fará pickup do pedido em `paid` com `multi_workspace_mode=true` e atribuirá bot ao próximo workspace pendente.
+10. Retornar `{ ok: true, status: 'paid', multiWorkspace: true, redebited, workspacesToRetry: N }`.
 
-Arquivos afetados:
-- `supabase/functions/partner-shop-multi-workspace-tick/index.ts`
-- `supabase/functions/partner-shop-stop-order/index.ts`
-- 1 migração nova substituindo o corpo de `refund_order_remainder` (sem `canceled`, com cleanup de `current_workspace`/`target_workspace`).
+### Caminho single-workspace
 
-Fora de escopo:
-- Fluxo single-workspace.
-- Triggers e outras tabelas.
-- Loop de login do worker desktop (problema do app Python).
+Mantém-se o código atual sem alteração.
+
+## Regras preservadas (do contrato existente)
+
+- Nunca usar `'canceled'`.
+- Pedido terminal limpa `current_workspace`/`target_workspace` (continua válido — só estamos reabrindo).
+- `workspaces_done` sempre = contagem de `done` no plano.
+- `partner-shop-multi-workspace-tick` permanece a única fonte de avanço entre workspaces.
+
+## Arquivos
+
+- **Migration nova**: substitui o body de `public.retry_manual_order(uuid)` com o caminho multi-ws + caminho single-ws original. Sem mudanças em outras funções.
+- **Edge Function `partner-shop-retry-manual-order`**: nenhuma mudança (já delega tudo para a RPC).
+
+## Fora de escopo
+
+- Fluxo single-workspace
+- `partner-shop-multi-workspace-tick`, watchdog, stop-order
+- UI (a mensagem de erro do toast já vem do `error` retornado pela RPC)
+
+## Verificação após deploy
+
+Rodar contra o pedido `26798938-85bb-4d73-8db3-1ffae1d1cfea`:
+- esperar `status = 'paid'`, `workspaces_done = 0` (ambos os 2 falharam/foram skipped), 2 itens do plano com `status='pending'`, créditos debitados da cota do parceiro, e tick pegar o pedido na próxima execução.

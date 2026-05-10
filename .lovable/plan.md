@@ -1,43 +1,83 @@
+## Programação recorrente de pedidos multi-workspace
 
-## Diagnóstico
+Adicionar a possibilidade de transformar um pedido manual multi-workspace em uma **programação recorrente diária**: o mesmo conjunto de workspaces farma 200 créditos/dia automaticamente, no mesmo horário em que o pedido foi criado, durante X dias **ou** até uma data de término.
 
-Você criou o pedido `2dd628c1…` com **modo multi-workspace** habilitado. Ele foi gravado corretamente (`multi_workspace_mode=true`, `target_workspace=null`, `credits=0`, `workspaces_total=null`) e atribuído ao bot. Porém:
+---
 
-- O **app desktop (worker em Python)** ainda **não conhece** o novo endpoint `partner-shop-multi-workspace-tick`. Ele continua rodando o fluxo antigo, que olha para `target_workspace` / `credits`.
-- Como `credits = 0`, alguma rotina de fechamento (watchdog ou release_bot) executou `refund_order_remainder` e a função antiga concluiu: `v_farmed (0) >= v_order.credits (0)` → marcou o pedido como **`delivered`** instantaneamente, com 0 créditos farmados. Por isso "o farm não iniciou".
+### 1. Banco de dados
 
-Ou seja, há **duas frentes**: (1) blindar o backend para nunca auto-entregar pedidos multi-workspace antes do worker chamar `start`; (2) o desktop precisa ser atualizado para usar o novo contrato — só com isso o farm de fato roda.
+Nova tabela **`partner_order_schedules`** (uma "programação-mãe" que dispara pedidos-filhos diariamente):
 
-## O que vou implementar (lado Lovable)
+- `partner_id`, `bot_id`, `customer_*` (nome/email/whatsapp), `notes`
+- `workspaces` (jsonb array de nomes), `price_cents_per_workspace`
+- `start_at` (timestamptz — primeiro disparo, hora exata)
+- `end_mode` (`days` | `until_date`), `total_days` (int) ou `end_at` (timestamptz)
+- `daily_time` (time) — derivado de `start_at`, usado para próximos disparos
+- `status` (`active` | `paused` | `completed` | `canceled`)
+- `next_run_at`, `last_run_at`, `runs_completed` (int), `runs_failed` (int)
+- `created_by`, timestamps
 
-### 1. Migração SQL — guards no fluxo legado
-- `refund_order_remainder`: se `multi_workspace_mode = true` **e** `workspaces_total IS NULL` (worker ainda não iniciou), não fazer nada — apenas retornar 0 sem alterar status. Se `workspaces_total IS NOT NULL`, delegar ao tick (já é o caminho atual).
-- `release_bot(_success=true)`: se for pedido multi-workspace, **não** marcar como `delivered`; apenas devolver bot ao `idle` se a função tick já tiver finalizado (status já em `delivered/failed/canceled`). Caso contrário, ignora.
-- `assign_bot_to_order` / watchdog (`partner-shop-stalled-watchdog`): pular pedidos multi-workspace com `workspaces_total IS NULL` há menos de X minutos (sem timeout agressivo); para >X minutos sem `start`, marcar como `failed` com motivo `worker_did_not_start_multi_ws` e liberar bot.
-- Reabrir/limpar o pedido travado `2dd628c1…`: apagá-lo (já não consumiu cota) e liberar o bot — vou rodar via migração `DELETE` segura escopada por id.
+Nova coluna em **`partner_credit_orders`**:
+- `schedule_id uuid` (nullable) — referência à programação-mãe
+- `schedule_run_index int` (nullable) — qual dia da série este pedido representa
 
-### 2. Edge function `partner-shop-create-manual-order`
-- Validar `pricePerWorkspaceCents >= 1` (hoje permite 0; o pedido criado tinha 0).
-- Persistir `credits = NULL` em vez de 0 quando multi-mode (evita match acidental com `v_farmed >= credits`). Caso o tipo da coluna não permita NULL, manter 0 mas confiar no guard SQL.
+RLS: parceiro vê/edita só as próprias programações; admin vê tudo.
+
+Nenhum débito antecipado: cada disparo diário cria um pedido novo, debita `200 × nº workspaces` na hora (igual fluxo atual em `partner-shop-multi-workspace-tick action=start`). Se a quota não cobrir, marca o run como `failed_no_quota` e segue tentando no dia seguinte.
+
+### 2. Edge functions
+
+**`partner-shop-create-order-schedule`** (nova)
+- Recebe os mesmos campos do dialog atual de pedido manual + `endMode`, `totalDays` ou `endAt`
+- Valida bot, parceiro ativo, `pricePerWorkspaceCents >= 1`, ≥ 1 workspace
+- Cria a programação com `next_run_at = start_at` e `status = 'active'`
+- Opcionalmente já dispara o primeiro run se `start_at <= now()`
+
+**`partner-shop-schedule-tick`** (nova, chamada por cron a cada minuto)
+- Pega programações `active` com `next_run_at <= now()`
+- Para cada uma:
+  - Se atingiu `total_days` ou passou de `end_at` → `completed`
+  - Se bot ocupado → **enfileira o pedido** (cria com status `queued` no fluxo normal de `assign_bot_to_order`); o tick avança `next_run_at += 1 dia` mesmo assim
+  - Se bot livre → cria pedido multi-ws e chama o fluxo padrão (worker desktop pega via `multi-workspace-tick`)
+  - Atualiza `last_run_at`, `runs_completed`/`runs_failed`, `next_run_at = next_run_at + 1 day`
+
+Cron via `pg_cron` + `pg_net` (a cada 5 min).
+
+**`partner-shop-cancel-order-schedule`** (nova)
+- `status = 'canceled'`, não afeta pedidos-filhos já em execução
 
 ### 3. UI
-- `ManualOrderDialog.tsx`: quando o switch "Farmar todos os workspaces" estiver ligado, exibir aviso amarelo claro:
-  > ⚠️ Requer desktop atualizado (versão com suporte a multi-workspace). Pedidos criados nesse modo ficam aguardando o worker enviar a lista de workspaces; o farm só inicia depois disso.
-- `Pedidos.tsx`: para pedidos multi com `workspaces_total IS NULL`, mostrar status "Aguardando worker iniciar (multi-ws)" em vez do estado genérico.
+
+**`ManualOrderDialog.tsx`** — quando `multiWs` está ligado, adicionar um bloco "Programação recorrente":
+- Switch "Repetir diariamente"
+- Quando ligado: radio `Por X dias` / `Até data`
+  - Input numérico de dias (1–60) **ou** date picker (shadcn Calendar)
+- Texto fixo: "Disparo diário às HH:MM (mesmo horário da criação)"
+- Resumo: "Vai rodar N dias × M workspaces × 200 créditos = X créditos por dia, ~Y créditos no total se a quota permitir"
+
+Botão muda de "Criar pedido" para "Criar programação" quando recorrência está ligada.
+
+**Nova página `src/pages/dashboard/Programacoes.tsx`** (rota `/dashboard/programacoes`)
+- Lista programações com: cliente, bot, workspaces, próximo disparo, dia X/N, status, ações (pausar, retomar, cancelar)
+- Drill-down: ao clicar, lista os pedidos-filhos daquela programação
+
+**`Pedidos.tsx`** — badge "📅 Dia 3/7" quando pedido tem `schedule_id`.
+
+**`AppSidebar.tsx`** + `lib/sidebar-tabs.ts` — novo item "Programações" (atrás da mesma flag de permissão de Pedidos).
 
 ### 4. Documentação
-- Reforçar em `docs/desktop-updater.md` que **sem a atualização do worker, pedidos multi-workspace não rodam**, e adicionar exemplo Python mínimo: login → listar workspaces → POST `start` → loop `next/fail`.
 
-## O que precisa ser feito FORA do Lovable (responsabilidade sua)
+Atualizar `docs/desktop-updater.md`: nada muda no worker — cada run é um pedido multi-ws normal. A programação vive 100% no servidor.
 
-Atualizar o app desktop em Python para:
-1. Detectar `multi_workspace_mode === true` no payload do pedido.
-2. Logar na conta do bot, listar todos os workspaces.
-3. Chamar `POST /functions/v1/partner-shop-multi-workspace-tick` com `action: "start"` enviando a lista.
-4. Farmar 200 créditos no `currentWorkspace` recebido; ao terminar chamar `next` (ou `fail`); repetir até `done: true`.
+---
 
-Sem isso, mesmo com os guards o farm continuará parado em "Aguardando worker iniciar".
+### Decisões confirmadas
+- Modo de duração: ambos (X dias **ou** data de término)
+- Horário: mesmo do momento da criação
+- Cobrança: por execução diária (não reserva tudo no início)
+- Conflito de bot: enfileira como pedido normal e roda assim que possível
 
-## Fora de escopo
-- Implementar/alterar código do worker desktop (não está no projeto Lovable).
-- Mudar o fluxo single-workspace existente.
+### Fora de escopo
+- Programações com intervalo diferente de 24h (semanal, etc.)
+- Edição de workspaces/preço de uma programação ativa (apenas cancelar e recriar)
+- Notificações por email/whatsapp a cada run

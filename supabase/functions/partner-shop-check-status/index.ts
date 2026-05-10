@@ -179,6 +179,64 @@ Deno.serve(async (req) => {
       }));
     }
 
+    // Detecta workspace_not_found nos erros recentes do worker e falha o pedido
+    let workspaceNotFound = false;
+    let attemptedWorkspace: string | null = null;
+    {
+      const erroAtual = progress.currentExecution?.erro ?? "";
+      const recentErros = (progress.recent ?? []).map((r) => r.erro ?? "");
+      const allErros = [erroAtual, ...recentErros].filter(Boolean) as string[];
+      const hit = allErros.find((e) => e.includes("workspace_not_found"));
+      if (hit) {
+        workspaceNotFound = true;
+        const m = hit.match(/workspace_not_found:\s*alvo='([^']+)'/);
+        attemptedWorkspace = m?.[1] ?? order.target_workspace ?? null;
+      }
+    }
+
+    if (
+      workspaceNotFound &&
+      ["paid", "queued", "processing"].includes(String(status))
+    ) {
+      try {
+        await sb.rpc("refund_order_remainder", {
+          _order_id: order.id,
+          _reason: "workspace_not_found",
+        });
+        await sb
+          .from("partner_credit_orders")
+          .update({
+            status: "failed",
+            failed_reason: `workspace_not_found:${attemptedWorkspace ?? order.target_workspace ?? ""}`,
+          })
+          .eq("id", order.id)
+          .in("status", ["paid", "queued", "processing", "refunded"]);
+        if (assignedBotId) {
+          await sb
+            .from("farm_bots")
+            .update({ status: "idle", current_order_id: null, last_heartbeat_at: new Date().toISOString() })
+            .eq("id", assignedBotId)
+            .eq("current_order_id", order.id);
+        }
+        if (order.partner_id) {
+          await sb.rpc("assign_next_queued_order", { _partner_id: order.partner_id });
+        }
+        // Recarrega estado
+        const { data: after } = await sb
+          .from("partner_credit_orders")
+          .select("status, failed_reason, refunded_credits")
+          .eq("id", order.id)
+          .maybeSingle();
+        if (after) {
+          status = after.status;
+          order.failed_reason = after.failed_reason;
+          (order as { refunded_credits?: number }).refunded_credits = after.refunded_credits ?? 0;
+        }
+      } catch (e) {
+        console.warn("workspace_not_found auto-handle err", e);
+      }
+    }
+
     return new Response(
       JSON.stringify({
         status,
@@ -197,6 +255,8 @@ Deno.serve(async (req) => {
         balanceAppliedCredits: (order as { balance_applied_credits?: number }).balance_applied_credits ?? 0,
         balanceAppliedCents: (order as { balance_applied_cents?: number }).balance_applied_cents ?? 0,
         refundedCredits: (order as { refunded_credits?: number }).refunded_credits ?? 0,
+        workspaceNotFound,
+        attemptedWorkspace,
         progress,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }

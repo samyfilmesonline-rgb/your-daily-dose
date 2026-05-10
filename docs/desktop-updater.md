@@ -149,7 +149,20 @@ def main():
 
 ## Modo multi-workspace (recarga manual)
 
-Pedidos manuais podem ser criados com `multi_workspace_mode = true`. Nesse caso `target_workspace` começa nulo e o worker é responsável por listar todos os workspaces da conta e farmar 200 créditos em cada um, em ordem.
+Pedidos manuais podem ser criados com `multi_workspace_mode = true`. Nesse caso `target_workspace` começa nulo, `credits = 0`, e o worker é responsável por listar todos os workspaces da conta e farmar 200 créditos em cada um, em ordem.
+
+> ⚠️ **Sem o suporte abaixo no worker, esses pedidos NÃO RODAM.** O backend agora tem guard que impede o fluxo legado de marcar como `delivered` antes de `start`. O pedido fica em "processing / aguardando worker iniciar (multi-ws)" indefinidamente.
+
+### Detecção no worker
+
+Quando o worker recebe um pedido (via polling/realtime de `partner_credit_orders`), verifique:
+
+```python
+if order["multi_workspace_mode"]:
+    run_multi_workspace(order)
+else:
+    run_single_workspace(order)  # fluxo atual
+```
 
 Endpoint: `POST /functions/v1/partner-shop-multi-workspace-tick`
 
@@ -167,6 +180,48 @@ Contrato:
    - Erro: POST { action: "fail", orderId, fingerprint, workspace, reason }
      → idem
 5. Quando done=true, encerra a sessão.
+```
+
+### Esqueleto Python
+
+```python
+def run_multi_workspace(order):
+    login(order["bot_email"], order["bot_password"])
+    workspaces = list_all_workspaces()  # nomes, em ordem
+    r = post_tick({
+        "action": "start",
+        "orderId": order["id"],
+        "fingerprint": FINGERPRINT,
+        "workspaces": workspaces,
+    })
+    current = r["currentWorkspace"]
+    while current:
+        try:
+            farmed = farm_workspace(current, target=200)
+            r = post_tick({
+                "action": "next", "orderId": order["id"],
+                "fingerprint": FINGERPRINT,
+                "finishedWorkspace": current, "farmed": farmed,
+            })
+        except Exception as e:
+            r = post_tick({
+                "action": "fail", "orderId": order["id"],
+                "fingerprint": FINGERPRINT,
+                "workspace": current, "reason": str(e)[:400],
+            })
+        if r.get("done"):
+            break
+        current = r.get("next")
+
+def post_tick(body):
+    r = requests.post(
+        f"{SUPABASE_URL}/functions/v1/partner-shop-multi-workspace-tick",
+        json=body,
+        headers={"apikey": SUPABASE_ANON_KEY, "Authorization": f"Bearer {SUPABASE_ANON_KEY}"},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()
 ```
 
 Se o admin chamar `partner-shop-stop-order`, o tick detecta `stop_requested_at` na próxima troca, marca os ws restantes como `skipped`, faz refund da diferença e fecha o pedido como `canceled`.

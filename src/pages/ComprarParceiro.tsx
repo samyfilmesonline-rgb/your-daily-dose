@@ -247,6 +247,9 @@ export default function ComprarParceiro() {
   const [prefillOrderId, setPrefillOrderId] = useState<string | null>(null);
   const packsListRef = useRef<HTMLDivElement | null>(null);
 
+  // Modal "Usar meu saldo agora"
+  const [useBalanceOpen, setUseBalanceOpen] = useState(false);
+
   // Saldo de outro e-mail (Plano C) — só fingerprint
   const [crossOpen, setCrossOpen] = useState(false);
   const [crossEmail, setCrossEmail] = useState("");
@@ -612,11 +615,9 @@ export default function ComprarParceiro() {
               size="lg"
               className="bg-emerald-500 hover:bg-emerald-600 text-background font-bold w-full sm:w-auto"
               onClick={() => {
-                setTab("comprar");
                 setUseBalance(true);
-                setTimeout(() => {
-                  packsListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-                }, 100);
+                if (!history && !historyLoading) fetchHistory();
+                setUseBalanceOpen(true);
               }}
             >
               <Sparkles className="w-4 h-4 mr-2" />
@@ -786,7 +787,10 @@ export default function ComprarParceiro() {
                     Crédito gerado por pedidos não entregues integralmente. Use em um novo pedido para o mesmo e-mail ({customerBalance.email ?? "—"}) sem pagar de novo.
                   </div>
                 </div>
-                <Button size="sm" variant="outline" onClick={() => setTab("comprar")}>
+                <Button size="sm" variant="outline" onClick={() => {
+                  setUseBalance(true);
+                  setUseBalanceOpen(true);
+                }}>
                   Usar saldo
                 </Button>
                 <Button

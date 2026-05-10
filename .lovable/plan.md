@@ -1,82 +1,53 @@
 ## Objetivo
 
-No modal **"Seus dados"** (form de checkout), quando o cliente está refazendo um pedido (ou comprando com saldo aplicado), ajustar o botão final e adicionar um **aviso de saldo parcial** com duas opções claras quando o saldo não cobre o pacote inteiro.
+Quando o bot tentar farmar e não encontrar o workspace que o cliente digitou (erro `workspace_not_found` em `execucoes_lovable.erro`), o pedido deve falhar imediatamente, devolver 100% dos créditos para o saldo do email e abrir uma UI clara avisando o motivo, pedindo para revisar o nome do workspace (mostrando apenas a orientação — sem listar workspaces de terceiros).
 
-Hoje o botão mostra:
-- "Confirmar pedido GRÁTIS com saldo" — quando saldo ≥ pacote
-- "Gerar Pix" — em todo o resto (inclusive quando saldo cobre só uma parte)
+## O que muda
 
-O problema: quando o cliente tem 40 créditos e refaz pedido de 200, ele vê só "Gerar Pix" sem entender que está pagando só a diferença, e sem ter alternativa de fazer um pedido menor com o saldo que tem.
+### 1. Backend — `supabase/functions/partner-shop-check-status/index.ts`
 
----
+Após carregar `progress.currentExecution` (que já lê `execucoes_lovable.erro`), detectar a string `workspace_not_found`:
 
-## Mudanças
+- Se o pedido ainda está em `processing`/`queued`/`paid` E a execução mais recente contém `workspace_not_found`:
+  - Chamar `refund_order_remainder(_order_id, _reason: 'workspace_not_found')` para devolver o restante (ou tudo, se nada foi farmado) ao saldo do cliente.
+  - Marcar o pedido com `failed_reason = 'workspace_not_found'` e `status = 'failed'` (via update direto, pois o RPC de refund pode não tocar o status quando ainda há tempo).
+  - Liberar o bot (`farm_bots.status = 'idle'`, `current_order_id = null`) se ainda estiver atribuído ao pedido.
+  - Tentar `assign_next_queued_order` para o parceiro.
+- Adicionar campos no JSON de resposta:
+  - `workspaceNotFound: boolean`
+  - `attemptedWorkspace: string | null` (extraído do erro: `alvo='...'`)
+  - `failedReason` continua sendo retornado.
 
-### 1. Frontend — `src/pages/ComprarParceiro.tsx` (modal "Seus dados", linhas ~926–1013)
+Regex sugerida para extrair o alvo: `workspace_not_found:\s*alvo='([^']+)'`. A lista de "disponiveis" é descartada (não exposta ao cliente).
 
-**Detectar três cenários** com base em `selected.credits`, `totalAvailableBalance`, `useBalance`:
+### 2. Frontend — `src/pages/ComprarParceiro.tsx`
 
-- `fullCovered` — saldo ≥ créditos do pacote → 1 botão: **"Confirmar pedido GRÁTIS com saldo"** (igual hoje).
-- `partial` — `0 < saldo < pacote` → mostrar aviso âmbar e **2 botões**.
-- `noBalance` — saldo = 0 (ou `useBalance` desligado) → 1 botão: **"Gerar Pix"** (igual hoje).
+a) **Tipos**: estender `OrderState` com `workspaceNotFound?: boolean` e `attemptedWorkspace?: string | null`.
 
-**Aviso de saldo parcial** (acima do form, substitui/complementa o card verde de resumo quando for `partial`):
+b) **Tela "paid" (acompanhamento do farm)**: quando `order.workspaceNotFound === true`, substituir o painel atual de progresso por um aviso destacado (vermelho/âmbar) com:
+   - Título: "Workspace não encontrado"
+   - Texto: "O bot não encontrou o workspace **{attemptedWorkspace}** na sua conta Lovable. Confira se digitou o nome **exatamente igual** ao que aparece no Lovable (incluindo maiúsculas, minúsculas, espaços e acentos)."
+   - Aviso: "Seus {credits} créditos foram devolvidos ao saldo do email **{customerEmail}** e você já pode refazer o pedido com o nome correto."
+   - Botão primário: "Refazer pedido com nome correto" → abre o modal de refazer pré-preenchido (workspace, name, email, whatsapp), mas com o campo Workspace **vazio e em foco**, e dica visível abaixo do input: "Copie o nome exatamente como aparece no Lovable (case-sensitive)".
 
-```
-Você tem {saldo} créditos no seu saldo.
-Para o pedido de {pacote.credits} créditos faltam {diff} créditos.
-Pagando via Pix: R$ {valorRestante}
-```
-Estilo: `border-amber-500/40 bg-amber-500/5`, `font-mono`, ícone de alerta.
+c) **Histórico (lista de pedidos anteriores)**: pedidos com `failed_reason = 'workspace_not_found'` ganham um badge "Workspace não encontrado" e o botão "Refazer pedido" usa o mesmo fluxo do item (b).
 
-**Botões no caso `partial`** (substituem o botão único atual):
-1. **"Pagar R$ {valor} via Pix e completar o pedido"** — `type="submit"` (fluxo atual `submit()` já suporta saldo parcial; backend já calcula).
-2. **"Usar só meus {saldo} créditos (sem Pix)"** — `type="button"`, chama novo handler `submitBalanceOnly()` que faz POST em nova edge function `partner-shop-create-balance-only-order` com os mesmos campos do form (sem `packId`).
+d) **Form principal**: reforçar a dica abaixo do input Workspace (já existe um texto "Informe o nome **exato**...") com um exemplo curto: "Ex.: 'PRO 03' é diferente de 'pro 03' ou 'PRO  03'".
 
-Após sucesso de `submitBalanceOnly`: reaproveita o mesmo fluxo de `step="paid"` + `setActiveOrderId(order.id)` que já existe para pedido pago com saldo.
+### 3. Sem mudanças em
 
-### 2. Backend — nova edge function `partner-shop-create-balance-only-order`
+- Schema do banco (todos os campos necessários já existem: `failed_reason`, `refunded_credits`, `partner_customer_balances`).
+- RPCs (`refund_order_remainder` já existe e é usado pelo watchdog).
+- Watchdog (`partner-shop-stalled-watchdog`) — continua cobrindo casos de stall sem erro explícito.
 
-Cria pedido custom com a quantidade exata do saldo (sem Pix, sem pacote).
+## Fora de escopo
 
-**Body (zod):** `partnerId`, `customerName`, `customerEmail`, `customerWhatsapp`, `customerTaxId`, `targetWorkspace`, `clientFingerprint?`.
-
-**Lógica:**
-1. Validar CPF/CNPJ + WhatsApp (igual ao `partner-shop-create-pix`).
-2. Buscar saldo do cliente em `partner_customer_balances` por `(partner_id, customer_email)`.
-3. Validar `saldo > 0`. Se não, 400.
-4. Inserir em `partner_credit_orders`:
-   - `pack_id: null` (coluna já é nullable)
-   - `credits: saldo`
-   - `amount_cents: 0`
-   - `status: "paid"`, `paid_at: now()`
-   - `balance_applied_credits: saldo`, `balance_applied_cents: 0`
-   - demais campos do cliente + fingerprint
-5. Chamar `apply_balance_to_order` (RPC existente). Se 0, marcar `expired` e devolver 409.
-6. Chamar `assign_bot_to_order`.
-7. Retornar `{ orderId, paidWithBalance: true, credits: saldo }`.
-
-Sem mudanças em RLS nem em SQL — `pack_id` já aceita NULL e as RPCs já existem.
-
-### 3. Integração no frontend
-
-- Adicionar `submitBalanceOnly()` ao lado do `submit()` atual, reutilizando os mesmos states do form (name/email/whatsapp/taxId/workspace).
-- Após sucesso, mesmo comportamento de `paidWithBalance: true` que `submit()` faz: `setStep("paid")` + atualizar histórico.
-- Toast de confirmação: "Pedido de {N} créditos criado usando seu saldo."
-
----
+- Listar para o cliente os workspaces disponíveis na conta-mãe.
+- Validar o nome do workspace antes de criar o pedido (não temos acesso à conta Lovable do cliente).
+- Outros tipos de erro do worker (timeouts, falha de rede) — continuam tratados pelo watchdog/refund manual.
 
 ## Detalhes técnicos
 
-- O backend de Pix atual **já calcula corretamente** o caso parcial (`creditsToCharge = pack.credits - balanceToApply`), então o botão "Pagar via Pix" só precisa rotular melhor o valor final (`computePriceWithBalance(...).payCents`) — sem mudanças no edge function de Pix.
-- `pack_id` em `partner_credit_orders` é nullable, então pedido custom não quebra nada. O front-end de listagem (`partner-shop-list-orders`) e de display de cards já lida com `targetWorkspace`/`credits` direto da row, sem depender de `pack_id`.
-- Nova função entra como mais um `supabase.functions.invoke("partner-shop-create-balance-only-order", ...)` — deploy automático.
-- Se saldo for 0 ou form aberto sem refazer pedido, nada muda visualmente.
-
----
-
-## Fora do escopo
-
-- Não alterar o fluxo de Pix existente nem regras de saldo.
-- Não mudar pacotes do parceiro (continuam fixos).
-- Não mexer no modal "Usar meu saldo agora" (já feito antes).
+- O detector de `workspace_not_found` roda dentro de `partner-shop-check-status` porque essa função já é chamada em polling pelo frontend e já carrega `execucoes_lovable`. Isso garante que a falha seja detectada em até ~5s sem precisar de cron extra.
+- A atualização do pedido (`status='failed'`, `failed_reason`) é feita com guard `eq('status', currentStatus)` para evitar race com o webhook de pagamento.
+- O refund usa o RPC já existente, então o saldo do cliente é creditado de forma transacional e auditada em `partner_credit_ledger`.

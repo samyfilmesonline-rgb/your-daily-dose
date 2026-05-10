@@ -1,62 +1,49 @@
-# Ocultar processos internos do farm para o cliente final
+## Objetivo
 
-## Problema
+Trocar o comportamento do botão **"Usar meu saldo agora"** (banner verde do topo da página de compra). Hoje ele só rola a tela até os pacotes na aba "Comprar". O correto é abrir um **modal dedicado** que deixa o cliente:
 
-No painel "Farm em andamento" (modal de acompanhamento do pedido) e na lista de "Meus pedidos", o sistema está exibindo mensagens cruas vindas do bot — incluindo termos como `billing`, `stripe`, `login`, nomes de páginas internas, mensagens do Lovable, stack traces e textos de erro do gateway. Isso revela o método de farm para o cliente.
+1. **Refazer o pedido reembolsado** que originou o saldo (mesmos dados, saldo aplicado), ou
+2. **Fazer um novo pedido** com o saldo já aplicado, escolhendo qualquer pacote.
 
-O cliente final só pode saber **que algo está acontecendo** e **quanto já foi farmado** — nunca **como**.
+O fluxo de compra/checkout em si não muda — só o ponto de entrada.
 
-## O que será alterado (somente UI / `src/pages/ComprarParceiro.tsx`)
+---
 
-Nada de backend, schema, edge functions ou lógica de pedido muda. Só o que é renderizado.
+## Mudanças
 
-### 1. Painel "Farm em andamento" (modal de tracking)
+### 1. Novo modal `UseBalanceDialog` (em `src/pages/ComprarParceiro.tsx`)
 
-Substituir as mensagens cruas por rótulos neutros estilo hacker, em verde mono:
+- Abre via novo state `useBalanceOpen`.
+- Cabeçalho hacker-mono mostrando saldo: `{totalAvailableBalance} créditos · vinculado a {email}`.
+- Duas seções:
+  - **"Refazer um pedido anterior"** — lista os pedidos do `history` com `refundedCredits > 0` (ordenados do mais recente). Cada item mostra: pacote (créditos), data, créditos reembolsados. Botão **"Refazer este pedido"** chama `reorderFromHistory(item)` (já pré-preenche tudo e aplica saldo) e fecha o modal.
+  - **"Fazer um novo pedido"** — grade compacta dos `packs` ativos. Cada card mostra créditos, preço original, **preço final com saldo aplicado** (usa `computePriceWithBalance`). Clicar seleciona o pacote: `setSelected(p)`, `setUseBalance(true)`, `setStep("form")`, fecha o modal.
+- Se `history` ainda não carregou, dispara `fetchHistory()` ao abrir e mostra skeleton enquanto carrega.
+- Se não houver pedido reembolsado no histórico (saldo veio de transferência/outro e-mail), esconde a primeira seção e mantém só a de novo pedido.
+- Estilo segue tokens do design system existente (verde esmeralda + `font-mono`, bordas `border-emerald-500/40`).
 
-- `status === "em_andamento"` → continua "farmando…" (ok)
-- `status === "limite"` → trocar `"Lovable bloqueou — próxima tentativa automática"` por algo neutro tipo **"cooldown ativo — re-tentando…"** (sem citar Lovable).
-- `status === "sucesso" / "concluido"` → manter `+N créditos nesta tentativa` (não vaza método).
-- `status === "falha" / "erro"` → **NÃO** mostrar o `erro` cru. Trocar por mensagem genérica: **"tentativa instável — reagendando…"** em verde/âmbar.
-- Remover por completo o bloco que renderiza `progress.currentExecution.erro` quando o status não é falha (linha ~1969-1973).
-- Na lista `progress.recent` (`<details> Ver últimas tentativas`): remover a renderização de `r.erro`. Mostrar só ícone + créditos + tempo.
+### 2. Botão "Usar meu saldo agora" (linha ~611)
 
-### 2. Mensagens "vivas" estilo hacker (opcional, melhora a UX)
+- Substituir o `onClick` atual (`setTab("comprar") + scroll`) por `setUseBalanceOpen(true)`.
 
-Enquanto `currentExecution.status === "em_andamento"`, ciclar a cada ~2s por uma lista fixa de frases neutras em verde mono, dando sensação de atividade sem revelar nada:
+### 3. Botão "Usar saldo" da aba Pedidos (linha ~789)
 
-```
-> conectando nó…
-> sincronizando sessão…
-> injetando rotina de farm…
-> coletando créditos…
-> validando saldo…
-```
+- Trocar `onClick={() => setTab("comprar")}` para também abrir o mesmo modal (`setUseBalanceOpen(true)`), garantindo consistência.
 
-Frases 100% genéricas — nada de "billing", "stripe", "login", "lovable", "página X". Implementado com `useEffect` + `setInterval` local no componente do painel.
-
-### 3. Lista "Meus pedidos" (cards de cada pedido)
-
-Linha ~1597: `Bot: {o.progress.lastMessage}` — está imprimindo a mensagem crua do bot. Trocar por rótulo curto baseado em `lastStatus`:
-
-- `sucesso/concluido` → "última tentativa: sucesso"
-- `limite` → "em cooldown"
-- `falha/erro` → "reagendando tentativa"
-- `em_andamento` → "farmando…"
-
-Nunca renderizar `lastMessage` cru. Remover o `title={o.progress.lastMessage}` do tooltip também.
-
-### 4. Bloco "failedReason" do pedido
-
-Linha ~1602: `{o.status === "failed" && o.failedReason && (...)`. Substituir o texto cru por mensagem padronizada do tipo **"Não foi possível concluir o farm. Saldo creditado para sua próxima compra."** — sem detalhar motivo técnico.
+---
 
 ## Detalhes técnicos
 
-- Arquivo único alterado: `src/pages/ComprarParceiro.tsx`.
-- Cores: usar tokens já existentes (`text-emerald-400`, `text-amber-400`, `text-destructive`, `font-mono`) — combina com o tema hacker matrix.
-- Os campos `erro` e `lastMessage` continuam vindo do backend (não removidos do payload), só não são exibidos. Útil para futura tela de admin.
-- Manter o bloco do "convide o bot no workspace Lovable" intacto — é instrução obrigatória para o cliente.
+- O state `useBalance` continua sendo aplicado automaticamente nas duas opções, então o cálculo de Pix/saldo no formulário não muda.
+- `reorderFromHistory` já existe e já cobre o caso "mesmo pacote + dados do cliente preenchidos" — apenas é reutilizado.
+- Para novo pedido, não pré-preencher dados do cliente: usa o estado atual do form (ou vazio), igual ao fluxo normal de seleção de pacote.
+- Componente novo fica dentro do mesmo arquivo (`ComprarParceiro.tsx`) usando `Dialog` do shadcn já importado.
+- Sem mudanças em edge functions, types ou backend.
 
-## Verificação
+---
 
-Após o patch: abrir um pedido `processing` no modal e na lista, confirmar que nenhuma string técnica (`billing`, `stripe`, `login`, `Lovable bloqueou`, stack trace, URL, etc.) aparece — só rótulos curtos neutros em verde.
+## Fora do escopo
+
+- Não mexer em nada de farm/processamento.
+- Não mudar o cálculo de saldo nem regras de reembolso.
+- Não alterar o botão "Resgatar agora" (resgate em workspace), que é fluxo diferente.

@@ -941,10 +941,20 @@ export default function ComprarParceiro() {
               </div>
             </div>
           )}
-          {selected && totalAvailableBalance > 0 && (() => {
+          {selected && totalAvailableBalance > 0 && useBalance && (() => {
             const c = computePriceWithBalance(selected.credits, selected.price_cents, totalAvailableBalance);
+            const isPartial = totalAvailableBalance < selected.credits && totalAvailableBalance > 0;
+            const missing = Math.max(0, selected.credits - totalAvailableBalance);
             return (
-              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs">
+              <div className={`rounded-lg border p-3 text-xs ${isPartial ? "border-amber-500/40 bg-amber-500/5" : "border-emerald-500/30 bg-emerald-500/5"}`}>
+                {isPartial && (
+                  <div className="flex items-start gap-1.5 mb-2 pb-2 border-b border-amber-500/20">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />
+                    <div className="font-mono text-[11px] text-amber-200/90">
+                      Saldo parcial: você tem <span className="font-bold">{totalAvailableBalance}</span> créditos, faltam <span className="font-bold">{missing}</span> para o pedido de {selected.credits}.
+                    </div>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Pacote</span>
                   <span className="font-mono">{selected.credits} cr · {brl(selected.price_cents)}</span>
@@ -1001,15 +1011,55 @@ export default function ComprarParceiro() {
                 Informe o nome <strong>exato</strong> do workspace Lovable onde os créditos devem ser adicionados.
               </p>
             </div>
-            <Button type="submit" className="w-full" size="lg" disabled={submitting}>
-              {submitting ? (
-                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Gerando pedido...</>
-              ) : selected && totalAvailableBalance >= selected.credits && useBalance ? (
-                <>Confirmar pedido GRÁTIS com saldo</>
-              ) : (
-                "Gerar Pix"
-              )}
-            </Button>
+            {(() => {
+              if (!selected) return null;
+              const fullCovered = useBalance && totalAvailableBalance >= selected.credits;
+              const isPartial = useBalance && totalAvailableBalance > 0 && totalAvailableBalance < selected.credits;
+              if (fullCovered) {
+                return (
+                  <Button type="submit" className="w-full" size="lg" disabled={submitting}>
+                    {submitting ? (
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Gerando pedido...</>
+                    ) : (
+                      <>Confirmar pedido GRÁTIS com saldo</>
+                    )}
+                  </Button>
+                );
+              }
+              if (isPartial) {
+                const c = computePriceWithBalance(selected.credits, selected.price_cents, totalAvailableBalance);
+                return (
+                  <div className="space-y-2">
+                    <Button type="submit" className="w-full" size="lg" disabled={submitting}>
+                      {submitting ? (
+                        <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Gerando pedido...</>
+                      ) : (
+                        <>Pagar {brl(c.payCents)} via Pix e completar o pedido</>
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
+                      size="lg"
+                      disabled={submitting}
+                      onClick={() => submitBalanceOnly()}
+                    >
+                      Usar só meus {totalAvailableBalance} créditos (sem Pix)
+                    </Button>
+                  </div>
+                );
+              }
+              return (
+                <Button type="submit" className="w-full" size="lg" disabled={submitting}>
+                  {submitting ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Gerando pedido...</>
+                  ) : (
+                    "Gerar Pix"
+                  )}
+                </Button>
+              );
+            })()}
           </form>
         </DialogContent>
       </Dialog>

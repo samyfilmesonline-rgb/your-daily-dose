@@ -1,46 +1,48 @@
-## O que aconteceu
+Diagnóstico confirmado:
 
-O pedido `00e21be9` (multi-workspace, criado pela programação `3cf4042a`) foi atribuído ao bot, mas o worker no desktop entrou em loop (abre/fecha o navegador) e **nunca chegou a chamar `start`** no `partner-shop-multi-workspace-tick`. Resultado no banco: `workspaces_total = NULL`, `workspaces_done = 0`, `current_workspace = NULL`, `status = processing`, `stop_requested_at = 21:05:42`.
+- Pedido atual: `26798938-85bb-4d73-8db3-1ffae1d1cfea` está `processing`, `workspaces_done = 0/2`, parado no workspace `close's Lovablee`, com `stop_requested_at` preenchido.
+- Existe execução com erro para esse workspace: `Pedido interrompido: parada solicitada no Supabase`, mas o worker não chamou `partner-shop-multi-workspace-tick` com `action: "fail"` depois disso.
+- O bot já foi liberado (`farm_bots.status = idle`), mas o pedido continuou `processing`.
+- Causa principal: a função SQL `refund_order_remainder` ainda tem um guard antigo que faz `RETURN 0` para qualquer pedido `multi_workspace_mode = true`. Então `partner-shop-stop-order` tenta refundar/parar, mas o banco ignora multi-ws e deixa o pedido aberto.
+- Segundo problema: quando o worker registra falha em `execucoes_lovable`, mas não chama o tick `fail`, o backend não converte essa falha em avanço para o próximo workspace nem em encerramento.
 
-A função `partner-shop-stop-order` só marca `stop_requested_at` e **espera o worker chamar a próxima tick para refundar e liberar o bot**. Como o worker está crashando, o "Parar" fica eternamente sem efeito e o pedido trava.
+Plano de correção:
 
-O `partner-shop-stalled-watchdog` também não resgata esse caso: ele só procura atividade em `execucoes_lovable` filtrando por `target_workspace` (que é `NULL` em multi-ws), então sempre conclui "still_progressing" e ignora.
+1. Corrigir `refund_order_remainder` para pedidos multi-workspace
+   - Remover o bloqueio que ignora todo pedido `multi_workspace_mode = true`.
+   - Calcular créditos já entregues pelo `workspaces_plan` e/ou execuções registradas.
+   - Se o pedido foi parado antes de concluir qualquer workspace, marcar como `refunded`, devolver o saldo/cota corretamente e liberar o bot.
+   - Manter idempotência para não creditar duas vezes se a função for chamada de novo.
 
-## Correções
+2. Corrigir `partner-shop-stop-order`
+   - Para multi-ws com `workspaces_done = 0` ou `stop_requested_at` recente/antigo, encerrar imediatamente como `refunded`/`canceled` em vez de depender do worker.
+   - Para multi-ws já em progresso, manter a parada graciosa apenas quando houver workspace concluído e worker ativo; caso contrário encerrar direto.
+   - Retornar `immediate: true` e `refundedCredits` reais para o front.
 
-### 1. `partner-shop-stop-order` — parar de verdade quando dá pra parar agora
+3. Melhorar `partner-shop-stalled-watchdog`
+   - Detectar pedidos multi-ws onde o bot já está `idle` mas o pedido continua `processing`.
+   - Detectar execução em `execucoes_lovable` com `status = falha` no workspace atual sem tick `fail` correspondente.
+   - Nesses casos: se houver próximo workspace pendente, avançar o `workspaces_plan` para o próximo; se houve stop solicitado, encerrar e refundar.
+   - Pausar a programação quando o pedido veio de `schedule_id` e falhou/parou.
 
-Lógica nova no edge function:
+4. Fortalecer `partner-shop-multi-workspace-tick`
+   - No `action: fail`, garantir que o workspace atual vire `failed` e o próximo `pending` vire `running`.
+   - Se `stop_requested_at` estiver preenchido, marcar pendentes como `skipped`, refundar o restante e finalizar o pedido.
+   - Atualizar contador da programação (`runs_failed`/`runs_completed`) de forma consistente.
 
-- Se `multi_workspace_mode = true` **e** (`workspaces_total IS NULL` ou `workspaces_done = 0` ou `assigned_at` há mais de ~2 min sem progresso): chama direto `refund_order_remainder(_reason: 'stopped_by_customer_pre_start')`. Isso já libera o bot (vira idle), reembolsa 100% (saldo do cliente para PIX, cota do parceiro para manual) e fecha como `refunded`.
-- Caso contrário (worker já começou e está farmando): mantém o comportamento atual (só marca `stop_requested_at`, o tick conclui na próxima troca de workspace).
+5. Limpeza do pedido atual
+   - Rodar uma migração one-shot para encerrar o pedido `26798938-85bb-4d73-8db3-1ffae1d1cfea`, devolver os créditos restantes, liberar qualquer vínculo residual do bot e pausar a programação `f5a92a5d-cea7-4d3d-8440-b63d3442941f`.
 
-### 2. `partner-shop-stalled-watchdog` — detectar travas multi-ws
+Arquivos/funções afetados:
 
-Adiciona um segundo passo no loop, só para multi-ws:
+- Migração SQL: atualizar `refund_order_remainder` e limpar o pedido atual.
+- `supabase/functions/partner-shop-stop-order/index.ts`
+- `supabase/functions/partner-shop-stalled-watchdog/index.ts`
+- `supabase/functions/partner-shop-multi-workspace-tick/index.ts`
 
-- Se `multi_workspace_mode = true` e (`workspaces_total IS NULL` ou (`workspaces_done = 0` e nenhuma execução `execucoes_lovable` desde `assigned_at` para o `email_lovable` do bot, **independente** de workspace), e `assigned_at < cutoffStall`): refunda + libera o bot.
-- Se `stop_requested_at IS NOT NULL` e passou ~2 min sem progresso: refunda + libera. Isso vale também para single-ws.
+Resultado esperado:
 
-### 3. Pausar automaticamente a programação quando o run falha
-
-No `partner-shop-multi-workspace-tick` (action `fail`) e no novo caminho do watchdog: se o pedido tinha `schedule_id`, incrementar `runs_failed` na `partner_order_schedules`. Se 2 falhas consecutivas (ou seja, sem `runs_completed` novo entre elas), setar `status = 'paused'` na programação e gravar uma `failed_reason` legível. Evita que amanhã rode de novo travando outro bot.
-
-### 4. Limpar o pedido atual (one-shot via SQL)
-
-Rodar `refund_order_remainder('00e21be9-...', 'stopped_by_customer_manual_cleanup')` para liberar o bot agora. Pausar a programação `3cf4042a-...` para o usuário decidir o que fazer.
-
-### 5. UI
-
-Sem mudanças visuais — o botão "Parar" já existe. Só passa a funcionar instantaneamente nesse cenário. Opcional: toast mostra "Reembolsado X créditos" usando o `refundedCredits` que o endpoint já retorna.
-
-## Arquivos afetados
-
-- `supabase/functions/partner-shop-stop-order/index.ts` — lógica de parar imediato.
-- `supabase/functions/partner-shop-stalled-watchdog/index.ts` — detecção multi-ws e stop_requested_at parado.
-- `supabase/functions/partner-shop-multi-workspace-tick/index.ts` — incrementa contador de falhas no schedule.
-- Migration nova: função opcional `pause_schedule_after_failures(uuid)` (helper) e cleanup do pedido travado.
-
-## Fora de escopo
-
-- Investigar por que o worker desktop está em loop de login (precisa logs do app Python). O backend agora vai destravar sozinho mesmo se o worker continuar quebrado.
+- Ao clicar em “Parar”, o pedido multi-workspace não fica mais preso em `processing`.
+- Se o primeiro workspace der erro e o worker não chamar `fail`, o watchdog recupera o estado.
+- Se o worker chamar `fail`, o backend pula para o próximo workspace automaticamente.
+- Se houver parada solicitada, o pedido fecha e reembolsa sem depender do navegador/worker continuar vivo.

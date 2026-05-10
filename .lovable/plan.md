@@ -1,59 +1,38 @@
-## Objetivo
+## Problema
 
-Quando um workspace retornar `workspace_ineligible:` (após 3 tentativas de PRO/downgrade no worker), o pedido multi-workspace deve marcar aquele item como inapto/pulado, avançar automaticamente para o próximo `pending`, e exibir corretamente no painel — sem travar em "Aguardando worker iniciar" e sem usar status `canceled`.
+Ao clicar em **"Tentar novamente"** num pedido multi-workspace, o pedido volta para `paid` mas nada acontece — fica parado, sem bot atribuído e sem worker processando.
 
-## Mudanças
+Causa raiz: na função `retry_manual_order` (migração `20260510220457`), o caminho multi-workspace:
 
-### 1. Edge Function `partner-shop-multi-workspace-tick` (ajustes pontuais)
+- Faz UPDATE para `status = 'paid'`, zera `assigned_bot_id`, `current_workspace`, `target_workspace`.
+- **Mas nunca chama `assign_bot_to_order(_order_id)`** (o caminho single-workspace chama).
+- E como `workspaces_total` continua preenchido e `current_workspace` fica nulo, mesmo se algum worker pegasse, a edge `partner-shop-multi-workspace-tick` action=start responderia `alreadyStarted` com `currentWorkspace: null`, deixando o worker sem saber qual workspace abrir.
 
-Manter a estrutura atual (start/next/fail). Ajustes:
+## Correção (apenas migração)
 
-- **`action: "fail"`**: já marca `plan[idx].status = 'failed'` e grava `plan[idx].error = b.reason`. Garantir que mensagens iniciadas por `workspace_ineligible:` são preservadas tal como vieram do worker (sem normalização). Após o fail, a lógica compartilhada já promove o próximo `pending` para `running` e atualiza `current_workspace` / `target_workspace` / `workspaces_done`. Confirmar que isso também ocorre quando o erro é `workspace_ineligible:` (nada a alterar nesse ponto, só garantir nos testes).
-- **Status final** (regra atualizada conforme pedido):
-  - `stopRequested` → `refunded` (mantém)
-  - `doneCount === 0` → `failed`
-  - `doneCount >= 1` → `delivered` (NOVO: hoje cai em `refunded` quando há mistura done+failed; passar a tratar qualquer sucesso parcial como `delivered`)
-  - Continuar chamando `refund_order_remainder` para devolver créditos não usados, independentemente do status final
-  - Continuar limpando `current_workspace = null` / `target_workspace = null` ao finalizar
-  - Nunca emitir `canceled`
-- Nenhuma mudança em quota, debit, schedule ou liberação de bot.
+Nova migração que reescreve `retry_manual_order` no trecho multi-workspace para:
 
-### 2. Frontend `src/pages/dashboard/Pedidos.tsx` (lista de workspaces no detalhe)
+1. **Reconstruir o plano** mantendo `done` e marcando o restante como `pending` (igual hoje), porém:
+   - Definir o **primeiro item pending como `running`**, com `started_at = now()`.
+   - Atualizar `current_workspace = target_workspace = <nome do primeiro pending>`.
+2. Manter o re-debit dos créditos restantes (`v_to_retry * 200`) e o append em `manualOrder.retries`.
+3. Após o UPDATE, chamar `public.assign_bot_to_order(_order_id)` (mesmo padrão do single-workspace). Isso atomicamente:
+   - Encontra um bot sticky/livre, marca-o `busy`, define `assigned_bot_id` e move o pedido para `processing`.
+   - Se nenhum bot disponível, deixa o pedido em `queued` (o watchdog/queue cuida depois).
+4. Retornar `assignedBotId` no JSON, igual ao single-ws.
 
-No bloco que renderiza `detail.workspaces_plan` (linhas 444–474):
+Quando o worker correspondente fizer polling e chamar `action=start`, a edge devolverá `alreadyStarted=true` já com `currentWorkspace` correto, e o ciclo `next/fail` segue normalmente — incluindo o tratamento de `workspace_ineligible:` recém-implementado.
 
-- Adicionar tipo `'skipped'` ao item.
-- Detectar `ineligible` quando `w.status === 'failed'` e `w.error?.startsWith('workspace_ineligible:')`.
-- Mapa de label/cor:
-  - `done` → "concluído", `text-primary`
-  - `running` → "em andamento", `text-amber-400`
-  - `pending` → "aguardando", `text-muted-foreground`
-  - `failed` ineligible → "inapto · pulado", `text-amber-500` (badge informativo, não destrutivo)
-  - `failed` comum → "falhou", `text-destructive` (mostrar tooltip/title com `w.error`)
-  - `skipped` → "ignorado", `text-muted-foreground`
-- Mostrar `w.error` como `title` no item quando houver, para inspeção rápida.
-- Atualizar o cabeçalho do bloco para contar finalizados (done+failed+skipped) sobre o total — já é o que `workspaces_done` representa após a edge atualizar.
+## Não mexer
 
-### 3. Mensagem "Aguardando worker iniciar"
-
-Localizar a string que mostra esse aviso (não foi vista no trecho lido — confirmar local em `Pedidos.tsx`/cards de progresso) e:
-
-- No modo multi-workspace, considerar que o worker já iniciou quando `workspaces_total != null` OU existe algum item em `workspaces_plan` com `status !== 'pending'`. Nesse caso não exibir mais o aviso.
-- Continuar mostrando para single-workspace conforme hoje.
-
-### 4. Tipos
-
-Atualizar a tipagem local de `workspaces_plan` em `Pedidos.tsx` para incluir `'skipped'` e o campo `error: string | null`.
-
-## Não-mexer
-
+- `partner-shop-multi-workspace-tick/index.ts` (já está correto).
+- Frontend (`Pedidos.tsx`): o botão "Tentar novamente" continua chamando a edge `partner-shop-retry-manual-order` que invoca a RPC.
 - Worker desktop Python.
-- Fluxo single-workspace (`partner-shop-check-status`, `retry_manual_order` single, etc.).
-- Enum `partner_order_status` no banco (continua sem `canceled`; finalização manual usa `refunded`).
-- Triggers/migrations existentes que limpam `current_workspace`/`target_workspace` em estados terminais.
+- Caminho single-workspace de `retry_manual_order`.
+- Enum `partner_order_status` (continuamos sem `canceled`; usamos `paid → processing`).
 
 ## Verificação
 
-- Pedido com 3 workspaces, 1º retorna `workspace_ineligible:no_pro_button` via `action=fail`: 2º vira `running`, painel mostra 1º como "inapto · pulado", contador 1/3 → ao fim, se 2º e 3º entregam, status `delivered`; se ambos falharem também, `failed`.
-- Pedido parado manualmente: status `refunded`, restantes `skipped`.
-- Aviso "Aguardando worker iniciar" some assim que `workspaces_total` é preenchido pelo `start`.
+- Pedido multi-ws em `refunded` ou `failed` com 1+ workspace `pending`/`failed`/`skipped`: clicar em "Tentar novamente" → pedido vai para `processing` (ou `queued` se nenhum bot livre), `assigned_bot_id` preenchido, `current_workspace` = primeiro pending, plan correto.
+- Worker reabre a sessão, faz `action=start` → recebe `alreadyStarted` com o workspace correto e segue o fluxo normal.
+- Pedido sem nada a refazer (todos `done`): mantém erro `Nada a refazer`.

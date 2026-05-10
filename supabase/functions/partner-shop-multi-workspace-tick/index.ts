@@ -258,9 +258,10 @@ Deno.serve(async (req) => {
       finalCredits = farmedTotal;
       finalAmountCents = doneCount * pricePer;
 
-      if (stopRequested) finalStatus = "canceled";
+      if (stopRequested) finalStatus = "refunded";
       else if (doneCount === 0) finalStatus = "failed";
-      else finalStatus = "delivered";
+      else if (doneCount >= plan.length) finalStatus = "delivered";
+      else finalStatus = "refunded";
 
       // refund da diferença (créditos que sobraram do que foi debitado mas não rodaram)
       try {
@@ -286,8 +287,13 @@ Deno.serve(async (req) => {
       updatePayload["credits"] = finalCredits;
       updatePayload["amount_cents"] = finalAmountCents;
       updatePayload["delivered_at"] = finalStatus === "delivered" ? nowIso : null;
+      updatePayload["current_workspace"] = null;
+      updatePayload["target_workspace"] = null;
       if (finalStatus === "failed") {
         updatePayload["failed_reason"] = "all_workspaces_failed";
+      }
+      if (finalStatus === "refunded") {
+        updatePayload["failed_reason"] = stopRequested ? "stopped_by_customer" : "partial_refund";
       }
     }
 

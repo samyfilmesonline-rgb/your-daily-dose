@@ -39,6 +39,16 @@ type Order = {
   failed_reason: string | null;
   created_at: string;
   raw_payload: Record<string, unknown> | null;
+  multi_workspace_mode?: boolean | null;
+  workspaces_total?: number | null;
+  workspaces_done?: number | null;
+  current_workspace?: string | null;
+  workspaces_plan?: Array<{
+    name: string;
+    status: "pending" | "running" | "done" | "failed" | "skipped";
+    farmed: number;
+    error: string | null;
+  }> | null;
 };
 
 type BotMini = {

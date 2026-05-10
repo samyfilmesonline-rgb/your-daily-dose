@@ -1970,24 +1970,20 @@ function OrderTrackingInline({
               <div className="font-mono">
                 {progress.currentExecution.status === "em_andamento" && (
                   <span className="inline-flex items-center gap-1 text-emerald-400">
-                    <Loader2 className="w-3 h-3 animate-spin" /> farmando…
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>{HACKER_TICKS[tickIdx]}</span>
                   </span>
                 )}
                 {progress.currentExecution.status === "limite" && (
-                  <span className="text-amber-400">Lovable bloqueou — próxima tentativa automática</span>
+                  <span className="text-amber-400">cooldown ativo — re-tentando…</span>
                 )}
                 {(progress.currentExecution.status === "sucesso" || progress.currentExecution.status === "concluido") && (
                   <span className="text-emerald-400">+{progress.currentExecution.creditosAdicionados ?? 0} créditos nesta tentativa</span>
                 )}
                 {(progress.currentExecution.status === "falha" || progress.currentExecution.status === "erro") && (
-                  <span className="text-destructive">Falhou: {progress.currentExecution.erro ?? "erro"}</span>
+                  <span className="text-amber-400">tentativa instável — reagendando…</span>
                 )}
               </div>
-              {progress.currentExecution.erro && progress.currentExecution.status !== "falha" && progress.currentExecution.status !== "erro" && (
-                <div className="mt-1 text-[11px] text-muted-foreground break-words">
-                  {progress.currentExecution.erro}
-                </div>
-              )}
             </div>
           )}
           {progress.recent.length > 1 && (
@@ -2010,11 +2006,6 @@ function OrderTrackingInline({
                     <span className="flex-1 min-w-0">
                       <span className="text-foreground">+{r.creditosAdicionados ?? 0}</span>
                       <span className="text-muted-foreground ml-1">{timeAgo(r.atualizadoEm)}</span>
-                      {r.erro && (
-                        <span className="block text-[11px] text-muted-foreground/90 break-words whitespace-normal">
-                          {r.erro}
-                        </span>
-                      )}
                     </span>
                   </li>
                 ))}

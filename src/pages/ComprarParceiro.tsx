@@ -69,6 +69,8 @@ type OrderState = {
   stopRequestedAt?: string | null;
   balanceAppliedCredits?: number;
   refundedCredits?: number;
+  workspaceNotFound?: boolean;
+  attemptedWorkspace?: string | null;
   progress?: {
     farmed: number;
     target: number;
@@ -1087,6 +1089,9 @@ export default function ComprarParceiro() {
               />
               <p className="text-xs text-muted-foreground mt-1">
                 Informe o nome <strong>exato</strong> do workspace Lovable onde os créditos devem ser adicionados.
+              </p>
+              <p className="text-[11px] text-amber-400/90 mt-1">
+                Atenção: maiúsculas, minúsculas, espaços e acentos contam. Ex.: <code className="font-mono">PRO 03</code> é diferente de <code className="font-mono">pro 03</code> ou <code className="font-mono">PRO  03</code>.
               </p>
             </div>
             {(() => {
@@ -2353,20 +2358,53 @@ function OrderTrackingInline({
         </div>
       )}
       {isTerminalFailure && status && (
-        <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm space-y-1">
-          <div className="flex items-center gap-2 text-destructive font-semibold">
-            <XCircle className="w-4 h-4" /> {STATUS_LABEL[status]}
-          </div>
-          {order?.failedReason && <div className="text-xs text-muted-foreground">{order.failedReason}</div>}
-          {status === "refunded" && (order?.refundedCredits ?? 0) > 0 && (
-            <div className="text-xs text-emerald-400">
-              {order?.refundedCredits} créditos voltaram como saldo. Use no próximo pedido sem pagar de novo.
+        (() => {
+          const isWsNotFound =
+            order?.workspaceNotFound === true ||
+            (order?.failedReason ?? "").startsWith("workspace_not_found");
+          const attempted =
+            order?.attemptedWorkspace ??
+            (order?.failedReason?.startsWith("workspace_not_found:")
+              ? order.failedReason.slice("workspace_not_found:".length)
+              : workspace) ?? null;
+          if (isWsNotFound) {
+            return (
+              <div className="mt-3 rounded-lg border-2 border-amber-500/50 bg-amber-500/10 p-3 sm:p-4 text-sm space-y-2">
+                <div className="flex items-center gap-2 text-amber-400 font-semibold">
+                  <AlertTriangle className="w-4 h-4" /> Workspace não encontrado
+                </div>
+                <p className="text-xs text-foreground/90">
+                  O bot não encontrou o workspace
+                  {attempted ? <> <strong className="font-mono">"{attempted}"</strong> </> : " "}
+                  na sua conta Lovable. Confira se digitou o nome <strong>exatamente igual</strong> ao que aparece no Lovable
+                  (incluindo maiúsculas, minúsculas, espaços e acentos).
+                </p>
+                <p className="text-xs text-emerald-400">
+                  Seus créditos foram devolvidos como <strong>saldo</strong> no e-mail informado. Refaça o pedido digitando o nome correto — sem pagar de novo.
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  Dica: copie o nome direto da barra superior do Lovable para evitar erros de digitação.
+                </p>
+              </div>
+            );
+          }
+          return (
+            <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm space-y-1">
+              <div className="flex items-center gap-2 text-destructive font-semibold">
+                <XCircle className="w-4 h-4" /> {STATUS_LABEL[status]}
+              </div>
+              {order?.failedReason && <div className="text-xs text-muted-foreground">{order.failedReason}</div>}
+              {status === "refunded" && (order?.refundedCredits ?? 0) > 0 && (
+                <div className="text-xs text-emerald-400">
+                  {order?.refundedCredits} créditos voltaram como saldo. Use no próximo pedido sem pagar de novo.
+                </div>
+              )}
+              {status !== "refunded" && (
+                <div className="text-xs text-muted-foreground">Em caso de pagamento confirmado, o reembolso é automático.</div>
+              )}
             </div>
-          )}
-          {status !== "refunded" && (
-            <div className="text-xs text-muted-foreground">Em caso de pagamento confirmado, o reembolso é automático.</div>
-          )}
-        </div>
+          );
+        })()
       )}
       {canStop && (
         <div className="mt-3">

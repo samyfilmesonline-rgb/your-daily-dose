@@ -1176,6 +1176,125 @@ export default function ComprarParceiro() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Modal "Usar meu saldo agora" */}
+      <Dialog open={useBalanceOpen} onOpenChange={setUseBalanceOpen}>
+        <DialogContent className="w-[calc(100%-1rem)] max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 font-mono">
+              <Wallet className="w-5 h-5 text-emerald-400" />
+              Usar meu saldo
+            </DialogTitle>
+            <DialogDescription>
+              <span className="text-emerald-400 font-mono font-bold">
+                {totalAvailableBalance} créditos
+              </span>
+              {customerBalance.email ? <> · vinculado a <strong className="text-foreground">{customerBalance.email}</strong></> : null}
+              . Escolha como aplicar.
+            </DialogDescription>
+          </DialogHeader>
+
+          {(() => {
+            const refundedOrders = (history ?? []).filter(
+              (o) => (o.refundedCredits ?? 0) > 0,
+            );
+            return (
+              <div className="space-y-6 mt-2">
+                {historyLoading && !history && (
+                  <div className="text-center text-xs text-muted-foreground font-mono py-6">
+                    <Loader2 className="w-4 h-4 mr-2 inline animate-spin" /> Carregando seus pedidos...
+                  </div>
+                )}
+
+                {refundedOrders.length > 0 && (
+                  <section className="space-y-2">
+                    <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-emerald-400">
+                      Refazer um pedido anterior
+                    </div>
+                    <div className="space-y-2">
+                      {refundedOrders.slice(0, 5).map((o) => (
+                        <div
+                          key={o.id}
+                          className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-bold font-mono">
+                              {o.credits} créditos
+                            </div>
+                            <div className="text-[11px] text-muted-foreground">
+                              {new Date(o.createdAt).toLocaleString("pt-BR")} ·{" "}
+                              <span className="text-emerald-400">
+                                +{o.refundedCredits} créditos no saldo
+                              </span>
+                            </div>
+                          </div>
+                          <Button
+                            size="sm"
+                            className="bg-emerald-500 hover:bg-emerald-600 text-background font-bold w-full sm:w-auto"
+                            onClick={() => {
+                              reorderFromHistory(o);
+                              setUseBalanceOpen(false);
+                            }}
+                          >
+                            <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                            Refazer este pedido
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                <section className="space-y-2">
+                  <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-emerald-400">
+                    Fazer um novo pedido
+                  </div>
+                  {!packs?.length ? (
+                    <div className="text-xs text-muted-foreground font-mono">
+                      Nenhum pacote disponível.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {packs.map((p) => {
+                        const c = computePriceWithBalance(p.credits, p.price_cents, totalAvailableBalance);
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => {
+                              setSelected(p);
+                              setUseBalance(true);
+                              setPrefillOrderId(null);
+                              setStep("form");
+                              setUseBalanceOpen(false);
+                            }}
+                            className="text-left rounded-lg border border-border hover:border-emerald-500/60 hover:bg-emerald-500/5 transition-colors p-3"
+                          >
+                            <div className="flex items-baseline justify-between gap-2">
+                              <div className="text-sm font-bold font-mono">{p.credits} créditos</div>
+                              <div className="text-[11px] text-muted-foreground line-through">
+                                {brl(p.price_cents)}
+                              </div>
+                            </div>
+                            <div className="mt-1 text-emerald-400 font-mono text-sm font-bold">
+                              {c.payCents === 0 ? "Grátis com saldo" : `Pix: ${brl(c.payCents)}`}
+                            </div>
+                            {c.balanceUsed > 0 && (
+                              <div className="text-[11px] text-muted-foreground">
+                                −{c.balanceUsed} do seu saldo
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
       {/* Saldo de outro e-mail (Plano C) */}
       <Dialog open={redeemOpen} onOpenChange={setRedeemOpen}>
         <DialogContent className="w-[calc(100%-1rem)] max-w-md max-h-[90vh] overflow-y-auto">

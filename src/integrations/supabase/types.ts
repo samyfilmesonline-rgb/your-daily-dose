@@ -743,7 +743,7 @@ export type Database = {
           status: Database["public"]["Enums"]["order_schedule_status"]
           total_days: number | null
           updated_at: string
-          workspaces: Json
+          workspaces: Json | null
         }
         Insert: {
           bot_id: string
@@ -766,7 +766,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["order_schedule_status"]
           total_days?: number | null
           updated_at?: string
-          workspaces: Json
+          workspaces?: Json | null
         }
         Update: {
           bot_id?: string
@@ -789,7 +789,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["order_schedule_status"]
           total_days?: number | null
           updated_at?: string
-          workspaces?: Json
+          workspaces?: Json | null
         }
         Relationships: []
       }

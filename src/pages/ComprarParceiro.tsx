@@ -1574,38 +1574,44 @@ function OrdersHistorySection({
                       Bot: <span className="font-mono text-primary">{o.botEmail}</span>
                     </div>
                   )}
-                  {o.progress && ["paid","queued","processing"].includes(o.status) && (o.progress.farmed > 0 || o.progress.lastMessage) && (
+                  {o.progress && ["paid","queued","processing"].includes(o.status) && (o.progress.farmed > 0 || o.progress.lastStatus) && (
                     <div className="mt-2 space-y-1">
                       <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
                         <span>{o.progress.farmed} / {o.credits} créditos</span>
                         <span>{o.progress.percent}%</span>
                       </div>
                       <Progress value={o.progress.percent} className="h-1.5" />
-                      {o.progress.lastMessage && (
+                      {o.progress.lastStatus && (
                         <div
-                          className={`text-[11px] line-clamp-2 ${
+                          className={`text-[11px] font-mono ${
                             o.progress.lastStatus === "limite"
                               ? "text-amber-400"
                               : o.progress.lastStatus === "falha" || o.progress.lastStatus === "erro"
-                              ? "text-destructive"
+                              ? "text-amber-400"
                               : o.progress.lastStatus === "sucesso" || o.progress.lastStatus === "concluido"
                               ? "text-emerald-400"
-                              : "text-primary"
+                              : "text-emerald-400"
                           }`}
-                          title={o.progress.lastMessage}
                         >
-                          Bot: {o.progress.lastMessage}
+                          {o.progress.lastStatus === "sucesso" || o.progress.lastStatus === "concluido"
+                            ? "última tentativa: sucesso"
+                            : o.progress.lastStatus === "limite"
+                            ? "em cooldown"
+                            : o.progress.lastStatus === "falha" || o.progress.lastStatus === "erro"
+                            ? "reagendando tentativa"
+                            : "farmando…"}
                         </div>
                       )}
                     </div>
                   )}
-                  {o.status === "failed" && o.failedReason && (
-                    <div className="text-xs text-destructive mt-1">{o.failedReason}</div>
+                  {o.status === "failed" && (
+                    <div className="text-xs text-destructive mt-1">
+                      Não foi possível concluir o farm. Saldo creditado para sua próxima compra.
+                    </div>
                   )}
                   {o.status === "refunded" && (
                     <div className="text-xs text-emerald-400 mt-1">
                       {o.refundedCredits ?? 0} créditos voltaram como crédito pra usar em outro pedido
-                      {o.failedReason ? ` · ${o.failedReason}` : ""}
                     </div>
                   )}
                   {(o.balanceAppliedCredits ?? 0) > 0 && (

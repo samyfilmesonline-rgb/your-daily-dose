@@ -12,11 +12,22 @@ const Body = z.object({
   customerName: z.string().trim().min(1).max(200),
   customerEmail: z.string().trim().email().max(255),
   customerWhatsapp: z.string().trim().max(40).optional().nullable(),
-  targetWorkspace: z.string().trim().min(1).max(200),
-  credits: z.number().int().min(1).max(100000),
-  amountCents: z.number().int().min(0).max(100_000_00),
+  targetWorkspace: z.string().trim().min(1).max(200).optional(),
+  credits: z.number().int().min(1).max(100000).optional(),
+  amountCents: z.number().int().min(0).max(100_000_00).optional(),
   notes: z.string().trim().min(3).max(500),
   botId: z.string().uuid().optional().nullable(),
+  multiWorkspaceMode: z.boolean().optional().default(false),
+  pricePerWorkspaceCents: z.number().int().min(0).max(100_000_00).optional(),
+}).superRefine((v, ctx) => {
+  if (v.multiWorkspaceMode) {
+    if (!v.botId) ctx.addIssue({ code: "custom", message: "botId é obrigatório no modo multi-workspace", path: ["botId"] });
+    if (v.pricePerWorkspaceCents == null) ctx.addIssue({ code: "custom", message: "pricePerWorkspaceCents é obrigatório", path: ["pricePerWorkspaceCents"] });
+  } else {
+    if (!v.targetWorkspace) ctx.addIssue({ code: "custom", message: "targetWorkspace é obrigatório", path: ["targetWorkspace"] });
+    if (v.credits == null) ctx.addIssue({ code: "custom", message: "credits é obrigatório", path: ["credits"] });
+    if (v.amountCents == null) ctx.addIssue({ code: "custom", message: "amountCents é obrigatório", path: ["amountCents"] });
+  }
 });
 
 function json(status: number, payload: unknown) {
@@ -85,7 +96,8 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (pqErr || !pq) return json(404, { error: "Parceiro não encontrado" });
       const remaining = Number(pq.limite_creditos) - Number(pq.creditos_consumidos);
-      if (remaining < b.credits) {
+      const minNeeded = b.multiWorkspaceMode ? 200 : Number(b.credits);
+      if (remaining < minNeeded) {
         return json(400, {
           error: `Limite de créditos do parceiro insuficiente (restam ${Math.max(0, Math.floor(remaining))})`,
         });
@@ -110,50 +122,66 @@ Deno.serve(async (req) => {
     const nowIso = new Date().toISOString();
 
     // Create order as 'paid' (manual order, no PIX)
-    const { data: created, error: insErr } = await sb
-      .from("partner_credit_orders")
-      .insert({
-        partner_id: partnerId,
-        pack_id: null,
-        customer_name: b.customerName,
-        customer_email: b.customerEmail.toLowerCase(),
-        customer_whatsapp: b.customerWhatsapp ?? null,
+    const orderInsert: Record<string, unknown> = {
+      partner_id: partnerId,
+      pack_id: null,
+      customer_name: b.customerName,
+      customer_email: b.customerEmail.toLowerCase(),
+      customer_whatsapp: b.customerWhatsapp ?? null,
+      status: "paid",
+      is_manual: true,
+      paid_at: nowIso,
+      bot_invite_confirmed_at: nowIso,
+      bot_invite_confirmed_fingerprint: "manual",
+      tx_id: `manual:${crypto.randomUUID()}`,
+      raw_payload: {
+        manualOrder: {
+          by: callerId,
+          byIsAdmin: isAdmin,
+          notes: b.notes,
+          requestedBotId: b.botId ?? null,
+          multiWorkspaceMode: !!b.multiWorkspaceMode,
+          pricePerWorkspaceCents: b.pricePerWorkspaceCents ?? null,
+          at: nowIso,
+        },
+      },
+    };
+    if (b.multiWorkspaceMode) {
+      Object.assign(orderInsert, {
+        target_workspace: null,
+        credits: 0,
+        amount_cents: 0,
+        multi_workspace_mode: true,
+        price_cents_per_workspace: b.pricePerWorkspaceCents,
+      });
+    } else {
+      Object.assign(orderInsert, {
         target_workspace: b.targetWorkspace,
         credits: b.credits,
         amount_cents: b.amountCents,
-        status: "paid",
-        is_manual: true,
-        paid_at: nowIso,
-        bot_invite_confirmed_at: nowIso,
-        bot_invite_confirmed_fingerprint: "manual",
-        tx_id: `manual:${crypto.randomUUID()}`,
-        raw_payload: {
-          manualOrder: {
-            by: callerId,
-            byIsAdmin: isAdmin,
-            notes: b.notes,
-            requestedBotId: b.botId ?? null,
-            at: nowIso,
-          },
-        },
-      })
+      });
+    }
+    const { data: created, error: insErr } = await sb
+      .from("partner_credit_orders")
+      .insert(orderInsert)
       .select("id")
       .single();
     if (insErr || !created) return json(500, { error: insErr?.message ?? "Falha ao criar pedido" });
 
     const orderId = created.id as string;
 
-    // Debit partner quota (transactional via RPC)
-    const { error: debitErr } = await sb.rpc("debit_partner_quota", {
-      _partner_id: partnerId,
-      _amount: b.credits,
-      _order_id: orderId,
-      _reason: `manual_order:${b.notes.slice(0, 180)}`,
-    });
-    if (debitErr) {
-      // Rollback: delete the order we just created
-      await sb.from("partner_credit_orders").delete().eq("id", orderId);
-      return json(400, { error: debitErr.message });
+    // Debit partner quota (only single-ws here; multi debits in tick action=start)
+    if (!b.multiWorkspaceMode) {
+      const { error: debitErr } = await sb.rpc("debit_partner_quota", {
+        _partner_id: partnerId,
+        _amount: Number(b.credits),
+        _order_id: orderId,
+        _reason: `manual_order:${b.notes.slice(0, 180)}`,
+      });
+      if (debitErr) {
+        await sb.from("partner_credit_orders").delete().eq("id", orderId);
+        return json(400, { error: debitErr.message });
+      }
     }
 
     // Assignment

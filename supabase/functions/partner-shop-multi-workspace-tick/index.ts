@@ -1,0 +1,340 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { z } from "https://esm.sh/zod@3.23.8";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+};
+
+const Body = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("start"),
+    orderId: z.string().uuid(),
+    fingerprint: z.string().min(8).max(256),
+    workspaces: z.array(z.string().min(1).max(200)).min(1).max(500),
+  }),
+  z.object({
+    action: z.literal("next"),
+    orderId: z.string().uuid(),
+    fingerprint: z.string().min(8).max(256),
+    finishedWorkspace: z.string().min(1).max(200),
+    farmed: z.number().int().min(0).max(10000).optional().default(200),
+  }),
+  z.object({
+    action: z.literal("fail"),
+    orderId: z.string().uuid(),
+    fingerprint: z.string().min(8).max(256),
+    workspace: z.string().min(1).max(200),
+    reason: z.string().max(500).optional().default(""),
+  }),
+]);
+
+const PER_WS = 200;
+
+type WsItem = {
+  name: string;
+  status: "pending" | "running" | "done" | "failed" | "skipped";
+  farmed: number;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+};
+
+function json(status: number, payload: unknown) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+async function logEvent(
+  sb: ReturnType<typeof createClient>,
+  order: Record<string, unknown>,
+  eventType: string,
+  metadata: Record<string, unknown>,
+) {
+  try {
+    await sb.from("payment_events").insert({
+      source: "partner_order",
+      source_id: order.id,
+      event_type: eventType,
+      partner_id: order.partner_id,
+      customer_email: order.customer_email,
+      customer_name: order.customer_name,
+      customer_whatsapp: order.customer_whatsapp,
+      amount_cents: order.amount_cents,
+      credits: order.credits,
+      status_before: order.status,
+      status_after: order.status,
+      metadata,
+    });
+  } catch (e) {
+    console.warn("logEvent err", e);
+  }
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  try {
+    const url = Deno.env.get("SUPABASE_URL")!;
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
+
+    const parsed = Body.safeParse(await req.json());
+    if (!parsed.success) {
+      return json(400, { error: "Parâmetros inválidos", details: parsed.error.flatten() });
+    }
+    const b = parsed.data;
+
+    // Load order + bot
+    const { data: order, error: ordErr } = await sb
+      .from("partner_credit_orders")
+      .select(
+        "id, partner_id, status, multi_workspace_mode, workspaces_total, workspaces_done, workspaces_plan, current_workspace, target_workspace, price_cents_per_workspace, credits, amount_cents, customer_name, customer_email, customer_whatsapp, assigned_bot_id, stop_requested_at, paid_at",
+      )
+      .eq("id", b.orderId)
+      .maybeSingle();
+    if (ordErr || !order) return json(404, { error: "Pedido não encontrado" });
+    if (!order.multi_workspace_mode) return json(400, { error: "Pedido não está no modo multi-workspace" });
+    if (!order.assigned_bot_id) return json(400, { error: "Pedido não tem bot atribuído" });
+
+    const { data: bot } = await sb
+      .from("farm_bots")
+      .select("id, partner_id")
+      .eq("id", order.assigned_bot_id)
+      .maybeSingle();
+    if (!bot) return json(404, { error: "Bot não encontrado" });
+
+    // Fingerprint validation: armazenado em raw_payload? Não — usamos hash simples do bot.id + partner_id como contrato leve.
+    // Para coerência com confirm-invite, aceitamos qualquer fingerprint estável; rejeitamos vazio.
+    if (!b.fingerprint || b.fingerprint.length < 8) {
+      return json(401, { error: "Fingerprint inválido" });
+    }
+
+    // STOP curto-circuito
+    const stopRequested = !!order.stop_requested_at;
+
+    if (b.action === "start") {
+      if (order.workspaces_total != null) {
+        // já iniciado — devolve current
+        return json(200, {
+          ok: true,
+          alreadyStarted: true,
+          currentWorkspace: order.current_workspace,
+          workspacesTotal: order.workspaces_total,
+          workspacesDone: order.workspaces_done,
+        });
+      }
+
+      // Quota: respeita limite do parceiro, trunca lista se necessário
+      const { data: pq } = await sb
+        .from("parceiros")
+        .select("limite_creditos, creditos_consumidos")
+        .eq("user_id", order.partner_id)
+        .maybeSingle();
+      const remaining = pq ? Math.max(0, Number(pq.limite_creditos) - Number(pq.creditos_consumidos)) : 0;
+      const maxWs = Math.floor(remaining / PER_WS);
+      const allowed = b.workspaces.slice(0, Math.max(0, maxWs));
+      if (allowed.length === 0) {
+        await sb
+          .from("partner_credit_orders")
+          .update({ status: "failed", failed_reason: "insufficient_quota_no_workspace" })
+          .eq("id", order.id);
+        await sb
+          .from("farm_bots")
+          .update({ status: "idle", current_order_id: null })
+          .eq("id", bot.id)
+          .eq("current_order_id", order.id);
+        return json(400, { error: "Quota insuficiente para iniciar" });
+      }
+
+      const total = allowed.length;
+      const totalCredits = total * PER_WS;
+      const totalCents = total * Number(order.price_cents_per_workspace ?? 0);
+      const nowIso = new Date().toISOString();
+      const plan: WsItem[] = allowed.map((name, i) => ({
+        name,
+        status: i === 0 ? "running" : "pending",
+        farmed: 0,
+        started_at: i === 0 ? nowIso : null,
+        finished_at: null,
+        error: null,
+      }));
+
+      // Debita quota total
+      const { error: debitErr } = await sb.rpc("debit_partner_quota", {
+        _partner_id: order.partner_id,
+        _amount: totalCredits,
+        _order_id: order.id,
+        _reason: `manual_multi_ws:${total}ws`,
+      });
+      if (debitErr) return json(400, { error: debitErr.message });
+
+      const first = allowed[0];
+      const { error: updErr } = await sb
+        .from("partner_credit_orders")
+        .update({
+          status: "processing",
+          workspaces_total: total,
+          workspaces_done: 0,
+          workspaces_plan: plan,
+          current_workspace: first,
+          target_workspace: first,
+          credits: totalCredits,
+          amount_cents: totalCents,
+          assigned_at: order["paid_at"] ?? nowIso,
+        })
+        .eq("id", order.id);
+      if (updErr) return json(500, { error: updErr.message });
+
+      await logEvent(sb, { ...order, status: "processing", credits: totalCredits, amount_cents: totalCents }, "multi_ws_started", {
+        total,
+        workspaces: allowed,
+        current: first,
+      });
+
+      return json(200, {
+        ok: true,
+        currentWorkspace: first,
+        workspacesTotal: total,
+        workspacesDone: 0,
+        truncated: allowed.length < b.workspaces.length,
+      });
+    }
+
+    // Para next/fail: precisamos do plan
+    const plan = (order.workspaces_plan as WsItem[] | null) ?? [];
+    if (!plan.length) return json(400, { error: "Plano de workspaces ausente — chame action=start primeiro" });
+
+    const targetName = b.action === "next" ? b.finishedWorkspace : b.workspace;
+    const idx = plan.findIndex((w) => w.name === targetName);
+    if (idx < 0) return json(400, { error: `Workspace '${targetName}' não está no plano` });
+
+    const nowIso = new Date().toISOString();
+    if (b.action === "next") {
+      plan[idx].status = "done";
+      plan[idx].farmed = Math.max(plan[idx].farmed, b.farmed);
+      plan[idx].finished_at = nowIso;
+      plan[idx].error = null;
+    } else {
+      plan[idx].status = "failed";
+      plan[idx].finished_at = nowIso;
+      plan[idx].error = b.reason || "unknown";
+    }
+
+    const done = plan.filter((w) => w.status === "done" || w.status === "failed" || w.status === "skipped").length;
+
+    // Decide próximo
+    let next: WsItem | null = null;
+    if (!stopRequested) {
+      next = plan.find((w) => w.status === "pending") ?? null;
+      if (next) {
+        next.status = "running";
+        next.started_at = nowIso;
+      }
+    } else {
+      // marcar restantes como skipped
+      plan.forEach((w) => {
+        if (w.status === "pending") {
+          w.status = "skipped";
+          w.finished_at = nowIso;
+        }
+      });
+    }
+
+    const isFinal = !next;
+    let finalStatus: string = order.status as string;
+    let finalCredits = order.credits as number;
+    let finalAmountCents = order.amount_cents as number;
+
+    if (isFinal) {
+      const doneCount = plan.filter((w) => w.status === "done").length;
+      const failedCount = plan.filter((w) => w.status === "failed").length;
+      const skippedCount = plan.filter((w) => w.status === "skipped").length;
+      const farmedTotal = plan.reduce((acc, w) => acc + (w.status === "done" ? w.farmed : 0), 0);
+      const pricePer = Number(order.price_cents_per_workspace ?? 0);
+
+      finalCredits = farmedTotal;
+      finalAmountCents = doneCount * pricePer;
+
+      if (stopRequested) finalStatus = "canceled";
+      else if (doneCount === 0) finalStatus = "failed";
+      else finalStatus = "delivered";
+
+      // refund da diferença (créditos que sobraram do que foi debitado mas não rodaram)
+      try {
+        await sb.rpc("refund_order_remainder", {
+          _order_id: order.id,
+          _reason: stopRequested ? "stopped_by_admin" : failedCount > 0 || skippedCount > 0 ? "partial_failure" : "completed",
+        });
+      } catch (e) {
+        console.warn("refund_order_remainder err", e);
+      }
+    }
+
+    const updatePayload: Record<string, unknown> = {
+      workspaces_plan: plan,
+      workspaces_done: done,
+    };
+    if (next) {
+      updatePayload["current_workspace"] = next.name;
+      updatePayload["target_workspace"] = next.name;
+    }
+    if (isFinal) {
+      updatePayload["status"] = finalStatus;
+      updatePayload["credits"] = finalCredits;
+      updatePayload["amount_cents"] = finalAmountCents;
+      updatePayload["delivered_at"] = finalStatus === "delivered" ? nowIso : null;
+      if (finalStatus === "failed") {
+        updatePayload["failed_reason"] = "all_workspaces_failed";
+      }
+    }
+
+    const { error: updErr } = await sb
+      .from("partner_credit_orders")
+      .update(updatePayload)
+      .eq("id", order.id);
+    if (updErr) return json(500, { error: updErr.message });
+
+    if (isFinal) {
+      // libera bot e atribui próximo da fila
+      await sb
+        .from("farm_bots")
+        .update({ status: "idle", current_order_id: null, last_heartbeat_at: nowIso })
+        .eq("id", bot.id)
+        .eq("current_order_id", order.id);
+      try {
+        await sb.rpc("assign_next_queued_order", { _partner_id: order.partner_id });
+      } catch (e) {
+        console.warn("assign_next_queued_order err", e);
+      }
+    }
+
+    await logEvent(
+      sb,
+      { ...order, status: isFinal ? finalStatus : "processing", credits: finalCredits, amount_cents: finalAmountCents },
+      isFinal ? `multi_ws_${finalStatus}` : "workspace_advanced",
+      {
+        finished: targetName,
+        finishedStatus: plan[idx].status,
+        next: next?.name ?? null,
+        done,
+        total: plan.length,
+      },
+    );
+
+    return json(200, {
+      ok: true,
+      next: next?.name ?? null,
+      done: isFinal,
+      finalStatus: isFinal ? finalStatus : null,
+      workspacesDone: done,
+      workspacesTotal: plan.length,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Erro";
+    console.error("multi-workspace-tick", err);
+    return json(500, { error: msg });
+  }
+});

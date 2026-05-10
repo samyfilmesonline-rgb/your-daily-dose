@@ -39,6 +39,16 @@ type Order = {
   failed_reason: string | null;
   created_at: string;
   raw_payload: Record<string, unknown> | null;
+  multi_workspace_mode?: boolean | null;
+  workspaces_total?: number | null;
+  workspaces_done?: number | null;
+  current_workspace?: string | null;
+  workspaces_plan?: Array<{
+    name: string;
+    status: "pending" | "running" | "done" | "failed" | "skipped";
+    farmed: number;
+    error: string | null;
+  }> | null;
 };
 
 type BotMini = {
@@ -92,7 +102,7 @@ export default function Pedidos() {
         .order("created_at", { ascending: false })
         .limit(200);
       if (error) throw error;
-      return (data ?? []) as Order[];
+      return (data ?? []) as unknown as Order[];
     },
   });
 
@@ -148,7 +158,7 @@ export default function Pedidos() {
     const oneDayAgo = Date.now() - 24 * 3600 * 1000;
     const tenMinAgo = Date.now() - 10 * 60 * 1000;
     const noWs = orders.filter(
-      (o) => !o.target_workspace && ["paid", "queued", "processing"].includes(o.status)
+      (o) => !o.target_workspace && !o.multi_workspace_mode && ["paid", "queued", "processing"].includes(o.status)
     ).length;
     const stale = orders.filter((o) => {
       if (o.status !== "processing" || !o.assigned_bot_id) return false;
@@ -339,8 +349,17 @@ export default function Pedidos() {
                       })()}
                     </TableCell>
                     <TableCell className="text-xs font-mono">
-                      {o.target_workspace ?? <span className="text-destructive">— faltando</span>}
-                      {wsMissing && (
+                      {o.multi_workspace_mode ? (
+                        <>
+                          <div>{o.current_workspace ?? "—"}</div>
+                          <div className="text-[10px] text-primary mt-0.5">
+                            todos os ws · {o.workspaces_done ?? 0}/{o.workspaces_total ?? "?"}
+                          </div>
+                        </>
+                      ) : (
+                        o.target_workspace ?? <span className="text-destructive">— faltando</span>
+                      )}
+                      {wsMissing && !o.multi_workspace_mode && (
                         <div className="text-[10px] text-destructive mt-0.5 flex items-center gap-1">
                           <AlertTriangle className="w-3 h-3" /> precisa contato
                         </div>
@@ -405,7 +424,12 @@ export default function Pedidos() {
                 <div><span className="text-muted-foreground">Cliente:</span> {detail.customer_name}</div>
                 <div><span className="text-muted-foreground">Email:</span> {detail.customer_email}</div>
                 <div><span className="text-muted-foreground">WhatsApp:</span> {detail.customer_whatsapp ?? "—"}</div>
-                <div><span className="text-muted-foreground">Workspace:</span> {detail.target_workspace ?? "—"}</div>
+                <div>
+                  <span className="text-muted-foreground">Workspace:</span>{" "}
+                  {detail.multi_workspace_mode
+                    ? `${detail.current_workspace ?? "—"} (todos · ${detail.workspaces_done ?? 0}/${detail.workspaces_total ?? "?"})`
+                    : detail.target_workspace ?? "—"}
+                </div>
                 <div><span className="text-muted-foreground">Créditos:</span> {detail.credits}</div>
                 <div><span className="text-muted-foreground">Valor:</span> {brl(detail.amount_cents)}</div>
                 <div><span className="text-muted-foreground">Tx:</span> <span className="font-mono">{detail.tx_id ?? "—"}</span></div>
@@ -415,6 +439,37 @@ export default function Pedidos() {
                 <div><span className="text-muted-foreground">Pix expira:</span> {detail.pix_expires_at ? new Date(detail.pix_expires_at).toLocaleString("pt-BR") : "—"}</div>
                 <div><span className="text-muted-foreground">Bot:</span> {detail.assigned_bot_id ? (botById.get(detail.assigned_bot_id)?.email_lovable ?? detail.assigned_bot_id) : "—"}</div>
               </div>
+              {detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan) && detail.workspaces_plan.length > 0 && (
+                <div className="rounded-md border p-2">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                    Workspaces ({detail.workspaces_done ?? 0}/{detail.workspaces_total ?? detail.workspaces_plan.length})
+                  </div>
+                  <div className="max-h-48 overflow-y-auto">
+                    {detail.workspaces_plan.map((w) => (
+                      <div
+                        key={w.name}
+                        className="flex items-center justify-between gap-2 text-[11px] font-mono py-0.5 border-b border-border/40 last:border-0"
+                      >
+                        <span className="truncate flex-1">{w.name}</span>
+                        <span className="text-muted-foreground">{w.farmed} cr</span>
+                        <span
+                          className={
+                            w.status === "done"
+                              ? "text-primary"
+                              : w.status === "running"
+                                ? "text-amber-400"
+                                : w.status === "failed"
+                                  ? "text-destructive"
+                                  : "text-muted-foreground"
+                          }
+                        >
+                          {w.status}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {(() => {
                 const showProgress = ["paid", "queued", "processing", "delivered", "refunded", "failed"].includes(detail.status);
                 if (!showProgress) return null;

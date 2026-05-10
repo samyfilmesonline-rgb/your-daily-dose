@@ -145,3 +145,28 @@ def main():
    - Windows: `certutil -hashfile app-1.4.2.zip SHA256`
 3. No painel admin → **Atualizações** → **Nova release** → cole URL + SHA256 + changelog → marque **Publicar agora**.
 4. Todos os clientes online recebem o popup em < 1 segundo. Os offline recebem na próxima abertura do app (via fallback HTTP).
+---
+
+## Modo multi-workspace (recarga manual)
+
+Pedidos manuais podem ser criados com `multi_workspace_mode = true`. Nesse caso `target_workspace` começa nulo e o worker é responsável por listar todos os workspaces da conta e farmar 200 créditos em cada um, em ordem.
+
+Endpoint: `POST /functions/v1/partner-shop-multi-workspace-tick`
+
+Contrato:
+
+```text
+1. Worker recebe pedido com multi_workspace_mode=true.
+2. Faz login no Lovable, lista todos os workspaces da conta.
+3. POST { action: "start", orderId, fingerprint, workspaces: [...] }
+   → resposta: { currentWorkspace, workspacesTotal, workspacesDone, truncated? }
+4. Loop:
+   - Farma currentWorkspace até bater 200 créditos.
+   - Sucesso: POST { action: "next", orderId, fingerprint, finishedWorkspace, farmed: 200 }
+     → { next: "<nome>" | null, done: bool, finalStatus? }
+   - Erro: POST { action: "fail", orderId, fingerprint, workspace, reason }
+     → idem
+5. Quando done=true, encerra a sessão.
+```
+
+Se o admin chamar `partner-shop-stop-order`, o tick detecta `stop_requested_at` na próxima troca, marca os ws restantes como `skipped`, faz refund da diferença e fecha o pedido como `canceled`.

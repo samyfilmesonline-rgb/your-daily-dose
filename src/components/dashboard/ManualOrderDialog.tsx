@@ -22,7 +22,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Zap, Clock } from "lucide-react";
+import { Loader2, Zap, Clock, Layers } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { z } from "zod";
 
 type Bot = {
@@ -35,14 +36,21 @@ type Bot = {
 
 type Partner = { user_id: string; nome: string | null; email: string | null };
 
-const schema = z.object({
+const baseSchema = {
   customerName: z.string().trim().min(1, "Obrigatório").max(200),
   customerEmail: z.string().trim().email("E-mail inválido").max(255),
   customerWhatsapp: z.string().trim().max(40).optional(),
+  notes: z.string().trim().min(3, "Mínimo 3 caracteres").max(500),
+};
+const schemaSingle = z.object({
+  ...baseSchema,
   targetWorkspace: z.string().trim().min(1, "Obrigatório").max(200),
   credits: z.coerce.number().int().min(1, "Mínimo 1").max(100000),
   amountReais: z.coerce.number().min(0).max(100000),
-  notes: z.string().trim().min(3, "Mínimo 3 caracteres").max(500),
+});
+const schemaMulti = z.object({
+  ...baseSchema,
+  pricePerWorkspaceReais: z.coerce.number().min(0).max(100000),
 });
 
 export default function ManualOrderDialog({
@@ -59,6 +67,7 @@ export default function ManualOrderDialog({
   const [partnerId, setPartnerId] = useState<string>("");
   const [botId, setBotId] = useState<string>("auto");
   const [submitting, setSubmitting] = useState(false);
+  const [multiWs, setMultiWs] = useState(false);
   const [form, setForm] = useState({
     customerName: "",
     customerEmail: "",
@@ -66,6 +75,7 @@ export default function ManualOrderDialog({
     targetWorkspace: "",
     credits: "",
     amountReais: "",
+    pricePerWorkspaceReais: "",
     notes: "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -75,8 +85,14 @@ export default function ManualOrderDialog({
       setPartnerId(user?.id ?? "");
       setBotId("auto");
       setErrors({});
+      setMultiWs(false);
     }
   }, [open, user?.id]);
+
+  // Multi-ws só faz sentido com bot específico
+  useEffect(() => {
+    if (botId === "auto" && multiWs) setMultiWs(false);
+  }, [botId, multiWs]);
 
   // Admin: load partner list
   const { data: partners = [] } = useQuery({
@@ -128,7 +144,7 @@ export default function ManualOrderDialog({
 
   async function handleSubmit() {
     setErrors({});
-    const parsed = schema.safeParse(form);
+    const parsed = multiWs ? schemaMulti.safeParse(form) : schemaSingle.safeParse(form);
     if (!parsed.success) {
       const flat = parsed.error.flatten().fieldErrors;
       const e: Record<string, string> = {};
@@ -140,27 +156,42 @@ export default function ManualOrderDialog({
       toast({ title: "Selecione o parceiro", variant: "destructive" });
       return;
     }
+    if (multiWs && botId === "auto") {
+      toast({ title: "Escolha um bot específico", description: "O modo 'todos os workspaces' precisa de um bot específico.", variant: "destructive" });
+      return;
+    }
     if (botId !== "auto" && selectedBot?.status === "disabled") {
       toast({ title: "Bot desabilitado", description: "Escolha outro bot ou use atribuição automática.", variant: "destructive" });
       return;
     }
     setSubmitting(true);
     try {
-      const v = parsed.data;
+      const v = parsed.data as typeof form & { credits?: number; amountReais?: number; targetWorkspace?: string; pricePerWorkspaceReais?: number };
       const { data, error } = await supabase.functions.invoke(
         "partner-shop-create-manual-order",
         {
-          body: {
-            partnerId: isAdmin ? effectivePartnerId : undefined,
-            customerName: v.customerName,
-            customerEmail: v.customerEmail,
-            customerWhatsapp: v.customerWhatsapp || null,
-            targetWorkspace: v.targetWorkspace,
-            credits: v.credits,
-            amountCents: Math.round(v.amountReais * 100),
-            notes: v.notes,
-            botId: botId === "auto" ? null : botId,
-          },
+          body: multiWs
+            ? {
+                partnerId: isAdmin ? effectivePartnerId : undefined,
+                customerName: v.customerName,
+                customerEmail: v.customerEmail,
+                customerWhatsapp: v.customerWhatsapp || null,
+                notes: v.notes,
+                botId,
+                multiWorkspaceMode: true,
+                pricePerWorkspaceCents: Math.round(Number(v.pricePerWorkspaceReais) * 100),
+              }
+            : {
+                partnerId: isAdmin ? effectivePartnerId : undefined,
+                customerName: v.customerName,
+                customerEmail: v.customerEmail,
+                customerWhatsapp: v.customerWhatsapp || null,
+                targetWorkspace: v.targetWorkspace,
+                credits: v.credits,
+                amountCents: Math.round(Number(v.amountReais) * 100),
+                notes: v.notes,
+                botId: botId === "auto" ? null : botId,
+              },
         },
       );
       if (error) throw error;
@@ -184,6 +215,7 @@ export default function ManualOrderDialog({
         targetWorkspace: "",
         credits: "",
         amountReais: "",
+        pricePerWorkspaceReais: "",
         notes: "",
       });
     } catch (err) {
@@ -240,21 +272,40 @@ export default function ManualOrderDialog({
               <Label className="text-xs">WhatsApp (opcional)</Label>
               <Input value={form.customerWhatsapp} onChange={(e) => field("customerWhatsapp", e.target.value)} />
             </div>
-            <div>
-              <Label className="text-xs">Workspace alvo</Label>
-              <Input value={form.targetWorkspace} onChange={(e) => field("targetWorkspace", e.target.value)} />
-              {errors.targetWorkspace && <p className="text-[10px] text-destructive mt-0.5">{errors.targetWorkspace}</p>}
-            </div>
-            <div>
-              <Label className="text-xs">Créditos</Label>
-              <Input type="number" min={1} value={form.credits} onChange={(e) => field("credits", e.target.value)} />
-              {errors.credits && <p className="text-[10px] text-destructive mt-0.5">{errors.credits}</p>}
-            </div>
-            <div>
-              <Label className="text-xs">Valor (R$)</Label>
-              <Input type="number" min={0} step="0.01" value={form.amountReais} onChange={(e) => field("amountReais", e.target.value)} />
-              {errors.amountReais && <p className="text-[10px] text-destructive mt-0.5">{errors.amountReais}</p>}
-            </div>
+            {!multiWs && (
+              <>
+                <div>
+                  <Label className="text-xs">Workspace alvo</Label>
+                  <Input value={form.targetWorkspace} onChange={(e) => field("targetWorkspace", e.target.value)} />
+                  {errors.targetWorkspace && <p className="text-[10px] text-destructive mt-0.5">{errors.targetWorkspace}</p>}
+                </div>
+                <div>
+                  <Label className="text-xs">Créditos</Label>
+                  <Input type="number" min={1} value={form.credits} onChange={(e) => field("credits", e.target.value)} />
+                  {errors.credits && <p className="text-[10px] text-destructive mt-0.5">{errors.credits}</p>}
+                </div>
+                <div>
+                  <Label className="text-xs">Valor (R$)</Label>
+                  <Input type="number" min={0} step="0.01" value={form.amountReais} onChange={(e) => field("amountReais", e.target.value)} />
+                  {errors.amountReais && <p className="text-[10px] text-destructive mt-0.5">{errors.amountReais}</p>}
+                </div>
+              </>
+            )}
+            {multiWs && (
+              <div className="col-span-2">
+                <Label className="text-xs">Valor por workspace (R$)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.pricePerWorkspaceReais}
+                  onChange={(e) => field("pricePerWorkspaceReais", e.target.value)}
+                />
+                {errors.pricePerWorkspaceReais && (
+                  <p className="text-[10px] text-destructive mt-0.5">{errors.pricePerWorkspaceReais}</p>
+                )}
+              </div>
+            )}
           </div>
 
           <div>
@@ -279,6 +330,25 @@ export default function ManualOrderDialog({
                 )}
               </p>
             )}
+          </div>
+
+          <div className={`flex items-start gap-3 rounded-md border p-3 ${botId === "auto" ? "opacity-50" : ""}`}>
+            <Switch
+              checked={multiWs}
+              onCheckedChange={setMultiWs}
+              disabled={botId === "auto"}
+              id="multi-ws"
+            />
+            <div className="flex-1">
+              <label htmlFor="multi-ws" className="text-xs font-medium flex items-center gap-1 cursor-pointer">
+                <Layers className="w-3 h-3" /> Farmar todos os workspaces do bot (200 cada)
+              </label>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                {botId === "auto"
+                  ? "Disponível apenas com um bot específico selecionado."
+                  : "O bot lista os workspaces dessa conta no Lovable e farma 200 créditos em cada um, em ordem. Total de créditos e valor são calculados após o início."}
+              </p>
+            </div>
           </div>
 
           <div>

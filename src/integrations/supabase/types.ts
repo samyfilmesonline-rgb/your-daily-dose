@@ -697,6 +697,57 @@ export type Database = {
         }
         Relationships: []
       }
+      payment_events: {
+        Row: {
+          amount_cents: number | null
+          created_at: string
+          credits: number | null
+          customer_email: string | null
+          customer_name: string | null
+          customer_whatsapp: string | null
+          event_type: string
+          id: string
+          metadata: Json | null
+          partner_id: string | null
+          source: string
+          source_id: string
+          status_after: string | null
+          status_before: string | null
+        }
+        Insert: {
+          amount_cents?: number | null
+          created_at?: string
+          credits?: number | null
+          customer_email?: string | null
+          customer_name?: string | null
+          customer_whatsapp?: string | null
+          event_type: string
+          id?: string
+          metadata?: Json | null
+          partner_id?: string | null
+          source: string
+          source_id: string
+          status_after?: string | null
+          status_before?: string | null
+        }
+        Update: {
+          amount_cents?: number | null
+          created_at?: string
+          credits?: number | null
+          customer_email?: string | null
+          customer_name?: string | null
+          customer_whatsapp?: string | null
+          event_type?: string
+          id?: string
+          metadata?: Json | null
+          partner_id?: string | null
+          source?: string
+          source_id?: string
+          status_after?: string | null
+          status_before?: string | null
+        }
+        Relationships: []
+      }
       pix_charges: {
         Row: {
           activation_token: string | null

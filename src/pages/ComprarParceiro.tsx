@@ -1216,15 +1216,36 @@ export default function ComprarParceiro() {
                           key={o.id}
                           className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3"
                         >
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-bold font-mono">
-                              {o.credits} créditos
-                            </div>
-                            <div className="text-[11px] text-muted-foreground">
-                              {new Date(o.createdAt).toLocaleString("pt-BR")} ·{" "}
-                              <span className="text-emerald-400">
-                                +{o.refundedCredits} créditos no saldo
+                          <div className="flex-1 min-w-0 space-y-0.5">
+                            <div className="text-sm font-bold font-mono flex items-center gap-2 flex-wrap">
+                              <span>{o.credits} créditos</span>
+                              <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                +{o.refundedCredits} no saldo
                               </span>
+                            </div>
+                            <div
+                              className="text-[11px] font-mono truncate"
+                              title={o.targetWorkspace ?? undefined}
+                            >
+                                <span className="text-muted-foreground">workspace: </span>
+                                <span className="text-foreground">{o.targetWorkspace ?? "—"}</span>
+                            </div>
+                            <div
+                              className="text-[11px] font-mono text-muted-foreground truncate"
+                              title={o.customerEmail}
+                            >
+                              e-mail: {o.customerEmail}
+                            </div>
+                            {o.customerName && (
+                              <div
+                                className="text-[11px] font-mono text-muted-foreground truncate"
+                                title={o.customerName}
+                              >
+                                cliente: {o.customerName}
+                              </div>
+                            )}
+                            <div className="text-[10px] text-muted-foreground font-mono">
+                              {new Date(o.createdAt).toLocaleString("pt-BR")}
                             </div>
                           </div>
                           <Button

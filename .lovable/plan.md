@@ -1,46 +1,62 @@
+# Ocultar processos internos do farm para o cliente final
+
 ## Problema
 
-Em **Meus pedidos**, ao clicar em **Refazer pedido**, hoje o cliente é jogado pra aba "Comprar créditos" e cai na seleção de pacote/formulário. Isso confunde porque parece que o pedido sumiu e ele tem que começar do zero.
+No painel "Farm em andamento" (modal de acompanhamento do pedido) e na lista de "Meus pedidos", o sistema está exibindo mensagens cruas vindas do bot — incluindo termos como `billing`, `stripe`, `login`, nomes de páginas internas, mensagens do Lovable, stack traces e textos de erro do gateway. Isso revela o método de farm para o cliente.
 
-Além disso, só `email` e `workspace` são reaproveitados — `nome`, `WhatsApp` e `CPF` ficam em branco, obrigando o cliente a redigitar tudo.
+O cliente final só pode saber **que algo está acontecendo** e **quanto já foi farmado** — nunca **como**.
 
-## O que muda
+## O que será alterado (somente UI / `src/pages/ComprarParceiro.tsx`)
 
-Comportamento desejado: clicar em **Refazer pedido** abre direto o modal "Seus dados" **por cima da aba Meus pedidos** (sem trocar de aba), com **todos os campos já preenchidos** exatamente como no pedido original. O cliente revisa, edita o que quiser e confirma.
+Nada de backend, schema, edge functions ou lógica de pedido muda. Só o que é renderizado.
 
-### 1. `supabase/functions/partner-shop-list-orders/index.ts`
+### 1. Painel "Farm em andamento" (modal de tracking)
 
-Incluir no `select` os campos `customer_name, customer_whatsapp, customer_tax_id` e devolver no item da lista:
+Substituir as mensagens cruas por rótulos neutros estilo hacker, em verde mono:
 
-- `customerName: o.customer_name`
-- `customerWhatsapp: ownDevice ? o.customer_whatsapp : null` (privacidade)
-- `customerTaxId: ownDevice ? o.customer_tax_id : null` (privacidade — só visível no próprio device)
+- `status === "em_andamento"` → continua "farmando…" (ok)
+- `status === "limite"` → trocar `"Lovable bloqueou — próxima tentativa automática"` por algo neutro tipo **"cooldown ativo — re-tentando…"** (sem citar Lovable).
+- `status === "sucesso" / "concluido"` → manter `+N créditos nesta tentativa` (não vaza método).
+- `status === "falha" / "erro"` → **NÃO** mostrar o `erro` cru. Trocar por mensagem genérica: **"tentativa instável — reagendando…"** em verde/âmbar.
+- Remover por completo o bloco que renderiza `progress.currentExecution.erro` quando o status não é falha (linha ~1969-1973).
+- Na lista `progress.recent` (`<details> Ver últimas tentativas`): remover a renderização de `r.erro`. Mostrar só ícone + créditos + tempo.
 
-### 2. `src/pages/ComprarParceiro.tsx`
+### 2. Mensagens "vivas" estilo hacker (opcional, melhora a UX)
 
-a. Adicionar `customerName`, `customerWhatsapp`, `customerTaxId` ao type `OrderHistoryItem`.
+Enquanto `currentExecution.status === "em_andamento"`, ciclar a cada ~2s por uma lista fixa de frases neutras em verde mono, dando sensação de atividade sem revelar nada:
 
-b. Em `reorderFromHistory(item)`:
-- **Remover** `setTab("comprar")` — manter o usuário na aba "Meus pedidos".
-- Pré-preencher também:
-  - `setName(item.customerName ?? "")`
-  - `setWhatsapp(item.customerWhatsapp ?? "")`
-  - `setTaxId(item.customerTaxId ?? "")`
-- Continuar fazendo `setStep("form")` para abrir o Dialog "Seus dados" como overlay sobre a aba atual.
+```
+> conectando nó…
+> sincronizando sessão…
+> injetando rotina de farm…
+> coletando créditos…
+> validando saldo…
+```
 
-c. No `onOpenChange` do Dialog "Seus dados" (linha 917), ao fechar voltar para o estado anterior sem forçar `browse` quando o usuário veio de "Meus pedidos" — basta não trocar a tab (ela já está em "pedidos") e limpar `prefillOrderId`. Comportamento atual de `setStep("browse")` segue OK.
+Frases 100% genéricas — nada de "billing", "stripe", "login", "lovable", "página X". Implementado com `useEffect` + `setInterval` local no componente do painel.
 
-d. Ajustar o texto do banner verde dentro do dialog (linhas 925-934) para refletir que é uma cópia editável do pedido anterior:
-- Título: "Mesmos dados do pedido anterior"
-- Sub: "Revise ou ajuste qualquer campo antes de confirmar."
+### 3. Lista "Meus pedidos" (cards de cada pedido)
 
-### 3. Sem mudanças em
+Linha ~1597: `Bot: {o.progress.lastMessage}` — está imprimindo a mensagem crua do bot. Trocar por rótulo curto baseado em `lastStatus`:
 
-- Schema, RLS, fluxos de pagamento, criação de pedido, saldo.
-- Aba "Comprar créditos" continua acessível normalmente.
+- `sucesso/concluido` → "última tentativa: sucesso"
+- `limite` → "em cooldown"
+- `falha/erro` → "reagendando tentativa"
+- `em_andamento` → "farmando…"
+
+Nunca renderizar `lastMessage` cru. Remover o `title={o.progress.lastMessage}` do tooltip também.
+
+### 4. Bloco "failedReason" do pedido
+
+Linha ~1602: `{o.status === "failed" && o.failedReason && (...)`. Substituir o texto cru por mensagem padronizada do tipo **"Não foi possível concluir o farm. Saldo creditado para sua próxima compra."** — sem detalhar motivo técnico.
+
+## Detalhes técnicos
+
+- Arquivo único alterado: `src/pages/ComprarParceiro.tsx`.
+- Cores: usar tokens já existentes (`text-emerald-400`, `text-amber-400`, `text-destructive`, `font-mono`) — combina com o tema hacker matrix.
+- Os campos `erro` e `lastMessage` continuam vindo do backend (não removidos do payload), só não são exibidos. Útil para futura tela de admin.
+- Manter o bloco do "convide o bot no workspace Lovable" intacto — é instrução obrigatória para o cliente.
 
 ## Verificação
 
-- Em "Meus pedidos", clicar **Refazer pedido** num pedido `refunded`/`failed`/`expired` próprio → o modal "Seus dados" abre por cima da lista, sem trocar de aba, com nome/email/whatsapp/CPF/workspace já preenchidos.
-- Fechar o modal volta direto pra lista de pedidos no mesmo lugar.
-- Editar qualquer campo e confirmar gera o pedido normalmente (com abate de saldo se aplicável).
+Após o patch: abrir um pedido `processing` no modal e na lista, confirmar que nenhuma string técnica (`billing`, `stripe`, `login`, `Lovable bloqueou`, stack trace, URL, etc.) aparece — só rótulos curtos neutros em verde.

@@ -1574,38 +1574,44 @@ function OrdersHistorySection({
                       Bot: <span className="font-mono text-primary">{o.botEmail}</span>
                     </div>
                   )}
-                  {o.progress && ["paid","queued","processing"].includes(o.status) && (o.progress.farmed > 0 || o.progress.lastMessage) && (
+                  {o.progress && ["paid","queued","processing"].includes(o.status) && (o.progress.farmed > 0 || o.progress.lastStatus) && (
                     <div className="mt-2 space-y-1">
                       <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
                         <span>{o.progress.farmed} / {o.credits} créditos</span>
                         <span>{o.progress.percent}%</span>
                       </div>
                       <Progress value={o.progress.percent} className="h-1.5" />
-                      {o.progress.lastMessage && (
+                      {o.progress.lastStatus && (
                         <div
-                          className={`text-[11px] line-clamp-2 ${
+                          className={`text-[11px] font-mono ${
                             o.progress.lastStatus === "limite"
                               ? "text-amber-400"
                               : o.progress.lastStatus === "falha" || o.progress.lastStatus === "erro"
-                              ? "text-destructive"
+                              ? "text-amber-400"
                               : o.progress.lastStatus === "sucesso" || o.progress.lastStatus === "concluido"
                               ? "text-emerald-400"
-                              : "text-primary"
+                              : "text-emerald-400"
                           }`}
-                          title={o.progress.lastMessage}
                         >
-                          Bot: {o.progress.lastMessage}
+                          {o.progress.lastStatus === "sucesso" || o.progress.lastStatus === "concluido"
+                            ? "última tentativa: sucesso"
+                            : o.progress.lastStatus === "limite"
+                            ? "em cooldown"
+                            : o.progress.lastStatus === "falha" || o.progress.lastStatus === "erro"
+                            ? "reagendando tentativa"
+                            : "farmando…"}
                         </div>
                       )}
                     </div>
                   )}
-                  {o.status === "failed" && o.failedReason && (
-                    <div className="text-xs text-destructive mt-1">{o.failedReason}</div>
+                  {o.status === "failed" && (
+                    <div className="text-xs text-destructive mt-1">
+                      Não foi possível concluir o farm. Saldo creditado para sua próxima compra.
+                    </div>
                   )}
                   {o.status === "refunded" && (
                     <div className="text-xs text-emerald-400 mt-1">
                       {o.refundedCredits ?? 0} créditos voltaram como crédito pra usar em outro pedido
-                      {o.failedReason ? ` · ${o.failedReason}` : ""}
                     </div>
                   )}
                   {(o.balanceAppliedCredits ?? 0) > 0 && (
@@ -1847,6 +1853,23 @@ function OrderTrackingInline({
     (status === "paid" || status === "queued" || status === "processing") &&
     !order?.stopRequestedAt;
 
+  // Mensagens neutras estilo hacker — ciclam enquanto há execução em andamento.
+  // Nunca expõem o método de farm (sem citar billing/stripe/login/lovable/etc).
+  const HACKER_TICKS = [
+    "> conectando nó…",
+    "> sincronizando sessão…",
+    "> injetando rotina de farm…",
+    "> coletando créditos…",
+    "> validando saldo…",
+  ];
+  const [tickIdx, setTickIdx] = useState(0);
+  const isFarming = progress?.currentExecution?.status === "em_andamento";
+  useEffect(() => {
+    if (!isFarming) return;
+    const id = setInterval(() => setTickIdx((i) => (i + 1) % HACKER_TICKS.length), 2000);
+    return () => clearInterval(id);
+  }, [isFarming]);
+
   const confirmInvite = async () => {
     if (!order) return;
     // Recupera orderId do contexto via window? Não temos. Usamos progresso/state? Precisamos do id.
@@ -1953,24 +1976,20 @@ function OrderTrackingInline({
               <div className="font-mono">
                 {progress.currentExecution.status === "em_andamento" && (
                   <span className="inline-flex items-center gap-1 text-emerald-400">
-                    <Loader2 className="w-3 h-3 animate-spin" /> farmando…
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>{HACKER_TICKS[tickIdx]}</span>
                   </span>
                 )}
                 {progress.currentExecution.status === "limite" && (
-                  <span className="text-amber-400">Lovable bloqueou — próxima tentativa automática</span>
+                  <span className="text-amber-400">cooldown ativo — re-tentando…</span>
                 )}
                 {(progress.currentExecution.status === "sucesso" || progress.currentExecution.status === "concluido") && (
                   <span className="text-emerald-400">+{progress.currentExecution.creditosAdicionados ?? 0} créditos nesta tentativa</span>
                 )}
                 {(progress.currentExecution.status === "falha" || progress.currentExecution.status === "erro") && (
-                  <span className="text-destructive">Falhou: {progress.currentExecution.erro ?? "erro"}</span>
+                  <span className="text-amber-400">tentativa instável — reagendando…</span>
                 )}
               </div>
-              {progress.currentExecution.erro && progress.currentExecution.status !== "falha" && progress.currentExecution.status !== "erro" && (
-                <div className="mt-1 text-[11px] text-muted-foreground break-words">
-                  {progress.currentExecution.erro}
-                </div>
-              )}
             </div>
           )}
           {progress.recent.length > 1 && (
@@ -1993,11 +2012,6 @@ function OrderTrackingInline({
                     <span className="flex-1 min-w-0">
                       <span className="text-foreground">+{r.creditosAdicionados ?? 0}</span>
                       <span className="text-muted-foreground ml-1">{timeAgo(r.atualizadoEm)}</span>
-                      {r.erro && (
-                        <span className="block text-[11px] text-muted-foreground/90 break-words whitespace-normal">
-                          {r.erro}
-                        </span>
-                      )}
                     </span>
                   </li>
                 ))}

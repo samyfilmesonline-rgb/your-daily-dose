@@ -1,83 +1,46 @@
-## Programação recorrente de pedidos multi-workspace
+## O que aconteceu
 
-Adicionar a possibilidade de transformar um pedido manual multi-workspace em uma **programação recorrente diária**: o mesmo conjunto de workspaces farma 200 créditos/dia automaticamente, no mesmo horário em que o pedido foi criado, durante X dias **ou** até uma data de término.
+O pedido `00e21be9` (multi-workspace, criado pela programação `3cf4042a`) foi atribuído ao bot, mas o worker no desktop entrou em loop (abre/fecha o navegador) e **nunca chegou a chamar `start`** no `partner-shop-multi-workspace-tick`. Resultado no banco: `workspaces_total = NULL`, `workspaces_done = 0`, `current_workspace = NULL`, `status = processing`, `stop_requested_at = 21:05:42`.
 
----
+A função `partner-shop-stop-order` só marca `stop_requested_at` e **espera o worker chamar a próxima tick para refundar e liberar o bot**. Como o worker está crashando, o "Parar" fica eternamente sem efeito e o pedido trava.
 
-### 1. Banco de dados
+O `partner-shop-stalled-watchdog` também não resgata esse caso: ele só procura atividade em `execucoes_lovable` filtrando por `target_workspace` (que é `NULL` em multi-ws), então sempre conclui "still_progressing" e ignora.
 
-Nova tabela **`partner_order_schedules`** (uma "programação-mãe" que dispara pedidos-filhos diariamente):
+## Correções
 
-- `partner_id`, `bot_id`, `customer_*` (nome/email/whatsapp), `notes`
-- `workspaces` (jsonb array de nomes), `price_cents_per_workspace`
-- `start_at` (timestamptz — primeiro disparo, hora exata)
-- `end_mode` (`days` | `until_date`), `total_days` (int) ou `end_at` (timestamptz)
-- `daily_time` (time) — derivado de `start_at`, usado para próximos disparos
-- `status` (`active` | `paused` | `completed` | `canceled`)
-- `next_run_at`, `last_run_at`, `runs_completed` (int), `runs_failed` (int)
-- `created_by`, timestamps
+### 1. `partner-shop-stop-order` — parar de verdade quando dá pra parar agora
 
-Nova coluna em **`partner_credit_orders`**:
-- `schedule_id uuid` (nullable) — referência à programação-mãe
-- `schedule_run_index int` (nullable) — qual dia da série este pedido representa
+Lógica nova no edge function:
 
-RLS: parceiro vê/edita só as próprias programações; admin vê tudo.
+- Se `multi_workspace_mode = true` **e** (`workspaces_total IS NULL` ou `workspaces_done = 0` ou `assigned_at` há mais de ~2 min sem progresso): chama direto `refund_order_remainder(_reason: 'stopped_by_customer_pre_start')`. Isso já libera o bot (vira idle), reembolsa 100% (saldo do cliente para PIX, cota do parceiro para manual) e fecha como `refunded`.
+- Caso contrário (worker já começou e está farmando): mantém o comportamento atual (só marca `stop_requested_at`, o tick conclui na próxima troca de workspace).
 
-Nenhum débito antecipado: cada disparo diário cria um pedido novo, debita `200 × nº workspaces` na hora (igual fluxo atual em `partner-shop-multi-workspace-tick action=start`). Se a quota não cobrir, marca o run como `failed_no_quota` e segue tentando no dia seguinte.
+### 2. `partner-shop-stalled-watchdog` — detectar travas multi-ws
 
-### 2. Edge functions
+Adiciona um segundo passo no loop, só para multi-ws:
 
-**`partner-shop-create-order-schedule`** (nova)
-- Recebe os mesmos campos do dialog atual de pedido manual + `endMode`, `totalDays` ou `endAt`
-- Valida bot, parceiro ativo, `pricePerWorkspaceCents >= 1`, ≥ 1 workspace
-- Cria a programação com `next_run_at = start_at` e `status = 'active'`
-- Opcionalmente já dispara o primeiro run se `start_at <= now()`
+- Se `multi_workspace_mode = true` e (`workspaces_total IS NULL` ou (`workspaces_done = 0` e nenhuma execução `execucoes_lovable` desde `assigned_at` para o `email_lovable` do bot, **independente** de workspace), e `assigned_at < cutoffStall`): refunda + libera o bot.
+- Se `stop_requested_at IS NOT NULL` e passou ~2 min sem progresso: refunda + libera. Isso vale também para single-ws.
 
-**`partner-shop-schedule-tick`** (nova, chamada por cron a cada minuto)
-- Pega programações `active` com `next_run_at <= now()`
-- Para cada uma:
-  - Se atingiu `total_days` ou passou de `end_at` → `completed`
-  - Se bot ocupado → **enfileira o pedido** (cria com status `queued` no fluxo normal de `assign_bot_to_order`); o tick avança `next_run_at += 1 dia` mesmo assim
-  - Se bot livre → cria pedido multi-ws e chama o fluxo padrão (worker desktop pega via `multi-workspace-tick`)
-  - Atualiza `last_run_at`, `runs_completed`/`runs_failed`, `next_run_at = next_run_at + 1 day`
+### 3. Pausar automaticamente a programação quando o run falha
 
-Cron via `pg_cron` + `pg_net` (a cada 5 min).
+No `partner-shop-multi-workspace-tick` (action `fail`) e no novo caminho do watchdog: se o pedido tinha `schedule_id`, incrementar `runs_failed` na `partner_order_schedules`. Se 2 falhas consecutivas (ou seja, sem `runs_completed` novo entre elas), setar `status = 'paused'` na programação e gravar uma `failed_reason` legível. Evita que amanhã rode de novo travando outro bot.
 
-**`partner-shop-cancel-order-schedule`** (nova)
-- `status = 'canceled'`, não afeta pedidos-filhos já em execução
+### 4. Limpar o pedido atual (one-shot via SQL)
 
-### 3. UI
+Rodar `refund_order_remainder('00e21be9-...', 'stopped_by_customer_manual_cleanup')` para liberar o bot agora. Pausar a programação `3cf4042a-...` para o usuário decidir o que fazer.
 
-**`ManualOrderDialog.tsx`** — quando `multiWs` está ligado, adicionar um bloco "Programação recorrente":
-- Switch "Repetir diariamente"
-- Quando ligado: radio `Por X dias` / `Até data`
-  - Input numérico de dias (1–60) **ou** date picker (shadcn Calendar)
-- Texto fixo: "Disparo diário às HH:MM (mesmo horário da criação)"
-- Resumo: "Vai rodar N dias × M workspaces × 200 créditos = X créditos por dia, ~Y créditos no total se a quota permitir"
+### 5. UI
 
-Botão muda de "Criar pedido" para "Criar programação" quando recorrência está ligada.
+Sem mudanças visuais — o botão "Parar" já existe. Só passa a funcionar instantaneamente nesse cenário. Opcional: toast mostra "Reembolsado X créditos" usando o `refundedCredits` que o endpoint já retorna.
 
-**Nova página `src/pages/dashboard/Programacoes.tsx`** (rota `/dashboard/programacoes`)
-- Lista programações com: cliente, bot, workspaces, próximo disparo, dia X/N, status, ações (pausar, retomar, cancelar)
-- Drill-down: ao clicar, lista os pedidos-filhos daquela programação
+## Arquivos afetados
 
-**`Pedidos.tsx`** — badge "📅 Dia 3/7" quando pedido tem `schedule_id`.
+- `supabase/functions/partner-shop-stop-order/index.ts` — lógica de parar imediato.
+- `supabase/functions/partner-shop-stalled-watchdog/index.ts` — detecção multi-ws e stop_requested_at parado.
+- `supabase/functions/partner-shop-multi-workspace-tick/index.ts` — incrementa contador de falhas no schedule.
+- Migration nova: função opcional `pause_schedule_after_failures(uuid)` (helper) e cleanup do pedido travado.
 
-**`AppSidebar.tsx`** + `lib/sidebar-tabs.ts` — novo item "Programações" (atrás da mesma flag de permissão de Pedidos).
+## Fora de escopo
 
-### 4. Documentação
-
-Atualizar `docs/desktop-updater.md`: nada muda no worker — cada run é um pedido multi-ws normal. A programação vive 100% no servidor.
-
----
-
-### Decisões confirmadas
-- Modo de duração: ambos (X dias **ou** data de término)
-- Horário: mesmo do momento da criação
-- Cobrança: por execução diária (não reserva tudo no início)
-- Conflito de bot: enfileira como pedido normal e roda assim que possível
-
-### Fora de escopo
-- Programações com intervalo diferente de 24h (semanal, etc.)
-- Edição de workspaces/preço de uma programação ativa (apenas cancelar e recriar)
-- Notificações por email/whatsapp a cada run
+- Investigar por que o worker desktop está em loop de login (precisa logs do app Python). O backend agora vai destravar sozinho mesmo se o worker continuar quebrado.

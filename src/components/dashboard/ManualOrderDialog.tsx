@@ -50,7 +50,7 @@ const schemaSingle = z.object({
 });
 const schemaMulti = z.object({
   ...baseSchema,
-  pricePerWorkspaceReais: z.coerce.number().min(0).max(100000),
+  pricePerWorkspaceReais: z.coerce.number().min(0.01, "Mínimo R$ 0,01").max(100000),
 });
 
 export default function ManualOrderDialog({

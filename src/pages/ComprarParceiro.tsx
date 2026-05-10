@@ -550,6 +550,84 @@ export default function ComprarParceiro() {
     toast({ title: "Copiado!", description: "Cole no app do seu banco." });
   };
 
+  const submitBalanceOnly = async () => {
+    if (workspace.trim().length < 2) {
+      toast({ title: "Workspace obrigatório", description: "Informe o nome exato do workspace Lovable de destino.", variant: "destructive" });
+      return;
+    }
+    if (name.trim().length < 2) {
+      toast({ title: "Nome obrigatório", variant: "destructive" });
+      return;
+    }
+    if (!email.trim()) {
+      toast({ title: "E-mail obrigatório", variant: "destructive" });
+      return;
+    }
+    const taxDigits = taxId.replace(/\D/g, "");
+    if (taxDigits.length !== 11 && taxDigits.length !== 14) {
+      toast({ title: "CPF/CNPJ inválido", description: "Use 11 dígitos para CPF ou 14 para CNPJ.", variant: "destructive" });
+      return;
+    }
+    const whatsDigits = whatsapp.replace(/\D/g, "");
+    if (whatsDigits.length < 10 || whatsDigits.length > 13) {
+      toast({ title: "WhatsApp inválido", description: "Informe DDD + número (ex: 11999999999).", variant: "destructive" });
+      return;
+    }
+    if (totalAvailableBalance <= 0) {
+      toast({ title: "Sem saldo", description: "Você não tem créditos disponíveis.", variant: "destructive" });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("partner-shop-create-balance-only-order", {
+        body: {
+          partnerId,
+          customerName: name.trim(),
+          customerEmail: email.trim().toLowerCase(),
+          customerWhatsapp: whatsDigits,
+          customerTaxId: taxDigits,
+          targetWorkspace: workspace.trim(),
+          clientFingerprint: fingerprint,
+        },
+      });
+      if (error) {
+        const ctx = (error as { context?: Response }).context;
+        if (ctx && typeof ctx.json === "function") {
+          try {
+            const body = await ctx.json();
+            const msg = typeof body?.error === "string" ? body.error : body?.error ? JSON.stringify(body.error) : error.message;
+            throw new Error(msg);
+          } catch { throw error; }
+        }
+        throw error;
+      }
+      if (!data?.orderId) throw new Error("Resposta inválida");
+      const credits = Number(data.credits ?? data.balanceAppliedCredits ?? 0);
+      setPix({
+        orderId: data.orderId,
+        paidWithBalance: true,
+        balanceAppliedCredits: credits,
+        amountCents: 0,
+      } as PixData);
+      setStep("paid");
+      toast({
+        title: "Pedido criado com saldo",
+        description: `Pedido de ${credits} créditos criado usando seu saldo. Sem cobrança.`,
+      });
+      setCrossAuth(null);
+      setPrefillOrderId(null);
+      try {
+        localStorage.setItem(LAST_EMAIL_KEY, email.trim().toLowerCase());
+        localStorage.setItem(ACTIVE_ORDER_KEY, data.orderId);
+      } catch { /* ignore */ }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Erro ao criar pedido";
+      toast({ title: "Falha", description: msg, variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const main = selected ?? packs?.[0];
   const discountPct = useMemo(() => {
     if (!main?.original_price_cents) return null;

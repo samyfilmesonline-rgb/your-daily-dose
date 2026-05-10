@@ -69,6 +69,8 @@ type OrderState = {
   stopRequestedAt?: string | null;
   balanceAppliedCredits?: number;
   refundedCredits?: number;
+  workspaceNotFound?: boolean;
+  attemptedWorkspace?: string | null;
   progress?: {
     farmed: number;
     target: number;

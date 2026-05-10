@@ -51,9 +51,9 @@ Deno.serve(async (req) => {
       !!order &&
       (order.status === "processing" || order.status === "queued" || order.status === "paid") &&
       (
-        // multi-ws nunca iniciado (worker travou antes do start)
-        (order.multi_workspace_mode === true && (order.workspaces_total == null || order.workspaces_done === 0)) ||
-        // qualquer pedido sem progresso há mais de 2 min
+        // multi-ws sempre encerra direto pelo backend; o worker pode estar morto
+        order.multi_workspace_mode === true ||
+        // single-ws sem progresso há mais de 2 min
         (order.workspaces_done === 0 && ageMin >= 2)
       );
 

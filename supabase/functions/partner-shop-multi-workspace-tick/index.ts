@@ -260,8 +260,7 @@ Deno.serve(async (req) => {
 
       if (stopRequested) finalStatus = "refunded";
       else if (doneCount === 0) finalStatus = "failed";
-      else if (doneCount >= plan.length) finalStatus = "delivered";
-      else finalStatus = "refunded";
+      else finalStatus = "delivered";
 
       // refund da diferença (créditos que sobraram do que foi debitado mas não rodaram)
       try {

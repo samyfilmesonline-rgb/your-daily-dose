@@ -450,23 +450,26 @@ export default function Pedidos() {
                     {detail.workspaces_plan.map((w) => (
                       <div
                         key={w.name}
+                        title={w.error ?? undefined}
                         className="flex items-center justify-between gap-2 text-[11px] font-mono py-0.5 border-b border-border/40 last:border-0"
                       >
                         <span className="truncate flex-1">{w.name}</span>
                         <span className="text-muted-foreground">{w.farmed} cr</span>
-                        <span
-                          className={
-                            w.status === "done"
-                              ? "text-primary"
-                              : w.status === "running"
-                                ? "text-amber-400"
-                                : w.status === "failed"
-                                  ? "text-destructive"
-                                  : "text-muted-foreground"
-                          }
-                        >
-                          {w.status}
-                        </span>
+                        {(() => {
+                          const ineligible =
+                            w.status === "failed" && (w.error ?? "").startsWith("workspace_ineligible:");
+                          const map: Record<string, { label: string; cls: string }> = {
+                            done:    { label: "concluído",      cls: "text-primary" },
+                            running: { label: "em andamento",   cls: "text-amber-400" },
+                            pending: { label: "aguardando",     cls: "text-muted-foreground" },
+                            failed:  { label: "falhou",         cls: "text-destructive" },
+                            skipped: { label: "ignorado",       cls: "text-muted-foreground" },
+                          };
+                          const m = ineligible
+                            ? { label: "inapto · pulado", cls: "text-amber-500" }
+                            : map[w.status] ?? { label: w.status, cls: "text-muted-foreground" };
+                          return <span className={m.cls}>{m.label}</span>;
+                        })()}
                       </div>
                     ))}
                   </div>

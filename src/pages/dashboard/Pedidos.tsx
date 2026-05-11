@@ -43,6 +43,7 @@ type Order = {
   workspaces_total?: number | null;
   workspaces_done?: number | null;
   current_workspace?: string | null;
+  stop_requested_at?: string | null;
   workspaces_plan?: Array<{
     name: string;
     status: "pending" | "running" | "done" | "failed" | "skipped";
@@ -71,6 +72,17 @@ const statusMeta: Record<OrderStatus, { label: string; cls: string }> = {
 };
 
 const STATUSES: OrderStatus[] = ["pending", "paid", "queued", "processing", "delivered", "failed", "expired", "refunded"];
+
+function isStopping(o: Pick<Order, "stop_requested_at" | "status">) {
+  return !!o.stop_requested_at && ["paid", "queued", "processing"].includes(o.status);
+}
+
+function effectiveBadge(o: Pick<Order, "stop_requested_at" | "status">): { label: string; cls: string } {
+  if (isStopping(o)) {
+    return { label: "Parando…", cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" };
+  }
+  return statusMeta[o.status];
+}
 
 function brl(c: number) {
   return (c / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -352,11 +364,21 @@ export default function Pedidos() {
                       {o.multi_workspace_mode ? (
                         <>
                           <div>{o.current_workspace ?? "—"}</div>
-                          <div className="text-[10px] text-primary mt-0.5">
-                            {o.workspaces_total == null
-                              ? "aguardando worker iniciar (multi-ws)"
-                              : `todos os ws · ${o.workspaces_done ?? 0}/${o.workspaces_total}`}
-                          </div>
+                          {o.workspaces_total == null ? (
+                            <div className="text-[10px] text-primary mt-0.5">
+                              aguardando worker iniciar (multi-ws)
+                            </div>
+                          ) : (
+                            <div className="mt-1 w-32 max-w-full">
+                              <Progress
+                                value={Math.round(((o.workspaces_done ?? 0) / Math.max(1, o.workspaces_total)) * 100)}
+                                className="h-1.5"
+                              />
+                              <div className="text-[10px] text-primary mt-0.5">
+                                {o.workspaces_done ?? 0}/{o.workspaces_total} workspaces
+                              </div>
+                            </div>
+                          )}
                         </>
                       ) : (
                         o.target_workspace ?? <span className="text-destructive">— faltando</span>
@@ -369,9 +391,14 @@ export default function Pedidos() {
                     </TableCell>
                     <TableCell className="font-mono text-sm">{o.credits} cr · {brl(o.amount_cents)}</TableCell>
                     <TableCell>
-                      <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${meta.cls}`}>
-                        {meta.label}
-                      </span>
+                      {(() => {
+                        const eb = effectiveBadge(o);
+                        return (
+                          <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${eb.cls}`}>
+                            {eb.label}
+                          </span>
+                        );
+                      })()}
                       {o.status === "failed" && o.failed_reason && (
                         <div className="text-[10px] text-destructive mt-1 max-w-[180px] truncate" title={o.failed_reason}>
                           {o.failed_reason}
@@ -435,7 +462,7 @@ export default function Pedidos() {
                 <div><span className="text-muted-foreground">Créditos:</span> {detail.credits}</div>
                 <div><span className="text-muted-foreground">Valor:</span> {brl(detail.amount_cents)}</div>
                 <div><span className="text-muted-foreground">Tx:</span> <span className="font-mono">{detail.tx_id ?? "—"}</span></div>
-                <div><span className="text-muted-foreground">Status:</span> {statusMeta[detail.status].label}</div>
+                <div><span className="text-muted-foreground">Status:</span> {effectiveBadge(detail).label}</div>
                 <div><span className="text-muted-foreground">Pago em:</span> {detail.paid_at ? new Date(detail.paid_at).toLocaleString("pt-BR") : "—"}</div>
                 <div><span className="text-muted-foreground">Entregue em:</span> {detail.delivered_at ? new Date(detail.delivered_at).toLocaleString("pt-BR") : "—"}</div>
                 <div><span className="text-muted-foreground">Pix expira:</span> {detail.pix_expires_at ? new Date(detail.pix_expires_at).toLocaleString("pt-BR") : "—"}</div>
@@ -446,6 +473,31 @@ export default function Pedidos() {
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
                     Workspaces ({detail.workspaces_done ?? 0}/{detail.workspaces_total ?? detail.workspaces_plan.length})
                   </div>
+                  {(() => {
+                    const plan = detail.workspaces_plan!;
+                    const counts = {
+                      done: plan.filter((w) => w.status === "done").length,
+                      running: plan.filter((w) => w.status === "running").length,
+                      pending: plan.filter((w) => w.status === "pending").length,
+                      failed: plan.filter((w) => w.status === "failed").length,
+                      skipped: plan.filter((w) => w.status === "skipped").length,
+                    };
+                    const next = plan.find((w) => w.status === "running") ?? plan.find((w) => w.status === "pending");
+                    return (
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] font-mono mb-1.5">
+                        <span className="text-primary">{counts.done} concluído</span>
+                        <span className="text-amber-400">{counts.running} rodando</span>
+                        <span className="text-muted-foreground">{counts.pending} aguardando</span>
+                        <span className="text-destructive">{counts.failed} falhou</span>
+                        <span className="text-muted-foreground">{counts.skipped} ignorado</span>
+                        {detail.status === "processing" && next && (
+                          <span className="ml-auto text-primary/80">
+                            {counts.running > 0 ? "atual" : "próximo"}: <strong>{next.name}</strong>
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div className="max-h-48 overflow-y-auto">
                     {detail.workspaces_plan.map((w) => (
                       <div
@@ -473,6 +525,42 @@ export default function Pedidos() {
                       </div>
                     ))}
                   </div>
+                  {(() => {
+                    const plan = detail.workspaces_plan!;
+                    const hasMore = plan.some((w) => w.status === "pending" || w.status === "running");
+                    const someFail = plan.some((w) => w.status === "failed");
+                    if (detail.status === "processing" && hasMore && someFail) {
+                      return (
+                        <div className="text-[10px] text-amber-400 mt-1.5">
+                          Falha em workspace(s) anteriores — o farm continua nos próximos automaticamente.
+                        </div>
+                      );
+                    }
+                    if (detail.status === "delivered" && (plan.some((w) => w.status === "failed" || w.status === "skipped"))) {
+                      const failN = plan.filter((w) => w.status === "failed" || w.status === "skipped").length;
+                      return (
+                        <div className="text-[10px] text-amber-400 mt-1.5">
+                          Entregue parcialmente — {failN} workspace(s) com falha/ignorado.
+                        </div>
+                      );
+                    }
+                    if (detail.status === "failed") {
+                      return (
+                        <div className="text-[10px] text-destructive mt-1.5">
+                          Nenhum workspace foi concluído com sucesso.
+                        </div>
+                      );
+                    }
+                    if (detail.status === "refunded") {
+                      const doneN = plan.filter((w) => w.status === "done").length;
+                      return (
+                        <div className="text-[10px] text-muted-foreground mt-1.5">
+                          Cancelado — {doneN} de {plan.length} workspaces concluídos antes da parada.
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
               )}
               {(() => {
@@ -585,6 +673,13 @@ export default function Pedidos() {
                   <div className="text-xs font-medium text-destructive flex items-center gap-1">
                     <Square className="w-3.5 h-3.5" /> Parar farm / cancelar recarga
                   </div>
+                  {isStopping(detail) ? (
+                    <p className="text-[11px] text-amber-400">
+                      Cancelamento solicitado em {new Date(detail.stop_requested_at!).toLocaleString("pt-BR")} —
+                      aguardando o worker finalizar o workspace atual. O status final aparece aqui assim que o ciclo fechar.
+                    </p>
+                  ) : (
+                  <>
                   <p className="text-[11px] text-muted-foreground">
                     Para o bot agora. Apenas a parte ainda não farmada é estornada para sua cota — o que já foi entregue é mantido.
                   </p>
@@ -623,6 +718,8 @@ export default function Pedidos() {
                     )}
                   </Button>
                   </div>
+                  </>
+                  )}
                 </div>
               )}
               {detail.is_manual && ["refunded", "failed"].includes(detail.status) && (
@@ -630,15 +727,34 @@ export default function Pedidos() {
                   <div className="text-xs font-medium text-amber-400 flex items-center gap-1">
                     <RotateCw className="w-3.5 h-3.5" /> Tentar farmar novamente
                   </div>
-                  <p className="text-[11px] text-muted-foreground">
-                    Re-debita os créditos restantes da cota do parceiro e atribui um bot. Se nenhum estiver livre, entra na fila.
-                  </p>
+                  {(() => {
+                    if (detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan)) {
+                      const pending = detail.workspaces_plan.filter((w) => w.status !== "done").length;
+                      return (
+                        <p className="text-[11px] text-muted-foreground">
+                          Vai reprocessar <strong className="text-foreground">{pending} workspace(s)</strong> que ainda
+                          não foram concluídos. Re-debita 200 créditos por workspace e tenta atribuir um bot. Se nenhum
+                          estiver livre, entra na fila.
+                        </p>
+                      );
+                    }
+                    return (
+                      <p className="text-[11px] text-muted-foreground">
+                        Re-debita os créditos restantes da cota do parceiro e atribui um bot. Se nenhum estiver livre, entra na fila.
+                      </p>
+                    );
+                  })()}
                   <Button
                     size="sm"
                     disabled={retryLoading}
                     onClick={async () => {
                       if (!detail) return;
-                      if (!confirm(`Re-debitar ${detail.credits} créditos da cota e tentar farmar de novo?`)) return;
+                      let confirmMsg = `Re-debitar ${detail.credits} créditos da cota e tentar farmar de novo?`;
+                      if (detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan)) {
+                        const pending = detail.workspaces_plan.filter((w) => w.status !== "done").length;
+                        confirmMsg = `Re-debitar ${pending * 200} créditos e refazer ${pending} workspace(s)?`;
+                      }
+                      if (!confirm(confirmMsg)) return;
                       setRetryLoading(true);
                       try {
                         const { data, error } = await supabase.functions.invoke(

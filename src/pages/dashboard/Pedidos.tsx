@@ -43,6 +43,7 @@ type Order = {
   workspaces_total?: number | null;
   workspaces_done?: number | null;
   current_workspace?: string | null;
+  stop_requested_at?: string | null;
   workspaces_plan?: Array<{
     name: string;
     status: "pending" | "running" | "done" | "failed" | "skipped";
@@ -71,6 +72,17 @@ const statusMeta: Record<OrderStatus, { label: string; cls: string }> = {
 };
 
 const STATUSES: OrderStatus[] = ["pending", "paid", "queued", "processing", "delivered", "failed", "expired", "refunded"];
+
+function isStopping(o: Pick<Order, "stop_requested_at" | "status">) {
+  return !!o.stop_requested_at && ["paid", "queued", "processing"].includes(o.status);
+}
+
+function effectiveBadge(o: Pick<Order, "stop_requested_at" | "status">): { label: string; cls: string } {
+  if (isStopping(o)) {
+    return { label: "Parando…", cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" };
+  }
+  return statusMeta[o.status];
+}
 
 function brl(c: number) {
   return (c / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });

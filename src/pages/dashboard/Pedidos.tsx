@@ -673,6 +673,13 @@ export default function Pedidos() {
                   <div className="text-xs font-medium text-destructive flex items-center gap-1">
                     <Square className="w-3.5 h-3.5" /> Parar farm / cancelar recarga
                   </div>
+                  {isStopping(detail) ? (
+                    <p className="text-[11px] text-amber-400">
+                      Cancelamento solicitado em {new Date(detail.stop_requested_at!).toLocaleString("pt-BR")} —
+                      aguardando o worker finalizar o workspace atual. O status final aparece aqui assim que o ciclo fechar.
+                    </p>
+                  ) : (
+                  <>
                   <p className="text-[11px] text-muted-foreground">
                     Para o bot agora. Apenas a parte ainda não farmada é estornada para sua cota — o que já foi entregue é mantido.
                   </p>
@@ -711,6 +718,8 @@ export default function Pedidos() {
                     )}
                   </Button>
                   </div>
+                  </>
+                  )}
                 </div>
               )}
               {detail.is_manual && ["refunded", "failed"].includes(detail.status) && (
@@ -718,15 +727,34 @@ export default function Pedidos() {
                   <div className="text-xs font-medium text-amber-400 flex items-center gap-1">
                     <RotateCw className="w-3.5 h-3.5" /> Tentar farmar novamente
                   </div>
-                  <p className="text-[11px] text-muted-foreground">
-                    Re-debita os créditos restantes da cota do parceiro e atribui um bot. Se nenhum estiver livre, entra na fila.
-                  </p>
+                  {(() => {
+                    if (detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan)) {
+                      const pending = detail.workspaces_plan.filter((w) => w.status !== "done").length;
+                      return (
+                        <p className="text-[11px] text-muted-foreground">
+                          Vai reprocessar <strong className="text-foreground">{pending} workspace(s)</strong> que ainda
+                          não foram concluídos. Re-debita 200 créditos por workspace e tenta atribuir um bot. Se nenhum
+                          estiver livre, entra na fila.
+                        </p>
+                      );
+                    }
+                    return (
+                      <p className="text-[11px] text-muted-foreground">
+                        Re-debita os créditos restantes da cota do parceiro e atribui um bot. Se nenhum estiver livre, entra na fila.
+                      </p>
+                    );
+                  })()}
                   <Button
                     size="sm"
                     disabled={retryLoading}
                     onClick={async () => {
                       if (!detail) return;
-                      if (!confirm(`Re-debitar ${detail.credits} créditos da cota e tentar farmar de novo?`)) return;
+                      let confirmMsg = `Re-debitar ${detail.credits} créditos da cota e tentar farmar de novo?`;
+                      if (detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan)) {
+                        const pending = detail.workspaces_plan.filter((w) => w.status !== "done").length;
+                        confirmMsg = `Re-debitar ${pending * 200} créditos e refazer ${pending} workspace(s)?`;
+                      }
+                      if (!confirm(confirmMsg)) return;
                       setRetryLoading(true);
                       try {
                         const { data, error } = await supabase.functions.invoke(

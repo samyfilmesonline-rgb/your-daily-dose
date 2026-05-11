@@ -364,11 +364,21 @@ export default function Pedidos() {
                       {o.multi_workspace_mode ? (
                         <>
                           <div>{o.current_workspace ?? "—"}</div>
-                          <div className="text-[10px] text-primary mt-0.5">
-                            {o.workspaces_total == null
-                              ? "aguardando worker iniciar (multi-ws)"
-                              : `todos os ws · ${o.workspaces_done ?? 0}/${o.workspaces_total}`}
-                          </div>
+                          {o.workspaces_total == null ? (
+                            <div className="text-[10px] text-primary mt-0.5">
+                              aguardando worker iniciar (multi-ws)
+                            </div>
+                          ) : (
+                            <div className="mt-1 w-32 max-w-full">
+                              <Progress
+                                value={Math.round(((o.workspaces_done ?? 0) / Math.max(1, o.workspaces_total)) * 100)}
+                                className="h-1.5"
+                              />
+                              <div className="text-[10px] text-primary mt-0.5">
+                                {o.workspaces_done ?? 0}/{o.workspaces_total} workspaces
+                              </div>
+                            </div>
+                          )}
                         </>
                       ) : (
                         o.target_workspace ?? <span className="text-destructive">— faltando</span>
@@ -381,9 +391,14 @@ export default function Pedidos() {
                     </TableCell>
                     <TableCell className="font-mono text-sm">{o.credits} cr · {brl(o.amount_cents)}</TableCell>
                     <TableCell>
-                      <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${meta.cls}`}>
-                        {meta.label}
-                      </span>
+                      {(() => {
+                        const eb = effectiveBadge(o);
+                        return (
+                          <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${eb.cls}`}>
+                            {eb.label}
+                          </span>
+                        );
+                      })()}
                       {o.status === "failed" && o.failed_reason && (
                         <div className="text-[10px] text-destructive mt-1 max-w-[180px] truncate" title={o.failed_reason}>
                           {o.failed_reason}

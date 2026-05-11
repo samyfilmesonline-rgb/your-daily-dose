@@ -462,7 +462,7 @@ export default function Pedidos() {
                 <div><span className="text-muted-foreground">Créditos:</span> {detail.credits}</div>
                 <div><span className="text-muted-foreground">Valor:</span> {brl(detail.amount_cents)}</div>
                 <div><span className="text-muted-foreground">Tx:</span> <span className="font-mono">{detail.tx_id ?? "—"}</span></div>
-                <div><span className="text-muted-foreground">Status:</span> {statusMeta[detail.status].label}</div>
+                <div><span className="text-muted-foreground">Status:</span> {effectiveBadge(detail).label}</div>
                 <div><span className="text-muted-foreground">Pago em:</span> {detail.paid_at ? new Date(detail.paid_at).toLocaleString("pt-BR") : "—"}</div>
                 <div><span className="text-muted-foreground">Entregue em:</span> {detail.delivered_at ? new Date(detail.delivered_at).toLocaleString("pt-BR") : "—"}</div>
                 <div><span className="text-muted-foreground">Pix expira:</span> {detail.pix_expires_at ? new Date(detail.pix_expires_at).toLocaleString("pt-BR") : "—"}</div>
@@ -473,6 +473,31 @@ export default function Pedidos() {
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
                     Workspaces ({detail.workspaces_done ?? 0}/{detail.workspaces_total ?? detail.workspaces_plan.length})
                   </div>
+                  {(() => {
+                    const plan = detail.workspaces_plan!;
+                    const counts = {
+                      done: plan.filter((w) => w.status === "done").length,
+                      running: plan.filter((w) => w.status === "running").length,
+                      pending: plan.filter((w) => w.status === "pending").length,
+                      failed: plan.filter((w) => w.status === "failed").length,
+                      skipped: plan.filter((w) => w.status === "skipped").length,
+                    };
+                    const next = plan.find((w) => w.status === "running") ?? plan.find((w) => w.status === "pending");
+                    return (
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] font-mono mb-1.5">
+                        <span className="text-primary">{counts.done} concluído</span>
+                        <span className="text-amber-400">{counts.running} rodando</span>
+                        <span className="text-muted-foreground">{counts.pending} aguardando</span>
+                        <span className="text-destructive">{counts.failed} falhou</span>
+                        <span className="text-muted-foreground">{counts.skipped} ignorado</span>
+                        {detail.status === "processing" && next && (
+                          <span className="ml-auto text-primary/80">
+                            {counts.running > 0 ? "atual" : "próximo"}: <strong>{next.name}</strong>
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div className="max-h-48 overflow-y-auto">
                     {detail.workspaces_plan.map((w) => (
                       <div
@@ -500,6 +525,42 @@ export default function Pedidos() {
                       </div>
                     ))}
                   </div>
+                  {(() => {
+                    const plan = detail.workspaces_plan!;
+                    const hasMore = plan.some((w) => w.status === "pending" || w.status === "running");
+                    const someFail = plan.some((w) => w.status === "failed");
+                    if (detail.status === "processing" && hasMore && someFail) {
+                      return (
+                        <div className="text-[10px] text-amber-400 mt-1.5">
+                          Falha em workspace(s) anteriores — o farm continua nos próximos automaticamente.
+                        </div>
+                      );
+                    }
+                    if (detail.status === "delivered" && (plan.some((w) => w.status === "failed" || w.status === "skipped"))) {
+                      const failN = plan.filter((w) => w.status === "failed" || w.status === "skipped").length;
+                      return (
+                        <div className="text-[10px] text-amber-400 mt-1.5">
+                          Entregue parcialmente — {failN} workspace(s) com falha/ignorado.
+                        </div>
+                      );
+                    }
+                    if (detail.status === "failed") {
+                      return (
+                        <div className="text-[10px] text-destructive mt-1.5">
+                          Nenhum workspace foi concluído com sucesso.
+                        </div>
+                      );
+                    }
+                    if (detail.status === "refunded") {
+                      const doneN = plan.filter((w) => w.status === "done").length;
+                      return (
+                        <div className="text-[10px] text-muted-foreground mt-1.5">
+                          Cancelado — {doneN} de {plan.length} workspaces concluídos antes da parada.
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
               )}
               {(() => {

@@ -59,6 +59,14 @@ const schemaSchedule = z.object({
   totalDays: z.coerce.number().int().min(1).max(365).optional(),
   endAt: z.string().optional(),
 });
+const schemaScheduleSingle = z.object({
+  ...baseSchema,
+  targetWorkspace: z.string().trim().min(1, "Obrigatório").max(200),
+  credits: z.coerce.number().int().min(1, "Mínimo 1").max(100000),
+  amountReais: z.coerce.number().min(0).max(100000),
+  totalDays: z.coerce.number().int().min(1).max(365).optional(),
+  endAt: z.string().optional(),
+});
 
 export default function ManualOrderDialog({
   open,
@@ -102,15 +110,7 @@ export default function ManualOrderDialog({
     }
   }, [open, user?.id]);
 
-  // Multi-ws só faz sentido com bot específico
-  useEffect(() => {
-    if (botId === "auto" && multiWs) setMultiWs(false);
-  }, [botId, multiWs]);
-
-  // Recorrência só com multi-ws
-  useEffect(() => {
-    if (!multiWs && recurring) setRecurring(false);
-  }, [multiWs, recurring]);
+  // (multi-ws e recurring agora funcionam em qualquer combinação de bot/modo)
 
   // Admin: load partner list
   const { data: partners = [] } = useQuery({
@@ -163,7 +163,7 @@ export default function ManualOrderDialog({
   async function handleSubmit() {
     setErrors({});
     const parsed = recurring
-      ? schemaSchedule.safeParse(form)
+      ? (multiWs ? schemaSchedule.safeParse(form) : schemaScheduleSingle.safeParse(form))
       : multiWs
         ? schemaMulti.safeParse(form)
         : schemaSingle.safeParse(form);
@@ -178,10 +178,7 @@ export default function ManualOrderDialog({
       toast({ title: "Selecione o parceiro", variant: "destructive" });
       return;
     }
-    if (multiWs && botId === "auto") {
-      toast({ title: "Escolha um bot específico", description: "O modo 'todos os workspaces' precisa de um bot específico.", variant: "destructive" });
-      return;
-    }
+    // bot "auto" agora é permitido em qualquer modo
     if (botId !== "auto" && selectedBot?.status === "disabled") {
       toast({ title: "Bot desabilitado", description: "Escolha outro bot ou use atribuição automática.", variant: "destructive" });
       return;
@@ -200,18 +197,35 @@ export default function ManualOrderDialog({
         fnName,
         {
           body: recurring
-            ? {
-                partnerId: isAdmin ? effectivePartnerId : undefined,
-                botId,
-                customerName: v.customerName,
-                customerEmail: v.customerEmail,
-                customerWhatsapp: v.customerWhatsapp || null,
-                notes: v.notes,
-                pricePerWorkspaceCents: Math.round(Number(v.pricePerWorkspaceReais) * 100),
-                endMode,
-                totalDays: endMode === "days" ? Number(v.totalDays ?? form.totalDays) : undefined,
-                endAt: endMode === "until_date" ? new Date(form.endAt).toISOString() : undefined,
-              }
+            ? (multiWs
+              ? {
+                  mode: "multi",
+                  partnerId: isAdmin ? effectivePartnerId : undefined,
+                  botId: botId === "auto" ? null : botId,
+                  customerName: v.customerName,
+                  customerEmail: v.customerEmail,
+                  customerWhatsapp: v.customerWhatsapp || null,
+                  notes: v.notes,
+                  pricePerWorkspaceCents: Math.round(Number(v.pricePerWorkspaceReais) * 100),
+                  endMode,
+                  totalDays: endMode === "days" ? Number(v.totalDays ?? form.totalDays) : undefined,
+                  endAt: endMode === "until_date" ? new Date(form.endAt).toISOString() : undefined,
+                }
+              : {
+                  mode: "single",
+                  partnerId: isAdmin ? effectivePartnerId : undefined,
+                  botId: botId === "auto" ? null : botId,
+                  customerName: v.customerName,
+                  customerEmail: v.customerEmail,
+                  customerWhatsapp: v.customerWhatsapp || null,
+                  notes: v.notes,
+                  targetWorkspace: v.targetWorkspace,
+                  credits: Number(v.credits),
+                  amountCents: Math.round(Number(v.amountReais) * 100),
+                  endMode,
+                  totalDays: endMode === "days" ? Number(v.totalDays ?? form.totalDays) : undefined,
+                  endAt: endMode === "until_date" ? new Date(form.endAt).toISOString() : undefined,
+                })
             : multiWs
             ? {
                 partnerId: isAdmin ? effectivePartnerId : undefined,
@@ -384,11 +398,10 @@ export default function ManualOrderDialog({
             )}
           </div>
 
-          <div className={`flex items-start gap-3 rounded-md border p-3 ${botId === "auto" ? "opacity-50" : ""}`}>
+          <div className="flex items-start gap-3 rounded-md border p-3">
             <Switch
               checked={multiWs}
               onCheckedChange={setMultiWs}
-              disabled={botId === "auto"}
               id="multi-ws"
             />
             <div className="flex-1">
@@ -396,9 +409,7 @@ export default function ManualOrderDialog({
                 <Layers className="w-3 h-3" /> Farmar todos os workspaces do bot (200 cada)
               </label>
               <p className="text-[10px] text-muted-foreground mt-0.5">
-                {botId === "auto"
-                  ? "Disponível apenas com um bot específico selecionado."
-                  : "O bot lista os workspaces dessa conta no Lovable e farma 200 créditos em cada um, em ordem. Total de créditos e valor são calculados após o início."}
+                O bot lista os workspaces dessa conta no Lovable e farma 200 créditos em cada um, em ordem. Total de créditos e valor são calculados após o início. Se o bot estiver em "Automático", o sistema escolhe um bot livre na hora de cada execução.
               </p>
             </div>
           </div>
@@ -411,25 +422,24 @@ export default function ManualOrderDialog({
             </div>
           )}
 
-          {multiWs && (
-            <div className={`flex items-start gap-3 rounded-md border p-3 ${!multiWs ? "opacity-50" : ""}`}>
-              <Switch
-                checked={recurring}
-                onCheckedChange={setRecurring}
-                disabled={!multiWs}
-                id="recurring"
-              />
-              <div className="flex-1">
-                <label htmlFor="recurring" className="text-xs font-medium flex items-center gap-1 cursor-pointer">
-                  <CalendarClock className="w-3 h-3" /> Repetir diariamente (programação)
-                </label>
-                <p className="text-[10px] text-muted-foreground mt-0.5">
-                  Cria um pedido novo todo dia no mesmo horário desta criação,
-                  durante o período definido. A cada execução debita 200 × workspaces.
-                </p>
-              </div>
+          <div className="flex items-start gap-3 rounded-md border p-3">
+            <Switch
+              checked={recurring}
+              onCheckedChange={setRecurring}
+              id="recurring"
+            />
+            <div className="flex-1">
+              <label htmlFor="recurring" className="text-xs font-medium flex items-center gap-1 cursor-pointer">
+                <CalendarClock className="w-3 h-3" /> Repetir diariamente (programação)
+              </label>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                Cria um pedido novo todo dia no mesmo horário desta criação,
+                durante o período definido. {multiWs
+                  ? "A cada execução debita 200 × workspaces."
+                  : "A cada execução debita os créditos definidos para o workspace alvo."}
+              </p>
             </div>
-          )}
+          </div>
 
           {recurring && (
             <div className="rounded-md border p-3 space-y-3">

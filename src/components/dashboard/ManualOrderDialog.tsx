@@ -88,6 +88,7 @@ export default function ManualOrderDialog({
   const [multiWs, setMultiWs] = useState(false);
   const [recurring, setRecurring] = useState(false);
   const [endMode, setEndMode] = useState<"days" | "until_date" | "total_credits">("days");
+  const [startNow, setStartNow] = useState(true);
   const [form, setForm] = useState({
     customerName: "",
     customerEmail: "",
@@ -112,6 +113,7 @@ export default function ManualOrderDialog({
       setMultiWs(false);
       setRecurring(false);
       setEndMode("days");
+      setStartNow(true);
       // default startAt = agora arredondado pro próximo minuto, em formato datetime-local
       const now = new Date(Date.now() + 60_000);
       now.setSeconds(0, 0);
@@ -211,20 +213,24 @@ export default function ManualOrderDialog({
     }
     let startAtIso: string | undefined;
     if (recurring) {
-      if (!form.startAt) {
-        setErrors((e) => ({ ...e, startAt: "Selecione data e hora de início" }));
-        return;
+      if (startNow) {
+        startAtIso = new Date().toISOString();
+      } else {
+        if (!form.startAt) {
+          setErrors((e) => ({ ...e, startAt: "Selecione data e hora de início" }));
+          return;
+        }
+        const d = new Date(form.startAt);
+        if (isNaN(d.getTime())) {
+          setErrors((e) => ({ ...e, startAt: "Data inválida" }));
+          return;
+        }
+        if (d.getTime() < Date.now() - 60_000) {
+          setErrors((e) => ({ ...e, startAt: "Escolha um horário futuro" }));
+          return;
+        }
+        startAtIso = d.toISOString();
       }
-      const d = new Date(form.startAt);
-      if (isNaN(d.getTime())) {
-        setErrors((e) => ({ ...e, startAt: "Data inválida" }));
-        return;
-      }
-      if (d.getTime() < Date.now() - 60_000) {
-        setErrors((e) => ({ ...e, startAt: "Escolha um horário futuro" }));
-        return;
-      }
-      startAtIso = d.toISOString();
     }
     setSubmitting(true);
     try {

@@ -88,6 +88,7 @@ export default function ManualOrderDialog({
   const [multiWs, setMultiWs] = useState(false);
   const [recurring, setRecurring] = useState(false);
   const [endMode, setEndMode] = useState<"days" | "until_date" | "total_credits">("days");
+  const [startNow, setStartNow] = useState(true);
   const [form, setForm] = useState({
     customerName: "",
     customerEmail: "",
@@ -112,6 +113,7 @@ export default function ManualOrderDialog({
       setMultiWs(false);
       setRecurring(false);
       setEndMode("days");
+      setStartNow(true);
       // default startAt = agora arredondado pro próximo minuto, em formato datetime-local
       const now = new Date(Date.now() + 60_000);
       now.setSeconds(0, 0);
@@ -211,20 +213,24 @@ export default function ManualOrderDialog({
     }
     let startAtIso: string | undefined;
     if (recurring) {
-      if (!form.startAt) {
-        setErrors((e) => ({ ...e, startAt: "Selecione data e hora de início" }));
-        return;
+      if (startNow) {
+        startAtIso = new Date().toISOString();
+      } else {
+        if (!form.startAt) {
+          setErrors((e) => ({ ...e, startAt: "Selecione data e hora de início" }));
+          return;
+        }
+        const d = new Date(form.startAt);
+        if (isNaN(d.getTime())) {
+          setErrors((e) => ({ ...e, startAt: "Data inválida" }));
+          return;
+        }
+        if (d.getTime() < Date.now() - 60_000) {
+          setErrors((e) => ({ ...e, startAt: "Escolha um horário futuro" }));
+          return;
+        }
+        startAtIso = d.toISOString();
       }
-      const d = new Date(form.startAt);
-      if (isNaN(d.getTime())) {
-        setErrors((e) => ({ ...e, startAt: "Data inválida" }));
-        return;
-      }
-      if (d.getTime() < Date.now() - 60_000) {
-        setErrors((e) => ({ ...e, startAt: "Escolha um horário futuro" }));
-        return;
-      }
-      startAtIso = d.toISOString();
     }
     setSubmitting(true);
     try {
@@ -489,14 +495,22 @@ export default function ManualOrderDialog({
             <div className="rounded-md border p-3 space-y-3">
               <div>
                 <Label className="text-xs">Data e hora do primeiro farm</Label>
-                <Input
-                  type="datetime-local"
-                  value={form.startAt}
-                  onChange={(e) => field("startAt", e.target.value)}
-                />
+                <div className="flex items-center gap-2 mb-2">
+                  <Switch id="start-now" checked={startNow} onCheckedChange={setStartNow} />
+                  <label htmlFor="start-now" className="text-xs cursor-pointer">Começar agora</label>
+                </div>
+                {!startNow && (
+                  <Input
+                    type="datetime-local"
+                    value={form.startAt}
+                    onChange={(e) => field("startAt", e.target.value)}
+                  />
+                )}
                 {errors.startAt && <p className="text-[10px] text-destructive mt-0.5">{errors.startAt}</p>}
                 <p className="text-[10px] text-muted-foreground mt-1">
-                  A partir desse horário o sistema cria 1 pedido por dia, sempre no mesmo horário.
+                  {startNow
+                    ? "Primeiro pedido sai imediatamente; os próximos rodam todo dia neste horário."
+                    : "A partir desse horário o sistema cria 1 pedido por dia, sempre no mesmo horário."}
                 </p>
               </div>
 

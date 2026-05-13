@@ -114,8 +114,8 @@ Deno.serve(async (req) => {
 
     const now = new Date();
     const requestedStart = b.startAt ? new Date(b.startAt) : now;
-    // tolera até 1 minuto no passado; senão clampa pra agora
-    const startAt = requestedStart.getTime() < now.getTime() - 60_000 ? now : requestedStart;
+    // se está no passado OU dentro dos próximos 60s, trata como "agora" (fast-path imediato)
+    const startAt = requestedStart.getTime() <= now.getTime() + 60_000 ? now : requestedStart;
     const endAt = b.endMode === "until_date" ? new Date(b.endAt!) : null;
     if (endAt && endAt <= startAt) {
       return json(400, { error: "Data de término precisa estar no futuro" });
@@ -165,7 +165,7 @@ Deno.serve(async (req) => {
       .single();
     if (insErr || !created) return json(500, { error: insErr?.message ?? "Falha ao criar" });
 
-    // Só dispara primeiro tick se start_at <= agora (com pequena folga)
+    // Dispara primeiro tick imediato sempre que start_at já passou (ou foi clampado pra now)
     if (startAt.getTime() <= Date.now() + 5_000) {
       try {
         await sb.functions.invoke("partner-shop-schedule-tick", { body: { scheduleId: created.id } });

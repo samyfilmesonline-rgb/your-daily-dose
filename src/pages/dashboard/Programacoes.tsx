@@ -168,7 +168,15 @@ export default function Programacoes() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm">{dailyTime}</TableCell>
-                      <TableCell className="text-xs">{fmtDateTime(s.next_run_at)}</TableCell>
+                      <TableCell className="text-xs">
+                        {(() => {
+                          const due = new Date(s.next_run_at).getTime() <= Date.now();
+                          if (due && s.status === "active") {
+                            return <Badge variant="outline" className="text-[10px]">Aguardando cron (até 1 min)</Badge>;
+                          }
+                          return fmtDateTime(s.next_run_at);
+                        })()}
+                      </TableCell>
                       <TableCell className="text-xs">{prazo}</TableCell>
                       <TableCell className="text-right text-xs">
                         {s.runs_completed} ok

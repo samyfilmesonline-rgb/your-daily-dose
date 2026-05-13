@@ -58,6 +58,7 @@ const schemaSchedule = z.object({
   pricePerWorkspaceReais: z.coerce.number().min(0.01, "Mínimo R$ 0,01").max(100000),
   totalDays: z.coerce.number().int().min(1).max(365).optional(),
   endAt: z.string().optional(),
+  startAt: z.string().optional(),
 });
 const schemaScheduleSingle = z.object({
   ...baseSchema,
@@ -66,6 +67,8 @@ const schemaScheduleSingle = z.object({
   amountReais: z.coerce.number().min(0).max(100000),
   totalDays: z.coerce.number().int().min(1).max(365).optional(),
   endAt: z.string().optional(),
+  startAt: z.string().optional(),
+  totalCreditsTarget: z.coerce.number().int().min(1).max(10_000_000).optional(),
 });
 
 export default function ManualOrderDialog({
@@ -84,7 +87,7 @@ export default function ManualOrderDialog({
   const [submitting, setSubmitting] = useState(false);
   const [multiWs, setMultiWs] = useState(false);
   const [recurring, setRecurring] = useState(false);
-  const [endMode, setEndMode] = useState<"days" | "until_date">("days");
+  const [endMode, setEndMode] = useState<"days" | "until_date" | "total_credits">("days");
   const [form, setForm] = useState({
     customerName: "",
     customerEmail: "",
@@ -95,6 +98,8 @@ export default function ManualOrderDialog({
     pricePerWorkspaceReais: "",
     totalDays: "7",
     endAt: "",
+    startAt: "",
+    totalCreditsTarget: "",
     notes: "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -107,6 +112,12 @@ export default function ManualOrderDialog({
       setMultiWs(false);
       setRecurring(false);
       setEndMode("days");
+      // default startAt = agora arredondado pro próximo minuto, em formato datetime-local
+      const now = new Date(Date.now() + 60_000);
+      now.setSeconds(0, 0);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const local = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      setForm((f) => ({ ...f, startAt: local }));
     }
   }, [open, user?.id]);
 

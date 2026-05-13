@@ -14,9 +14,11 @@ const BaseBody = z.object({
   customerEmail: z.string().trim().email().max(255),
   customerWhatsapp: z.string().trim().max(40).optional().nullable(),
   notes: z.string().trim().min(3).max(500),
-  endMode: z.enum(["days", "until_date"]),
+  startAt: z.string().datetime().optional(),
+  endMode: z.enum(["days", "until_date", "total_credits"]),
   totalDays: z.number().int().min(1).max(365).optional(),
   endAt: z.string().datetime().optional(),
+  totalCreditsTarget: z.number().int().min(1).max(10_000_000).optional(),
 });
 const MultiBody = BaseBody.extend({
   mode: z.literal("multi").optional().default("multi"),
@@ -34,6 +36,14 @@ const Body = z.union([SingleBody, MultiBody]).superRefine((v, ctx) => {
   }
   if (v.endMode === "until_date" && !v.endAt) {
     ctx.addIssue({ code: "custom", message: "endAt obrigatório", path: ["endAt"] });
+  }
+  if (v.endMode === "total_credits") {
+    if (!v.totalCreditsTarget) {
+      ctx.addIssue({ code: "custom", message: "totalCreditsTarget obrigatório", path: ["totalCreditsTarget"] });
+    }
+    if ((v as { mode?: string }).mode !== "single") {
+      ctx.addIssue({ code: "custom", message: "end_mode=total_credits requer modo single", path: ["endMode"] });
+    }
   }
 });
 
@@ -102,13 +112,26 @@ Deno.serve(async (req) => {
       if (bot.partner_id !== partnerId) return json(403, { error: "Bot não pertence ao parceiro" });
     }
 
-    const startAt = new Date();
+    const now = new Date();
+    const requestedStart = b.startAt ? new Date(b.startAt) : now;
+    // tolera até 1 minuto no passado; senão clampa pra agora
+    const startAt = requestedStart.getTime() < now.getTime() - 60_000 ? now : requestedStart;
     const endAt = b.endMode === "until_date" ? new Date(b.endAt!) : null;
     if (endAt && endAt <= startAt) {
       return json(400, { error: "Data de término precisa estar no futuro" });
     }
 
     const isMulti = (b as { mode?: string }).mode !== "single";
+
+    // Para single + total_credits, calcula total_days automaticamente
+    let totalDays: number | null = b.endMode === "days" ? (b.totalDays ?? null) : null;
+    let totalCreditsTarget: number | null = null;
+    if (b.endMode === "total_credits") {
+      const s = b as z.infer<typeof SingleBody>;
+      totalCreditsTarget = b.totalCreditsTarget!;
+      totalDays = Math.ceil(totalCreditsTarget / s.credits);
+    }
+
     const insertRow: Record<string, unknown> = {
       partner_id: partnerId,
       bot_id: b.botId ?? null,
@@ -121,7 +144,8 @@ Deno.serve(async (req) => {
       multi_workspace_mode: isMulti,
       start_at: startAt.toISOString(),
       end_mode: b.endMode,
-      total_days: b.endMode === "days" ? b.totalDays : null,
+      total_days: totalDays,
+      total_credits_target: totalCreditsTarget,
       end_at: endAt ? endAt.toISOString() : null,
       status: "active",
       next_run_at: startAt.toISOString(),
@@ -141,11 +165,13 @@ Deno.serve(async (req) => {
       .single();
     if (insErr || !created) return json(500, { error: insErr?.message ?? "Falha ao criar" });
 
-    // Dispara primeiro tick imediatamente
-    try {
-      await sb.functions.invoke("partner-shop-schedule-tick", { body: { scheduleId: created.id } });
-    } catch (e) {
-      console.warn("first tick err", e);
+    // Só dispara primeiro tick se start_at <= agora (com pequena folga)
+    if (startAt.getTime() <= Date.now() + 5_000) {
+      try {
+        await sb.functions.invoke("partner-shop-schedule-tick", { body: { scheduleId: created.id } });
+      } catch (e) {
+        console.warn("first tick err", e);
+      }
     }
 
     return json(200, { ok: true, scheduleId: created.id });

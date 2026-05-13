@@ -745,6 +745,7 @@ export type Database = {
           start_at: string
           status: Database["public"]["Enums"]["order_schedule_status"]
           target_workspace: string | null
+          total_credits_target: number | null
           total_days: number | null
           updated_at: string
           workspaces: Json | null
@@ -772,6 +773,7 @@ export type Database = {
           start_at: string
           status?: Database["public"]["Enums"]["order_schedule_status"]
           target_workspace?: string | null
+          total_credits_target?: number | null
           total_days?: number | null
           updated_at?: string
           workspaces?: Json | null
@@ -799,6 +801,7 @@ export type Database = {
           start_at?: string
           status?: Database["public"]["Enums"]["order_schedule_status"]
           target_workspace?: string | null
+          total_credits_target?: number | null
           total_days?: number | null
           updated_at?: string
           workspaces?: Json | null
@@ -1338,7 +1341,7 @@ export type Database = {
     Enums: {
       app_role: "admin" | "user"
       farm_bot_status: "idle" | "busy" | "offline" | "disabled"
-      order_schedule_end_mode: "days" | "until_date"
+      order_schedule_end_mode: "days" | "until_date" | "total_credits"
       order_schedule_status: "active" | "paused" | "completed" | "canceled"
       parceiro_status: "pendente" | "ativo" | "suspenso"
       partner_order_status:
@@ -1479,7 +1482,7 @@ export const Constants = {
     Enums: {
       app_role: ["admin", "user"],
       farm_bot_status: ["idle", "busy", "offline", "disabled"],
-      order_schedule_end_mode: ["days", "until_date"],
+      order_schedule_end_mode: ["days", "until_date", "total_credits"],
       order_schedule_status: ["active", "paused", "completed", "canceled"],
       parceiro_status: ["pendente", "ativo", "suspenso"],
       partner_order_status: [

@@ -487,7 +487,20 @@ export default function ManualOrderDialog({
 
           {recurring && (
             <div className="rounded-md border p-3 space-y-3">
-              <RadioGroup value={endMode} onValueChange={(v) => setEndMode(v as "days" | "until_date")} className="flex gap-4">
+              <div>
+                <Label className="text-xs">Data e hora do primeiro farm</Label>
+                <Input
+                  type="datetime-local"
+                  value={form.startAt}
+                  onChange={(e) => field("startAt", e.target.value)}
+                />
+                {errors.startAt && <p className="text-[10px] text-destructive mt-0.5">{errors.startAt}</p>}
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  A partir desse horário o sistema cria 1 pedido por dia, sempre no mesmo horário.
+                </p>
+              </div>
+
+              <RadioGroup value={endMode} onValueChange={(v) => setEndMode(v as "days" | "until_date" | "total_credits")} className="flex flex-wrap gap-4">
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="days" id="m-days" />
                   <label htmlFor="m-days" className="text-xs cursor-pointer">Por X dias</label>
@@ -496,6 +509,12 @@ export default function ManualOrderDialog({
                   <RadioGroupItem value="until_date" id="m-until" />
                   <label htmlFor="m-until" className="text-xs cursor-pointer">Até data</label>
                 </div>
+                {!multiWs && (
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="total_credits" id="m-totcr" />
+                    <label htmlFor="m-totcr" className="text-xs cursor-pointer">Por total de créditos</label>
+                  </div>
+                )}
               </RadioGroup>
 
               {endMode === "days" ? (
@@ -509,7 +528,7 @@ export default function ManualOrderDialog({
                     onChange={(e) => field("totalDays", e.target.value)}
                   />
                 </div>
-              ) : (
+              ) : endMode === "until_date" ? (
                 <div>
                   <Label className="text-xs">Data final</Label>
                   <Input
@@ -518,6 +537,42 @@ export default function ManualOrderDialog({
                     onChange={(e) => field("endAt", e.target.value)}
                   />
                   {errors.endAt && <p className="text-[10px] text-destructive mt-0.5">{errors.endAt}</p>}
+                </div>
+              ) : (
+                <div>
+                  <Label className="text-xs">Total de créditos a recarregar</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={form.totalCreditsTarget}
+                    onChange={(e) => field("totalCreditsTarget", e.target.value)}
+                    placeholder="Ex.: 1000"
+                  />
+                  {errors.totalCreditsTarget && <p className="text-[10px] text-destructive mt-0.5">{errors.totalCreditsTarget}</p>}
+                  {(() => {
+                    const tot = Number(form.totalCreditsTarget);
+                    const per = Number(form.credits);
+                    if (!tot || !per) {
+                      return (
+                        <p className="text-[10px] text-muted-foreground mt-1">
+                          Informe os créditos por execução acima e a meta total aqui — o sistema calcula quantos dias serão necessários.
+                        </p>
+                      );
+                    }
+                    const days = Math.ceil(tot / per);
+                    const start = form.startAt ? new Date(form.startAt) : new Date();
+                    const endDate = new Date(start.getTime());
+                    endDate.setDate(endDate.getDate() + days - 1);
+                    const endStr = endDate.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+                    const exact = tot % per === 0;
+                    return (
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        ≈ <span className="text-foreground font-medium">{days} dia(s)</span> de farm ({per} créditos/dia), terminando em <span className="text-foreground">{endStr}</span>.
+                        {!exact && <> Última execução pode ultrapassar a meta ({days * per} créditos no total).</>}
+                      </p>
+                    );
+                  })()}
                 </div>
               )}
 

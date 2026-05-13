@@ -1,59 +1,92 @@
-## Diagnóstico
+## Objetivo
 
-Backend já está atualizado:
+Permitir "Repetir diariamente" para **todos os tipos de pedido manual**:
+- (a) Single-workspace (workspace alvo + créditos + valor fixo por execução)
+- (b) Bot "Automático" (escolhe um bot livre na hora do tick), tanto para single-ws quanto multi-ws
 
-- `partner-shop-create-manual-order` aceita `multiWorkspaceMode: true` (frontend já envia ✓).
-- `partner-shop-multi-workspace-tick` controla `start/next/fail`, marca workspaces como `failed` ou `skipped` e finaliza com `delivered` (≥1 sucesso), `failed` (0 sucessos) ou `refunded` (parado).
-- `cancel_manual_order` (RPC) seta `stop_requested_at = now()` e refunda — para multi-ws a finalização real (status, libera bot, limpa `current_workspace`) só ocorre quando o worker faz `next/fail` ou o watchdog age.
-- Migração nova de `retry_manual_order` (já enviada) reconstrói `workspaces_plan`, define o primeiro pendente como `running`, ajusta `current_workspace` e chama `assign_bot_to_order`.
+Hoje a programação só funciona para multi-ws com bot específico. Vamos remover essa cascata e ensinar o backend a criar pedidos do tipo correto a cada tick.
 
-O frontend (`src/pages/dashboard/Pedidos.tsx`) já mostra o `workspaces_plan` por linha e badges por status, mas tem 4 lacunas visuais para o novo comportamento. **Nenhuma mudança em backend, RPC, edge functions ou no `ManualOrderDialog` — só ajustes em `Pedidos.tsx`.**
+## Mudanças
 
-## Mudanças (somente `src/pages/dashboard/Pedidos.tsx`)
+### 1. Banco — `partner_order_schedules` (migration)
 
-### 1. Adicionar `stop_requested_at` ao tipo `Order`
-Já está sendo trazido pelo `select("*")`. Apenas declarar no tipo e usar.
+Adicionar colunas para suportar os dois modos novos:
 
-### 2. Badge "Cancelamento solicitado" (item 4 do pedido)
-Quando `stop_requested_at != null` **e** `status in ('paid','queued','processing')`:
+```sql
+alter table public.partner_order_schedules
+  add column if not exists multi_workspace_mode boolean not null default true,
+  add column if not exists target_workspace text,
+  add column if not exists credits_per_run integer,
+  add column if not exists amount_cents_per_run integer,
+  alter column bot_id drop not null;       -- permitir auto
+```
 
-- Na coluna Status da tabela: substituir o pill verde "Processando" por um pill âmbar `Parando… (cancelamento solicitado)` com ícone `Square`.
-- No diálogo de detalhes: mostrar aviso "Cancelamento solicitado em <data> — aguardando o worker finalizar o workspace atual." e **esconder o botão "Parar e estornar"** (evita cliques duplicados que disparam erro do RPC porque o stop já foi pedido).
-- Manter `statusMeta` original; criar uma função `effectiveStatusBadge(o)` que devolve `{label, cls, icon}` derivada.
+Regras (validadas via trigger):
+- `multi_workspace_mode = true` → exige `price_cents_per_workspace`, ignora `target_workspace`/`credits_per_run`/`amount_cents_per_run`.
+- `multi_workspace_mode = false` → exige `target_workspace`, `credits_per_run`, `amount_cents_per_run`.
+- `bot_id` pode ser `NULL` (modo automático).
 
-### 3. Falha parcial em multi-ws (itens 2 e 5)
-No painel `workspaces_plan` do diálogo:
+Pedidos legados ficam com `multi_workspace_mode = true` (default), preservando o comportamento atual.
 
-- Adicionar uma linha de resumo no topo: `done · running · pending · failed · skipped` com contagens coloridas.
-- Quando `status === 'processing'` e existir um `pending`/`running`, mostrar embaixo: `Próximo: <nome>` em vez de só "X/Y".
-- Em uma linha do plano com `failed` (não `workspace_ineligible`), mostrar tooltip do erro **e** texto "continua no próximo" se ainda houver pending/running — para reforçar que falha de 1 ws não é falha do pedido.
+### 2. Edge function `partner-shop-create-order-schedule`
 
-Na coluna Workspace da tabela (multi-ws): trocar o texto plano `todos os ws · X/Y` por uma barra `Progress` fina + `X/Y workspaces` para dar visualização imediata.
+Aceitar 3 formatos no body:
 
-### 4. Status final multi-ws com mensagens corretas
-No diálogo, quando multi-ws e `status` final:
+```ts
+// multi-ws (existente)
+{ mode: "multi", botId?, pricePerWorkspaceCents, ... }
+// single-ws (novo)
+{ mode: "single", botId?, targetWorkspace, credits, amountCents, ... }
+```
 
-- `delivered` com algum `failed`/`skipped` no plano: mostrar nota "Entregue parcialmente — N workspace(s) com falha/ignorado." (sem alterar o pill).
-- `failed`: usar `failed_reason` do backend (`all_workspaces_failed`) e exibir "Nenhum workspace foi concluído com sucesso."
-- `refunded`: mostrar "Cancelado — N de M workspaces concluídos antes da parada."
+- `botId` agora opcional em ambos (omitir = automático).
+- Validar com `zod` discriminated union.
+- Persistir `multi_workspace_mode`, `bot_id` (nullable), `target_workspace`, `credits_per_run`, `amount_cents_per_run`.
 
-### 5. Retry com cópia adequada para multi-ws (item 3)
-No bloco "Tentar novamente":
+### 3. Edge function `partner-shop-schedule-tick`
 
-- Para multi-ws, calcular `pendingCount = plan.filter(w => w.status !== 'done').length` e mostrar:
-  - Texto: "Vai reprocessar **N workspace(s)** que ainda não foram concluídos. Re-debita 200 créditos por workspace e tenta atribuir um bot."
-  - Confirmação: `Re-debitar ${N*200} créditos e refazer ${N} workspace(s)?`
-- Para single-ws, manter a cópia atual.
-- Não mexer no payload da chamada — `partner-shop-retry-manual-order` já cuida do restante (limpar `current_workspace`, reatribuir bot, etc., via a migração já aprovada).
+No `processSchedule`, ramificar pelo `multi_workspace_mode`:
 
-### 6. Status enums
-Manter exatamente os 8 já presentes em `OrderStatus` (`pending|paid|queued|processing|delivered|failed|expired|refunded`) — coincide com o enum `partner_order_status`. Sem `canceled`.
+- **Multi-ws** (atual): mantém exatamente o que faz hoje.
+- **Single-ws** (novo): cria `partner_credit_orders` com `multi_workspace_mode=false`, `target_workspace`, `credits = credits_per_run`, `amount_cents = amount_cents_per_run`, `is_manual=true`.
 
-## Verificação
+Atribuição de bot:
+- Se `bot_id` da programação é `NULL` → chamar `assign_bot_to_order(orderId)` (mesmo helper já usado no fluxo manual). Ele acha um bot livre do parceiro ou marca `queued`.
+- Se `bot_id` definido → manter lógica atual (claim atômico do bot específico, ou `queued`).
 
-- Criar pedido multi-ws com bot ocupado → tabela mostra barra `Progress` 0/N.
-- Worker rodando → badges por workspace atualizam (running/done) e resumo aparece no topo do plano.
-- Clicar "Parar" em pedido multi-ws → pill vira "Parando…", botão some, painel mostra "Cancelamento solicitado em…". Quando o worker fechar o ciclo, status final aparece corretamente (`refunded` com texto "N de M concluídos").
-- Em pedido com 1 workspace `failed` mas outros ainda `pending` → status continua "Processando" e a linha falha mostra "continua no próximo".
-- Pedido `failed` ou `refunded` → botão "Tentar novamente" usa cópia multi-ws com a contagem correta de workspaces a refazer; após clicar, realtime traz `processing` com `current_workspace` = primeiro pending.
-- Single-ws continua com a cópia/comportamento antigos (sem regressão).
+### 4. Frontend `ManualOrderDialog.tsx`
+
+Remover as travas:
+
+- Apagar o efeito que desliga `recurring` quando `multiWs` é off (linha 111-113).
+- Apagar o efeito que desliga `multiWs` quando `botId === "auto"` (linha 106-108) **OU** mantê-lo só como aviso, não como trava.
+- Mover o switch "Repetir diariamente" para **fora** do bloco `{multiWs && ...}`, sempre visível.
+- Permitir bot "Automático" tanto em multi quanto single.
+
+Schema de submit:
+- Recurring + multi → `{ mode: "multi", botId: botId === "auto" ? null : botId, pricePerWorkspaceCents, endMode, ... }`
+- Recurring + single → `{ mode: "single", botId: botId === "auto" ? null : botId, targetWorkspace, credits, amountCents, endMode, ... }`
+
+Texto explicativo do switch ajustado para refletir que também roda em single-workspace e com bot automático.
+
+### 5. Frontend `Programacoes.tsx`
+
+A tabela hoje assume multi-ws. Adicionar:
+- Coluna/badge "Tipo": `Multi-WS` ou `Single-WS (workspace X)`.
+- Coluna "Bot": nome do bot ou "Automático".
+- Texto de "Execuções" inalterado.
+
+Tipo `Schedule` ganha `multi_workspace_mode`, `target_workspace`, `credits_per_run`, `amount_cents_per_run`, e `bot_id: string | null`.
+
+## Detalhes técnicos
+
+- Nenhuma mudança no worker desktop — ele já lida com pedidos single e multi vindos da fila normal.
+- `partner-shop-cancel-order-schedule` não muda.
+- Watchdog/`refund_order_remainder` não mudam — pedidos gerados pelo tick seguem o fluxo padrão de cada tipo.
+- Backfill: pedidos gerados antes da migration ficam com `multi_workspace_mode=true` (default), igual ao comportamento atual.
+- Quota do parceiro: o `partner-shop-create-manual-order` já valida limite — vamos replicar a mesma checagem dentro do `schedule-tick` antes de inserir o pedido (se faltar quota, marca `runs_failed++` e não cria).
+
+## Fora de escopo
+
+- Não mexer em pedidos não-manuais (PIX) — programação continua sendo só para fluxo manual.
+- Não alterar semântica do retry/stop existentes.

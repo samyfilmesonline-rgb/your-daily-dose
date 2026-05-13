@@ -293,6 +293,8 @@ export default function ManualOrderDialog({
         pricePerWorkspaceReais: "",
         totalDays: "7",
         endAt: "",
+        startAt: "",
+        totalCreditsTarget: "",
         notes: "",
       });
     } catch (err) {

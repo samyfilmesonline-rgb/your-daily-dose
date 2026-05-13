@@ -58,6 +58,7 @@ const schemaSchedule = z.object({
   pricePerWorkspaceReais: z.coerce.number().min(0.01, "Mínimo R$ 0,01").max(100000),
   totalDays: z.coerce.number().int().min(1).max(365).optional(),
   endAt: z.string().optional(),
+  startAt: z.string().optional(),
 });
 const schemaScheduleSingle = z.object({
   ...baseSchema,
@@ -66,6 +67,8 @@ const schemaScheduleSingle = z.object({
   amountReais: z.coerce.number().min(0).max(100000),
   totalDays: z.coerce.number().int().min(1).max(365).optional(),
   endAt: z.string().optional(),
+  startAt: z.string().optional(),
+  totalCreditsTarget: z.coerce.number().int().min(1).max(10_000_000).optional(),
 });
 
 export default function ManualOrderDialog({
@@ -84,7 +87,7 @@ export default function ManualOrderDialog({
   const [submitting, setSubmitting] = useState(false);
   const [multiWs, setMultiWs] = useState(false);
   const [recurring, setRecurring] = useState(false);
-  const [endMode, setEndMode] = useState<"days" | "until_date">("days");
+  const [endMode, setEndMode] = useState<"days" | "until_date" | "total_credits">("days");
   const [form, setForm] = useState({
     customerName: "",
     customerEmail: "",
@@ -95,6 +98,8 @@ export default function ManualOrderDialog({
     pricePerWorkspaceReais: "",
     totalDays: "7",
     endAt: "",
+    startAt: "",
+    totalCreditsTarget: "",
     notes: "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -107,6 +112,12 @@ export default function ManualOrderDialog({
       setMultiWs(false);
       setRecurring(false);
       setEndMode("days");
+      // default startAt = agora arredondado pro próximo minuto, em formato datetime-local
+      const now = new Date(Date.now() + 60_000);
+      now.setSeconds(0, 0);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const local = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      setForm((f) => ({ ...f, startAt: local }));
     }
   }, [open, user?.id]);
 
@@ -187,9 +198,37 @@ export default function ManualOrderDialog({
       setErrors((e) => ({ ...e, endAt: "Selecione a data final" }));
       return;
     }
+    if (recurring && endMode === "total_credits") {
+      if (multiWs) {
+        toast({ title: "Modo incompatível", description: "Total de créditos só funciona em single-workspace.", variant: "destructive" });
+        return;
+      }
+      const tot = Number(form.totalCreditsTarget);
+      if (!tot || tot <= 0) {
+        setErrors((e) => ({ ...e, totalCreditsTarget: "Informe a meta total de créditos" }));
+        return;
+      }
+    }
+    let startAtIso: string | undefined;
+    if (recurring) {
+      if (!form.startAt) {
+        setErrors((e) => ({ ...e, startAt: "Selecione data e hora de início" }));
+        return;
+      }
+      const d = new Date(form.startAt);
+      if (isNaN(d.getTime())) {
+        setErrors((e) => ({ ...e, startAt: "Data inválida" }));
+        return;
+      }
+      if (d.getTime() < Date.now() - 60_000) {
+        setErrors((e) => ({ ...e, startAt: "Escolha um horário futuro" }));
+        return;
+      }
+      startAtIso = d.toISOString();
+    }
     setSubmitting(true);
     try {
-      const v = parsed.data as typeof form & { credits?: number; amountReais?: number; targetWorkspace?: string; pricePerWorkspaceReais?: number; totalDays?: number; endAt?: string };
+      const v = parsed.data as typeof form & { credits?: number; amountReais?: number; targetWorkspace?: string; pricePerWorkspaceReais?: number; totalDays?: number; endAt?: string; totalCreditsTarget?: number };
       const fnName = recurring
         ? "partner-shop-create-order-schedule"
         : "partner-shop-create-manual-order";
@@ -207,6 +246,7 @@ export default function ManualOrderDialog({
                   customerWhatsapp: v.customerWhatsapp || null,
                   notes: v.notes,
                   pricePerWorkspaceCents: Math.round(Number(v.pricePerWorkspaceReais) * 100),
+                  startAt: startAtIso,
                   endMode,
                   totalDays: endMode === "days" ? Number(v.totalDays ?? form.totalDays) : undefined,
                   endAt: endMode === "until_date" ? new Date(form.endAt).toISOString() : undefined,
@@ -222,9 +262,11 @@ export default function ManualOrderDialog({
                   targetWorkspace: v.targetWorkspace,
                   credits: Number(v.credits),
                   amountCents: Math.round(Number(v.amountReais) * 100),
+                  startAt: startAtIso,
                   endMode,
                   totalDays: endMode === "days" ? Number(v.totalDays ?? form.totalDays) : undefined,
                   endAt: endMode === "until_date" ? new Date(form.endAt).toISOString() : undefined,
+                  totalCreditsTarget: endMode === "total_credits" ? Number(form.totalCreditsTarget) : undefined,
                 })
             : multiWs
             ? {
@@ -282,6 +324,8 @@ export default function ManualOrderDialog({
         pricePerWorkspaceReais: "",
         totalDays: "7",
         endAt: "",
+        startAt: "",
+        totalCreditsTarget: "",
         notes: "",
       });
     } catch (err) {
@@ -443,7 +487,20 @@ export default function ManualOrderDialog({
 
           {recurring && (
             <div className="rounded-md border p-3 space-y-3">
-              <RadioGroup value={endMode} onValueChange={(v) => setEndMode(v as "days" | "until_date")} className="flex gap-4">
+              <div>
+                <Label className="text-xs">Data e hora do primeiro farm</Label>
+                <Input
+                  type="datetime-local"
+                  value={form.startAt}
+                  onChange={(e) => field("startAt", e.target.value)}
+                />
+                {errors.startAt && <p className="text-[10px] text-destructive mt-0.5">{errors.startAt}</p>}
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  A partir desse horário o sistema cria 1 pedido por dia, sempre no mesmo horário.
+                </p>
+              </div>
+
+              <RadioGroup value={endMode} onValueChange={(v) => setEndMode(v as "days" | "until_date" | "total_credits")} className="flex flex-wrap gap-4">
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="days" id="m-days" />
                   <label htmlFor="m-days" className="text-xs cursor-pointer">Por X dias</label>
@@ -452,6 +509,12 @@ export default function ManualOrderDialog({
                   <RadioGroupItem value="until_date" id="m-until" />
                   <label htmlFor="m-until" className="text-xs cursor-pointer">Até data</label>
                 </div>
+                {!multiWs && (
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="total_credits" id="m-totcr" />
+                    <label htmlFor="m-totcr" className="text-xs cursor-pointer">Por total de créditos</label>
+                  </div>
+                )}
               </RadioGroup>
 
               {endMode === "days" ? (
@@ -465,7 +528,7 @@ export default function ManualOrderDialog({
                     onChange={(e) => field("totalDays", e.target.value)}
                   />
                 </div>
-              ) : (
+              ) : endMode === "until_date" ? (
                 <div>
                   <Label className="text-xs">Data final</Label>
                   <Input
@@ -474,6 +537,42 @@ export default function ManualOrderDialog({
                     onChange={(e) => field("endAt", e.target.value)}
                   />
                   {errors.endAt && <p className="text-[10px] text-destructive mt-0.5">{errors.endAt}</p>}
+                </div>
+              ) : (
+                <div>
+                  <Label className="text-xs">Total de créditos a recarregar</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={form.totalCreditsTarget}
+                    onChange={(e) => field("totalCreditsTarget", e.target.value)}
+                    placeholder="Ex.: 1000"
+                  />
+                  {errors.totalCreditsTarget && <p className="text-[10px] text-destructive mt-0.5">{errors.totalCreditsTarget}</p>}
+                  {(() => {
+                    const tot = Number(form.totalCreditsTarget);
+                    const per = Number(form.credits);
+                    if (!tot || !per) {
+                      return (
+                        <p className="text-[10px] text-muted-foreground mt-1">
+                          Informe os créditos por execução acima e a meta total aqui — o sistema calcula quantos dias serão necessários.
+                        </p>
+                      );
+                    }
+                    const days = Math.ceil(tot / per);
+                    const start = form.startAt ? new Date(form.startAt) : new Date();
+                    const endDate = new Date(start.getTime());
+                    endDate.setDate(endDate.getDate() + days - 1);
+                    const endStr = endDate.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+                    const exact = tot % per === 0;
+                    return (
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        ≈ <span className="text-foreground font-medium">{days} dia(s)</span> de farm ({per} créditos/dia), terminando em <span className="text-foreground">{endStr}</span>.
+                        {!exact && <> Última execução pode ultrapassar a meta ({days * per} créditos no total).</>}
+                      </p>
+                    );
+                  })()}
                 </div>
               )}
 

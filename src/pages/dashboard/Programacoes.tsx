@@ -22,8 +22,9 @@ type Schedule = {
   credits_per_run: number | null;
   amount_cents_per_run: number | null;
   start_at: string;
-  end_mode: "days" | "until_date";
+  end_mode: "days" | "until_date" | "total_credits";
   total_days: number | null;
+  total_credits_target: number | null;
   end_at: string | null;
   status: "active" | "paused" | "completed" | "canceled";
   next_run_at: string;
@@ -129,7 +130,9 @@ export default function Programacoes() {
                   const dailyTime = new Date(s.start_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
                   const prazo = s.end_mode === "days"
                     ? `${s.total_days} dias`
-                    : `até ${fmtDateTime(s.end_at)}`;
+                    : s.end_mode === "until_date"
+                    ? `até ${fmtDateTime(s.end_at)}`
+                    : `${s.total_credits_target} cr · ~${s.total_days}d`;
                   return (
                     <TableRow key={s.id}>
                       <TableCell>

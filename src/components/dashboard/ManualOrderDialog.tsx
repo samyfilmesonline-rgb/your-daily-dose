@@ -495,14 +495,22 @@ export default function ManualOrderDialog({
             <div className="rounded-md border p-3 space-y-3">
               <div>
                 <Label className="text-xs">Data e hora do primeiro farm</Label>
-                <Input
-                  type="datetime-local"
-                  value={form.startAt}
-                  onChange={(e) => field("startAt", e.target.value)}
-                />
+                <div className="flex items-center gap-2 mb-2">
+                  <Switch id="start-now" checked={startNow} onCheckedChange={setStartNow} />
+                  <label htmlFor="start-now" className="text-xs cursor-pointer">Começar agora</label>
+                </div>
+                {!startNow && (
+                  <Input
+                    type="datetime-local"
+                    value={form.startAt}
+                    onChange={(e) => field("startAt", e.target.value)}
+                  />
+                )}
                 {errors.startAt && <p className="text-[10px] text-destructive mt-0.5">{errors.startAt}</p>}
                 <p className="text-[10px] text-muted-foreground mt-1">
-                  A partir desse horário o sistema cria 1 pedido por dia, sempre no mesmo horário.
+                  {startNow
+                    ? "Primeiro pedido sai imediatamente; os próximos rodam todo dia neste horário."
+                    : "A partir desse horário o sistema cria 1 pedido por dia, sempre no mesmo horário."}
                 </p>
               </div>
 

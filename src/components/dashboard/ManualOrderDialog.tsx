@@ -198,9 +198,37 @@ export default function ManualOrderDialog({
       setErrors((e) => ({ ...e, endAt: "Selecione a data final" }));
       return;
     }
+    if (recurring && endMode === "total_credits") {
+      if (multiWs) {
+        toast({ title: "Modo incompatível", description: "Total de créditos só funciona em single-workspace.", variant: "destructive" });
+        return;
+      }
+      const tot = Number(form.totalCreditsTarget);
+      if (!tot || tot <= 0) {
+        setErrors((e) => ({ ...e, totalCreditsTarget: "Informe a meta total de créditos" }));
+        return;
+      }
+    }
+    let startAtIso: string | undefined;
+    if (recurring) {
+      if (!form.startAt) {
+        setErrors((e) => ({ ...e, startAt: "Selecione data e hora de início" }));
+        return;
+      }
+      const d = new Date(form.startAt);
+      if (isNaN(d.getTime())) {
+        setErrors((e) => ({ ...e, startAt: "Data inválida" }));
+        return;
+      }
+      if (d.getTime() < Date.now() - 60_000) {
+        setErrors((e) => ({ ...e, startAt: "Escolha um horário futuro" }));
+        return;
+      }
+      startAtIso = d.toISOString();
+    }
     setSubmitting(true);
     try {
-      const v = parsed.data as typeof form & { credits?: number; amountReais?: number; targetWorkspace?: string; pricePerWorkspaceReais?: number; totalDays?: number; endAt?: string };
+      const v = parsed.data as typeof form & { credits?: number; amountReais?: number; targetWorkspace?: string; pricePerWorkspaceReais?: number; totalDays?: number; endAt?: string; totalCreditsTarget?: number };
       const fnName = recurring
         ? "partner-shop-create-order-schedule"
         : "partner-shop-create-manual-order";
@@ -218,6 +246,7 @@ export default function ManualOrderDialog({
                   customerWhatsapp: v.customerWhatsapp || null,
                   notes: v.notes,
                   pricePerWorkspaceCents: Math.round(Number(v.pricePerWorkspaceReais) * 100),
+                  startAt: startAtIso,
                   endMode,
                   totalDays: endMode === "days" ? Number(v.totalDays ?? form.totalDays) : undefined,
                   endAt: endMode === "until_date" ? new Date(form.endAt).toISOString() : undefined,
@@ -233,9 +262,11 @@ export default function ManualOrderDialog({
                   targetWorkspace: v.targetWorkspace,
                   credits: Number(v.credits),
                   amountCents: Math.round(Number(v.amountReais) * 100),
+                  startAt: startAtIso,
                   endMode,
                   totalDays: endMode === "days" ? Number(v.totalDays ?? form.totalDays) : undefined,
                   endAt: endMode === "until_date" ? new Date(form.endAt).toISOString() : undefined,
+                  totalCreditsTarget: endMode === "total_credits" ? Number(form.totalCreditsTarget) : undefined,
                 })
             : multiWs
             ? {

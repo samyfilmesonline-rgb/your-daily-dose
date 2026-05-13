@@ -16,12 +16,16 @@ function json(status: number, payload: unknown) {
 type Schedule = {
   id: string;
   partner_id: string;
-  bot_id: string;
+  bot_id: string | null;
   customer_name: string;
   customer_email: string;
   customer_whatsapp: string | null;
   notes: string | null;
-  price_cents_per_workspace: number;
+  price_cents_per_workspace: number | null;
+  multi_workspace_mode: boolean;
+  target_workspace: string | null;
+  credits_per_run: number | null;
+  amount_cents_per_run: number | null;
   start_at: string;
   end_mode: "days" | "until_date";
   total_days: number | null;
@@ -49,31 +53,40 @@ async function processSchedule(sb: SupabaseClient, s: Schedule): Promise<{ actio
   // Cria pedido multi-ws
   const runIndex = totalRuns + 1;
   const nowIso = now.toISOString();
+  const isMulti = s.multi_workspace_mode !== false;
+  const orderRow: Record<string, unknown> = {
+    partner_id: s.partner_id,
+    pack_id: null,
+    customer_name: s.customer_name,
+    customer_email: s.customer_email,
+    customer_whatsapp: s.customer_whatsapp,
+    status: "paid",
+    is_manual: true,
+    paid_at: nowIso,
+    bot_invite_confirmed_at: nowIso,
+    bot_invite_confirmed_fingerprint: "scheduled",
+    tx_id: `schedule:${s.id}:${runIndex}`,
+    multi_workspace_mode: isMulti,
+    schedule_id: s.id,
+    schedule_run_index: runIndex,
+    raw_payload: {
+      scheduledOrder: { scheduleId: s.id, runIndex, notes: s.notes, at: nowIso },
+      manualOrder: s.bot_id ? { preferredBotId: s.bot_id } : {},
+    },
+  };
+  if (isMulti) {
+    orderRow.target_workspace = null;
+    orderRow.credits = 0;
+    orderRow.amount_cents = 0;
+    orderRow.price_cents_per_workspace = s.price_cents_per_workspace;
+  } else {
+    orderRow.target_workspace = s.target_workspace;
+    orderRow.credits = s.credits_per_run ?? 0;
+    orderRow.amount_cents = s.amount_cents_per_run ?? 0;
+  }
   const { data: created, error: insErr } = await sb
     .from("partner_credit_orders")
-    .insert({
-      partner_id: s.partner_id,
-      pack_id: null,
-      customer_name: s.customer_name,
-      customer_email: s.customer_email,
-      customer_whatsapp: s.customer_whatsapp,
-      status: "paid",
-      is_manual: true,
-      paid_at: nowIso,
-      bot_invite_confirmed_at: nowIso,
-      bot_invite_confirmed_fingerprint: "scheduled",
-      tx_id: `schedule:${s.id}:${runIndex}`,
-      target_workspace: null,
-      credits: 0,
-      amount_cents: 0,
-      multi_workspace_mode: true,
-      price_cents_per_workspace: s.price_cents_per_workspace,
-      schedule_id: s.id,
-      schedule_run_index: runIndex,
-      raw_payload: {
-        scheduledOrder: { scheduleId: s.id, runIndex, notes: s.notes, at: nowIso },
-      },
-    })
+    .insert(orderRow)
     .select("id")
     .single();
 
@@ -91,31 +104,35 @@ async function processSchedule(sb: SupabaseClient, s: Schedule): Promise<{ actio
 
   const orderId = created.id as string;
 
-  // Tenta atribuir bot específico (idle => processing). Se ocupado => queued.
-  const { data: botRow } = await sb
-    .from("farm_bots")
-    .select("id, status")
-    .eq("id", s.bot_id)
-    .maybeSingle();
-
-  if (botRow?.status === "idle") {
-    const { data: claimed } = await sb
+  // Atribui bot: específico (idle => processing, ocupado => queued) ou automático via RPC
+  if (s.bot_id) {
+    const { data: botRow } = await sb
       .from("farm_bots")
-      .update({ status: "busy", current_order_id: orderId })
+      .select("id, status")
       .eq("id", s.bot_id)
-      .eq("status", "idle")
-      .select("id")
       .maybeSingle();
-    if (claimed) {
-      await sb
-        .from("partner_credit_orders")
-        .update({ status: "processing", assigned_bot_id: s.bot_id, assigned_at: nowIso })
-        .eq("id", orderId);
+    if (botRow?.status === "idle") {
+      const { data: claimed } = await sb
+        .from("farm_bots")
+        .update({ status: "busy", current_order_id: orderId })
+        .eq("id", s.bot_id)
+        .eq("status", "idle")
+        .select("id")
+        .maybeSingle();
+      if (claimed) {
+        await sb
+          .from("partner_credit_orders")
+          .update({ status: "processing", assigned_bot_id: s.bot_id, assigned_at: nowIso })
+          .eq("id", orderId);
+      } else {
+        await sb.from("partner_credit_orders").update({ status: "queued" }).eq("id", orderId);
+      }
     } else {
       await sb.from("partner_credit_orders").update({ status: "queued" }).eq("id", orderId);
     }
   } else {
-    await sb.from("partner_credit_orders").update({ status: "queued" }).eq("id", orderId);
+    // Bot automático: usa o helper padrão do fluxo manual
+    await sb.rpc("assign_bot_to_order", { _order_id: orderId });
   }
 
   // Avança schedule
@@ -154,7 +171,7 @@ Deno.serve(async (req) => {
     let query = sb
       .from("partner_order_schedules")
       .select(
-        "id, partner_id, bot_id, customer_name, customer_email, customer_whatsapp, notes, price_cents_per_workspace, start_at, end_mode, total_days, end_at, status, next_run_at, runs_completed, runs_failed",
+        "id, partner_id, bot_id, customer_name, customer_email, customer_whatsapp, notes, price_cents_per_workspace, multi_workspace_mode, target_workspace, credits_per_run, amount_cents_per_run, start_at, end_mode, total_days, end_at, status, next_run_at, runs_completed, runs_failed",
       )
       .eq("status", "active");
     if (scheduleId) query = query.eq("id", scheduleId);

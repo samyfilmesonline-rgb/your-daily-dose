@@ -13,10 +13,14 @@ import GlitchText from "@/components/landing/GlitchText";
 type Schedule = {
   id: string;
   partner_id: string;
-  bot_id: string;
+  bot_id: string | null;
   customer_name: string;
   customer_email: string;
-  price_cents_per_workspace: number;
+  price_cents_per_workspace: number | null;
+  multi_workspace_mode: boolean;
+  target_workspace: string | null;
+  credits_per_run: number | null;
+  amount_cents_per_run: number | null;
   start_at: string;
   end_mode: "days" | "until_date";
   total_days: number | null;
@@ -110,6 +114,8 @@ export default function Programacoes() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Cliente</TableHead>
+                  <TableHead>Tipo</TableHead>
+                  <TableHead>Bot</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Horário diário</TableHead>
                   <TableHead>Próximo</TableHead>
@@ -129,6 +135,29 @@ export default function Programacoes() {
                       <TableCell>
                         <div className="font-medium text-sm">{s.customer_name}</div>
                         <div className="text-[10px] text-muted-foreground">{s.customer_email}</div>
+                      </TableCell>
+                      <TableCell>
+                        {s.multi_workspace_mode ? (
+                          <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 text-[10px]">
+                            Multi-WS
+                          </Badge>
+                        ) : (
+                          <div className="text-[10px]">
+                            <Badge variant="outline" className="bg-muted text-muted-foreground border-muted-foreground/30 text-[10px]">
+                              Single
+                            </Badge>
+                            <div className="text-muted-foreground mt-0.5">
+                              {s.target_workspace} · {s.credits_per_run} cr
+                            </div>
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {s.bot_id ? (
+                          <span className="font-mono text-[10px]">{s.bot_id.slice(0, 8)}</span>
+                        ) : (
+                          <span className="text-muted-foreground italic">Automático</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline" className={statusMeta[s.status].cls}>

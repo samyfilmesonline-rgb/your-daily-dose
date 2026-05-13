@@ -723,9 +723,11 @@ export type Database = {
       }
       partner_order_schedules: {
         Row: {
-          bot_id: string
+          amount_cents_per_run: number | null
+          bot_id: string | null
           created_at: string
           created_by: string | null
+          credits_per_run: number | null
           customer_email: string
           customer_name: string
           customer_whatsapp: string | null
@@ -733,22 +735,26 @@ export type Database = {
           end_mode: Database["public"]["Enums"]["order_schedule_end_mode"]
           id: string
           last_run_at: string | null
+          multi_workspace_mode: boolean
           next_run_at: string
           notes: string | null
           partner_id: string
-          price_cents_per_workspace: number
+          price_cents_per_workspace: number | null
           runs_completed: number
           runs_failed: number
           start_at: string
           status: Database["public"]["Enums"]["order_schedule_status"]
+          target_workspace: string | null
           total_days: number | null
           updated_at: string
           workspaces: Json | null
         }
         Insert: {
-          bot_id: string
+          amount_cents_per_run?: number | null
+          bot_id?: string | null
           created_at?: string
           created_by?: string | null
+          credits_per_run?: number | null
           customer_email: string
           customer_name: string
           customer_whatsapp?: string | null
@@ -756,22 +762,26 @@ export type Database = {
           end_mode: Database["public"]["Enums"]["order_schedule_end_mode"]
           id?: string
           last_run_at?: string | null
+          multi_workspace_mode?: boolean
           next_run_at: string
           notes?: string | null
           partner_id: string
-          price_cents_per_workspace: number
+          price_cents_per_workspace?: number | null
           runs_completed?: number
           runs_failed?: number
           start_at: string
           status?: Database["public"]["Enums"]["order_schedule_status"]
+          target_workspace?: string | null
           total_days?: number | null
           updated_at?: string
           workspaces?: Json | null
         }
         Update: {
-          bot_id?: string
+          amount_cents_per_run?: number | null
+          bot_id?: string | null
           created_at?: string
           created_by?: string | null
+          credits_per_run?: number | null
           customer_email?: string
           customer_name?: string
           customer_whatsapp?: string | null
@@ -779,14 +789,16 @@ export type Database = {
           end_mode?: Database["public"]["Enums"]["order_schedule_end_mode"]
           id?: string
           last_run_at?: string | null
+          multi_workspace_mode?: boolean
           next_run_at?: string
           notes?: string | null
           partner_id?: string
-          price_cents_per_workspace?: number
+          price_cents_per_workspace?: number | null
           runs_completed?: number
           runs_failed?: number
           start_at?: string
           status?: Database["public"]["Enums"]["order_schedule_status"]
+          target_workspace?: string | null
           total_days?: number | null
           updated_at?: string
           workspaces?: Json | null

@@ -7,18 +7,28 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-const Body = z.object({
+const BaseBody = z.object({
   partnerId: z.string().uuid().optional(),
-  botId: z.string().uuid(),
+  botId: z.string().uuid().nullable().optional(),
   customerName: z.string().trim().min(1).max(200),
   customerEmail: z.string().trim().email().max(255),
   customerWhatsapp: z.string().trim().max(40).optional().nullable(),
   notes: z.string().trim().min(3).max(500),
-  pricePerWorkspaceCents: z.number().int().min(1).max(100_000_00),
   endMode: z.enum(["days", "until_date"]),
   totalDays: z.number().int().min(1).max(365).optional(),
   endAt: z.string().datetime().optional(),
-}).superRefine((v, ctx) => {
+});
+const MultiBody = BaseBody.extend({
+  mode: z.literal("multi").optional().default("multi"),
+  pricePerWorkspaceCents: z.number().int().min(1).max(100_000_00),
+});
+const SingleBody = BaseBody.extend({
+  mode: z.literal("single"),
+  targetWorkspace: z.string().trim().min(1).max(200),
+  credits: z.number().int().min(1).max(100_000),
+  amountCents: z.number().int().min(0).max(100_000_00),
+});
+const Body = z.union([SingleBody, MultiBody]).superRefine((v, ctx) => {
   if (v.endMode === "days" && !v.totalDays) {
     ctx.addIssue({ code: "custom", message: "totalDays obrigatório", path: ["totalDays"] });
   }
@@ -82,13 +92,15 @@ Deno.serve(async (req) => {
       }
     }
 
-    const { data: bot } = await sb
-      .from("farm_bots")
-      .select("id, partner_id")
-      .eq("id", b.botId)
-      .maybeSingle();
-    if (!bot) return json(404, { error: "Bot não encontrado" });
-    if (bot.partner_id !== partnerId) return json(403, { error: "Bot não pertence ao parceiro" });
+    if (b.botId) {
+      const { data: bot } = await sb
+        .from("farm_bots")
+        .select("id, partner_id")
+        .eq("id", b.botId)
+        .maybeSingle();
+      if (!bot) return json(404, { error: "Bot não encontrado" });
+      if (bot.partner_id !== partnerId) return json(403, { error: "Bot não pertence ao parceiro" });
+    }
 
     const startAt = new Date();
     const endAt = b.endMode === "until_date" ? new Date(b.endAt!) : null;
@@ -96,25 +108,35 @@ Deno.serve(async (req) => {
       return json(400, { error: "Data de término precisa estar no futuro" });
     }
 
+    const isMulti = (b as { mode?: string }).mode !== "single";
+    const insertRow: Record<string, unknown> = {
+      partner_id: partnerId,
+      bot_id: b.botId ?? null,
+      created_by: callerId,
+      customer_name: b.customerName,
+      customer_email: b.customerEmail.toLowerCase(),
+      customer_whatsapp: b.customerWhatsapp ?? null,
+      notes: b.notes,
+      workspaces: [],
+      multi_workspace_mode: isMulti,
+      start_at: startAt.toISOString(),
+      end_mode: b.endMode,
+      total_days: b.endMode === "days" ? b.totalDays : null,
+      end_at: endAt ? endAt.toISOString() : null,
+      status: "active",
+      next_run_at: startAt.toISOString(),
+    };
+    if (isMulti) {
+      insertRow.price_cents_per_workspace = (b as z.infer<typeof MultiBody>).pricePerWorkspaceCents;
+    } else {
+      const s = b as z.infer<typeof SingleBody>;
+      insertRow.target_workspace = s.targetWorkspace;
+      insertRow.credits_per_run = s.credits;
+      insertRow.amount_cents_per_run = s.amountCents;
+    }
     const { data: created, error: insErr } = await sb
       .from("partner_order_schedules")
-      .insert({
-        partner_id: partnerId,
-        bot_id: b.botId,
-        created_by: callerId,
-        customer_name: b.customerName,
-        customer_email: b.customerEmail.toLowerCase(),
-        customer_whatsapp: b.customerWhatsapp ?? null,
-        notes: b.notes,
-        workspaces: [],
-        price_cents_per_workspace: b.pricePerWorkspaceCents,
-        start_at: startAt.toISOString(),
-        end_mode: b.endMode,
-        total_days: b.endMode === "days" ? b.totalDays : null,
-        end_at: endAt ? endAt.toISOString() : null,
-        status: "active",
-        next_run_at: startAt.toISOString(),
-      })
+      .insert(insertRow)
       .select("id")
       .single();
     if (insErr || !created) return json(500, { error: insErr?.message ?? "Falha ao criar" });

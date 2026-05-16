@@ -213,19 +213,36 @@ export default function Pedidos() {
   const detailBot = detail?.assigned_bot_id ? botById.get(detail.assigned_bot_id) ?? null : null;
 
   const { data: progress } = useQuery({
-    queryKey: ["order-progress", detail?.id, detailBot?.email_lovable, detail?.target_workspace],
-    enabled: !!detail?.id && !!detailBot?.email_lovable && !!detail?.target_workspace,
+    queryKey: [
+      "order-progress",
+      detail?.id,
+      detailBot?.email_lovable,
+      detail?.target_workspace,
+      detail?.multi_workspace_mode ? (detail?.workspaces_plan?.map((w) => w.name).join(",") ?? "") : "",
+    ],
+    enabled:
+      !!detail?.id &&
+      !!detailBot?.email_lovable &&
+      (
+        (!!detail?.multi_workspace_mode && Array.isArray(detail?.workspaces_plan) && (detail?.workspaces_plan?.length ?? 0) > 0)
+        || !!detail?.target_workspace
+      ),
     refetchInterval: 5000,
     queryFn: async () => {
       const since = detail!.assigned_at ?? detail!.paid_at;
       let q = supabase
         .from("execucoes_lovable")
-        .select("status, creditos_adicionados, erro, atualizado_em, iniciado_em")
+        .select("status, creditos_adicionados, erro, atualizado_em, iniciado_em, workspace_nome")
         .eq("id_do_usuario", detail!.partner_id)
         .eq("email_lovable", detailBot!.email_lovable)
-        .eq("workspace_nome", detail!.target_workspace!)
         .order("iniciado_em", { ascending: false })
-        .limit(20);
+        .limit(50);
+      if (detail!.multi_workspace_mode && Array.isArray(detail!.workspaces_plan)) {
+        const names = detail!.workspaces_plan.map((w) => w.name);
+        if (names.length > 0) q = q.in("workspace_nome", names);
+      } else if (detail!.target_workspace) {
+        q = q.eq("workspace_nome", detail!.target_workspace);
+      }
       if (since) q = q.gte("iniciado_em", since);
       const { data } = await q;
       const list = (data ?? []) as Array<{

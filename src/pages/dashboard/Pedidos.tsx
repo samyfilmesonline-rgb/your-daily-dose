@@ -485,10 +485,24 @@ export default function Pedidos() {
                 <div>
                   <span className="text-muted-foreground">Workspace:</span>{" "}
                   {detail.multi_workspace_mode
-                    ? `${detail.current_workspace ?? "—"} (todos · ${detail.workspaces_done ?? 0}/${detail.workspaces_total ?? "?"})`
+                    ? `${detail.current_workspace ?? detail.last_workspace ?? "—"} (todos · ${detail.workspaces_done ?? 0}/${detail.workspaces_total ?? "?"})`
                     : detail.target_workspace ?? "—"}
                 </div>
-                <div><span className="text-muted-foreground">Créditos:</span> {detail.credits}</div>
+                <div>
+                  <span className="text-muted-foreground">Créditos:</span>{" "}
+                  {(() => {
+                    if (detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan)) {
+                      const farmedNow = detail.workspaces_plan.reduce((a, w) => a + (Number(w.farmed) || 0), 0);
+                      const farmedHist = (detail.workspaces_history ?? []).reduce(
+                        (a, h) => a + (h.plan ?? []).reduce((b, w) => b + (Number(w.farmed) || 0), 0),
+                        0,
+                      );
+                      const totalHist = farmedHist > 0 ? ` (+${farmedHist} de tentativas anteriores)` : "";
+                      return <>{farmedNow}{totalHist}</>;
+                    }
+                    return detail.credits;
+                  })()}
+                </div>
                 <div><span className="text-muted-foreground">Valor:</span> {brl(detail.amount_cents)}</div>
                 <div><span className="text-muted-foreground">Tx:</span> <span className="font-mono">{detail.tx_id ?? "—"}</span></div>
                 <div><span className="text-muted-foreground">Status:</span> {effectiveBadge(detail).label}</div>

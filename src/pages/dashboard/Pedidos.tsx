@@ -111,6 +111,9 @@ export default function Pedidos() {
   const [manualOpen, setManualOpen] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [retryLoading, setRetryLoading] = useState(false);
+  const [skipLoading, setSkipLoading] = useState(false);
+  const [forceCompleteLoading, setForceCompleteLoading] = useState(false);
+  const [retryFailedLoading, setRetryFailedLoading] = useState(false);
 
   const { data: orders = [] } = useQuery({
     queryKey: ["my-orders", user?.id],

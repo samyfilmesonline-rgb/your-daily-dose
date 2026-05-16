@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Activity, Search, AlertTriangle, Clock, Loader2, CheckCircle2, Plus, XCircle, RotateCw, Square } from "lucide-react";
+import { Activity, Search, AlertTriangle, Clock, Loader2, CheckCircle2, Plus, XCircle, RotateCw, Square, SkipForward, CheckSquare, RefreshCcw } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import GlitchText from "@/components/landing/GlitchText";
 import { Textarea } from "@/components/ui/textarea";
@@ -43,12 +43,21 @@ type Order = {
   workspaces_total?: number | null;
   workspaces_done?: number | null;
   current_workspace?: string | null;
+  last_workspace?: string | null;
   stop_requested_at?: string | null;
   workspaces_plan?: Array<{
     name: string;
     status: "pending" | "running" | "done" | "failed" | "skipped";
     farmed: number;
     error: string | null;
+    started_at?: string | null;
+    finished_at?: string | null;
+  }> | null;
+  workspaces_history?: Array<{
+    attempted_at: string;
+    failed_reason: string | null;
+    plan: Array<{ name: string; status: string; farmed: number }>;
+    mode?: string;
   }> | null;
 };
 

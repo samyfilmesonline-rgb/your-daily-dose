@@ -519,6 +519,7 @@ export type Database = {
           failed_reason: string | null
           id: string
           is_manual: boolean
+          last_workspace: string | null
           multi_workspace_mode: boolean
           pack_id: string | null
           paid_at: string | null
@@ -537,6 +538,7 @@ export type Database = {
           tx_id: string | null
           updated_at: string
           workspaces_done: number
+          workspaces_history: Json
           workspaces_plan: Json | null
           workspaces_total: number | null
         }
@@ -560,6 +562,7 @@ export type Database = {
           failed_reason?: string | null
           id?: string
           is_manual?: boolean
+          last_workspace?: string | null
           multi_workspace_mode?: boolean
           pack_id?: string | null
           paid_at?: string | null
@@ -578,6 +581,7 @@ export type Database = {
           tx_id?: string | null
           updated_at?: string
           workspaces_done?: number
+          workspaces_history?: Json
           workspaces_plan?: Json | null
           workspaces_total?: number | null
         }
@@ -601,6 +605,7 @@ export type Database = {
           failed_reason?: string | null
           id?: string
           is_manual?: boolean
+          last_workspace?: string | null
           multi_workspace_mode?: boolean
           pack_id?: string | null
           paid_at?: string | null
@@ -619,6 +624,7 @@ export type Database = {
           tx_id?: string | null
           updated_at?: string
           workspaces_done?: number
+          workspaces_history?: Json
           workspaces_plan?: Json | null
           workspaces_total?: number | null
         }
@@ -1219,6 +1225,7 @@ export type Database = {
           failed_reason: string | null
           id: string
           is_manual: boolean
+          last_workspace: string | null
           multi_workspace_mode: boolean
           pack_id: string | null
           paid_at: string | null
@@ -1237,6 +1244,7 @@ export type Database = {
           tx_id: string | null
           updated_at: string
           workspaces_done: number
+          workspaces_history: Json
           workspaces_plan: Json | null
           workspaces_total: number | null
         }
@@ -1273,6 +1281,7 @@ export type Database = {
         Args: { _order_id: string }
         Returns: string
       }
+      force_complete_order: { Args: { _order_id: string }; Returns: Json }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -1323,7 +1332,12 @@ export type Database = {
         }
         Returns: undefined
       }
+      retry_failed_workspaces_only: {
+        Args: { _order_id: string }
+        Returns: Json
+      }
       retry_manual_order: { Args: { _order_id: string }; Returns: Json }
+      skip_current_workspace: { Args: { _order_id: string }; Returns: Json }
       stop_order_partial: {
         Args: { _fingerprint: string; _order_id: string }
         Returns: number

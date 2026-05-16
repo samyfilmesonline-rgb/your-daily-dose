@@ -549,7 +549,10 @@ export default function Pedidos() {
                         className="flex items-center justify-between gap-2 text-[11px] font-mono py-0.5 border-b border-border/40 last:border-0"
                       >
                         <span className="truncate flex-1">{w.name}</span>
-                        <span className="text-muted-foreground">{w.farmed} cr</span>
+                        <span className="text-muted-foreground">
+                          {w.farmed} cr
+                          {(w.status === "skipped" || w.status === "failed") && w.farmed > 0 ? " parcial" : ""}
+                        </span>
                         {(() => {
                           const ineligible =
                             w.status === "failed" && (w.error ?? "").startsWith("workspace_ineligible:");

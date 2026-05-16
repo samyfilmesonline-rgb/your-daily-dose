@@ -1,52 +1,79 @@
-## Diagnóstico
+## Problemas observados no print
 
-Olhei as 2 programações no banco — ambas estão `active`, sem nenhum erro:
+Pedido multi-workspace parado/falhado mostra estado errado:
 
-| criada em | start_at | next_run_at | runs |
-|---|---|---|---|
-| 08:21:07 | 08:22:00 | 08:22:00 | 0/0 |
-| 08:22:36 | 08:23:00 | 08:23:00 | 0/0 |
+1. **"Workspace atual ... 0 cr · falhou"** — workspace que estava `running` perde o que já foi farmado. Hoje o worker só reporta `farmed` quando chama `action=next` (sucesso). Se parar no meio, nada do parcial é gravado no `workspaces_plan`.
+2. **"Créditos: 0" / "Valor: R$ 0,00" / "0 / 0 créditos farmados" / "PROGRESSO 0%"** — `refund_order_remainder` (multi) faz `credits = v_farmed` somando só workspaces `done`. Como o `running` virou `skipped` sem farmed gravado, o total fica 0. Além disso, a query "progresso ao vivo" depende de `target_workspace`, que é zerado no refund, então a UI mostra 0/0.
+3. **"Workspace: — (todos · 1/1)"** — após o refund, `current_workspace` e `target_workspace` viram NULL, então a UI não mostra mais qual workspace estava rodando.
+4. **"Tentar novamente" zera tudo** — `retry_manual_order` (multi) só preserva linhas `done` no plano; tudo que foi parcialmente farmado em workspaces não-concluídos some das métricas, e o "progresso ao vivo" volta a contar do zero porque filtra por `assigned_at`.
+5. Faltam botões de controle além de "parar" e "tentar novamente".
 
-Elas **não estão quebradas** — estão só esperando o cron rodar. Dois problemas combinados:
+## Correções
 
-1. **Cron está em `*/5 * * * *`** (a cada 5 min). Então um `next_run_at` de 08:22 só é disparado às 08:25.
-2. **O frontend força `startAt` pro próximo minuto cheio** (ex: clicou às 08:22:36 → `start_at = 08:23:00`). Como `08:23 > now + 5s`, o `create-order-schedule` **não dispara o primeiro tick imediatamente** e cai na fila do cron.
+### Backend
 
-Resultado: o usuário cria, espera ver o pedido aparecer, e fica até ~5 minutos achando que travou.
+**a) Heartbeat de progresso no `partner-shop-multi-workspace-tick`**
 
-## Correção
+Adicionar `action: "progress"` no worker payload: `{ orderId, fingerprint, workspace, farmed }`. Atualiza `plan[idx].farmed = max(plan[idx].farmed, farmed)` sem mudar status. O worker chama isso a cada N créditos farmados (ou no `Ctrl+C` antes de morrer).
 
-### 1. Cron a cada 1 minuto
-Atualizar o job `partner-shop-schedule-tick-5min` para `* * * * *`. Custo é desprezível (a tick filtra por `next_run_at <= now`, então sem schedule devida não cria pedido).
+**b) Snapshot do parcial ao parar/falhar (`refund_order_remainder` multi path)**
 
-### 2. Frontend: opção "Começar agora" (default)
+Antes de marcar `running` → `skipped`, fazer um best-effort: somar `execucoes_lovable` para `(partner_id, bot_email, workspace_name)` desde `started_at` do item, e gravar esse `farmed` no plano. Garante que mesmo sem heartbeat o parcial fica salvo.
 
-No `ManualOrderDialog`, no bloco "Repetir diariamente":
+**c) Preservar `target_workspace`/`current_workspace`**
 
-- Adicionar checkbox **"Começar agora"** marcado por default.
-- Quando marcado: input `datetime-local` fica oculto/disabled e o submit envia `startAt` = momento do clique (Date.now()).
-- Quando desmarcado: mostra o `datetime-local` (default = agora + 1 min) para agendar pra mais tarde.
+Em `refund_order_remainder` (multi) e no `multi-workspace-tick` quando `isFinal`, não zerar `current_workspace` — manter a referência do último que rodou. Adicionar coluna nova `last_workspace text` se preferir não reusar, ou simplesmente parar de setar `current_workspace = NULL`.
 
-Assim o caminho comum ("quero começar já") cai no fast-path do create function e dispara o primeiro pedido na hora.
+**d) Não destruir histórico em `retry_manual_order` (multi)**
 
-### 3. Backend: ajustar tolerância
+Em vez de descartar `farmed` dos workspaces não-`done`, mover para um array `workspaces_history` (jsonb) com snapshot da tentativa anterior antes de rebuild. UI passa a somar `done` atual + soma do histórico para "total farmado acumulado".
 
-No `partner-shop-create-order-schedule`:
-- Quando `startAt` vem ≤ `now + 60s`, clampa pra `now()` e dispara o tick imediato (hoje a tolerância é 5s — apertada demais quando o frontend arredonda pro próximo minuto).
-- Quando `startAt` é claramente futuro (> 60s), mantém comportamento atual (cron pega).
+**e) Novas ações de controle** (edge function única `partner-shop-order-action` ou endpoints separados):
 
-### 4. UX em `Programacoes.tsx`
+- **Pular workspace atual** — marca `running` como `skipped`, continua para o próximo (sem cancelar pedido inteiro).
+- **Reatribuir bot** — libera bot atual, força nova atribuição (útil quando bot trava).
+- **Refazer só os falhados** — variante de retry que rebuilda só workspaces `failed`/`skipped`, ignora `done` e `running`.
+- **Forçar conclusão** — admin marca pedido como `delivered` com o que já farmou, faz refund do restante.
 
-Coluna "Próximo": se `next_run_at` está no passado e `runs_completed = 0`, mostrar badge **"Aguardando cron (até 1 min)"** em vez de só a hora — deixa claro que está pra rodar.
+### Frontend (`src/pages/dashboard/Pedidos.tsx`)
+
+**f) Query de progresso multi-workspace**
+
+Quando `multi_workspace_mode`, em vez de filtrar `execucoes_lovable` por `target_workspace` (que pode ser null), filtrar por lista de `plan.map(w => w.name)` e somar tudo. Mostrar "X / Y créditos (todos os workspaces)" no painel de progresso ao vivo.
+
+**g) Exibir parcial gravado**
+
+Na lista de workspaces, quando `status` for `skipped` ou `failed` mas `farmed > 0`, mostrar "X cr parcial" em vez de "0 cr · falhou".
+
+**h) Cabeçalho do pedido**
+
+- "Workspace:" mostra `current_workspace ?? last_workspace ?? primeiro_done` em vez de "—".
+- "Créditos:" mostra `sum(plan.farmed)` (não só dos `done`) quando pedido finalizado.
+
+**i) Botões novos no dialog de detalhes** (estados `processing`/`paid`/`queued`):
+
+- **Pular workspace** (ícone `SkipForward`)
+- **Trocar bot** (ícone `RefreshCcw`)
+
+Em estados `refunded`/`failed`/`delivered parcial`:
+
+- **Tentar novamente (tudo)** — existente
+- **Refazer só falhados** — novo
+- **Forçar concluído** — novo (admin only)
+
+Cada botão com `AlertDialog` de confirmação descrevendo o impacto (re-débito de cota, refund parcial, etc).
+
+## Migrations envolvidas
+
+- `partner_credit_orders.workspaces_history jsonb default '[]'::jsonb`
+- (opcional) `partner_credit_orders.last_workspace text`
+- Atualizar `refund_order_remainder` (snapshot parcial + preservar workspace).
+- Atualizar `retry_manual_order` (mover histórico).
+- Nova RPC `skip_current_workspace(_order_id, _fingerprint)`.
+- Nova RPC `force_complete_order(_order_id)` (admin).
 
 ## Fora de escopo
 
-- Disparar tick via webhook do banco (overkill — cron de 1 min resolve).
-- Mudar o intervalo entre runs (continua diário).
-
-## Resumo do que vou mexer
-
-- **SQL** (insert, não migration — contém a anon key): `cron.unschedule` + `cron.schedule` com `* * * * *`.
-- **Edge function** `partner-shop-create-order-schedule`: tolerância 5s → 60s.
-- **Frontend** `ManualOrderDialog.tsx`: checkbox "Começar agora".
-- **Frontend** `Programacoes.tsx`: badge "Aguardando cron".
+- Reescrever a UI de pedidos do zero.
+- Mudar o modelo single-workspace.
+- Alterar quanto cada workspace farma (continua 200).

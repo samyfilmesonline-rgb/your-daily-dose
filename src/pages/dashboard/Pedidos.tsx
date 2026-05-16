@@ -772,6 +772,68 @@ export default function Pedidos() {
                       <><Square className="w-3.5 h-3.5 mr-1" /> Parar e estornar</>
                     )}
                   </Button>
+                  {detail.multi_workspace_mode && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={skipLoading}
+                      onClick={async () => {
+                        if (!detail) return;
+                        const running = Array.isArray(detail.workspaces_plan)
+                          ? detail.workspaces_plan.find((w) => w.status === "running")?.name
+                          : null;
+                        if (!confirm(`Pular o workspace atual${running ? ` (${running})` : ""} e seguir pro próximo?`)) return;
+                        setSkipLoading(true);
+                        try {
+                          const { data, error } = await supabase.rpc("skip_current_workspace", { _order_id: detail.id });
+                          if (error) throw error;
+                          const d = data as { skipped?: string; nextWorkspace?: string | null; partial?: number } | null;
+                          toast({
+                            title: `Workspace ${d?.skipped ?? ""} pulado`,
+                            description: d?.nextWorkspace
+                              ? `Próximo: ${d.nextWorkspace}${d?.partial ? ` · parcial salvo: ${d.partial} cr` : ""}`
+                              : "Era o último — pedido finalizado.",
+                          });
+                          qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                        } catch (err) {
+                          const msg = err instanceof Error ? err.message : "Erro";
+                          toast({ title: "Falha", description: msg, variant: "destructive" });
+                        } finally {
+                          setSkipLoading(false);
+                        }
+                      }}
+                    >
+                      {skipLoading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <SkipForward className="w-3.5 h-3.5 mr-1" />}
+                      Pular workspace
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={forceCompleteLoading}
+                    onClick={async () => {
+                      if (!detail) return;
+                      if (!confirm("Forçar conclusão do pedido com o que já foi farmado? O restante será estornado.")) return;
+                      setForceCompleteLoading(true);
+                      try {
+                        const { data, error } = await supabase.rpc("force_complete_order", { _order_id: detail.id });
+                        if (error) throw error;
+                        const ref = (data as { refunded?: number } | null)?.refunded ?? 0;
+                        toast({ title: "Pedido concluído", description: `Estornados ${ref} créditos.` });
+                        setDetail(null);
+                        qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                        qc.invalidateQueries({ queryKey: ["my-bots-mini", user?.id] });
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : "Erro";
+                        toast({ title: "Falha", description: msg, variant: "destructive" });
+                      } finally {
+                        setForceCompleteLoading(false);
+                      }
+                    }}
+                  >
+                    {forceCompleteLoading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <CheckSquare className="w-3.5 h-3.5 mr-1" />}
+                    Forçar concluído
+                  </Button>
                   </div>
                   </>
                   )}

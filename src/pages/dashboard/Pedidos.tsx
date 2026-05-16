@@ -635,7 +635,7 @@ export default function Pedidos() {
                     </div>
                     <Progress value={pct} className="h-2" />
                     <div className="text-xs font-mono text-muted-foreground">
-                      {farmed} / {detail.credits} créditos farmados
+                      {farmed} / {target} créditos farmados
                     </div>
                     {detailBot && (
                       <div className="text-[11px] flex items-center gap-2 flex-wrap">

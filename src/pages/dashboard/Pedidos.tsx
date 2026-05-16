@@ -612,8 +612,17 @@ export default function Pedidos() {
               {(() => {
                 const showProgress = ["paid", "queued", "processing", "delivered", "refunded", "failed"].includes(detail.status);
                 if (!showProgress) return null;
-                const farmed = detail.status === "delivered" ? detail.credits : (progress?.farmed ?? 0);
-                const pct = detail.credits > 0 ? Math.min(100, Math.round((farmed / detail.credits) * 100)) : 0;
+                const planFarmed = detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan)
+                  ? detail.workspaces_plan.reduce((a, w) => a + (Number(w.farmed) || 0), 0)
+                  : 0;
+                const target = detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan)
+                  ? (detail.workspaces_plan.length * 200)
+                  : detail.credits;
+                const liveFarmed = progress?.farmed ?? 0;
+                const farmed = detail.status === "delivered"
+                  ? target
+                  : Math.max(planFarmed, liveFarmed);
+                const pct = target > 0 ? Math.min(100, Math.round((farmed / target) * 100)) : 0;
                 const tenMinAgo = Date.now() - 10 * 60 * 1000;
                 const hbMs = detailBot?.last_heartbeat_at ? new Date(detailBot.last_heartbeat_at).getTime() : 0;
                 const stale = detail.status === "processing" && !!detailBot && hbMs < tenMinAgo;

@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { z } from "https://esm.sh/zod@3.23.8";
-import { cleanWorkspaceName } from "../_shared/workspace-name.ts";
+import { cleanWorkspaceName, isStatusLikeWorkspace } from "../_shared/workspace-name.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -68,6 +68,9 @@ Deno.serve(async (req) => {
     let targetWs = b.targetWorkspace ? cleanWorkspaceName(b.targetWorkspace) : "";
     if (!b.multiWorkspaceMode && !targetWs) {
       return json(400, { error: "Nenhum workspace válido informado" });
+    }
+    if (targetWs && isStatusLikeWorkspace(targetWs)) {
+      return json(400, { error: `Workspace inválido: '${targetWs}' parece um rótulo de status` });
     }
 
     const sb = createClient(url, serviceKey, { auth: { persistSession: false } });

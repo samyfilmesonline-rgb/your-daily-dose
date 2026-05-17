@@ -46,14 +46,37 @@ Deno.serve(async (req) => {
 
     const { data: order, error: ordErr } = await sb
       .from("partner_credit_orders")
-      .select("id, partner_id, is_manual, status")
+      .select("id, partner_id, is_manual, status, assigned_bot_id")
       .eq("id", parsed.data.orderId)
       .maybeSingle();
     if (ordErr || !order) return json(404, { error: "Pedido não encontrado" });
     if (!order.is_manual) return json(400, { error: "Pedido não é manual" });
     if (!isAdmin && order.partner_id !== callerId) return json(403, { error: "Sem permissão" });
+    if (String(order.status) === "processing") {
+      return new Response(
+        JSON.stringify({ error: "Pedido em processamento. Aguarde o worker liberar." }),
+        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
     if (!["refunded", "failed"].includes(String(order.status))) {
       return json(400, { error: `Status atual (${order.status}) não permite retry` });
+    }
+
+    if (order.assigned_bot_id) {
+      const { data: bot } = await sb
+        .from("farm_bots")
+        .select("status, last_heartbeat_at")
+        .eq("id", order.assigned_bot_id)
+        .maybeSingle();
+      if (bot && bot.status === "busy") {
+        const hb = bot.last_heartbeat_at ? new Date(bot.last_heartbeat_at).getTime() : 0;
+        if (hb && Date.now() - hb < 90_000) {
+          return new Response(
+            JSON.stringify({ error: "Bot ainda ocupado. Aguarde o worker liberar." }),
+            { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+      }
     }
 
     if (!isAdmin) {

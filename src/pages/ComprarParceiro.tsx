@@ -467,6 +467,14 @@ export default function ComprarParceiro() {
       });
       return;
     }
+    if (isStatusLikeWorkspace(workspace)) {
+      toast({
+        title: "Workspace inválido",
+        description: `"${workspace.trim()}" parece um rótulo de status. Informe o nome real do workspace Lovable (ex: "Meu's Lovable").`,
+        variant: "destructive",
+      });
+      return;
+    }
     const taxDigits = taxId.replace(/\D/g, "");
     if (taxDigits.length !== 11 && taxDigits.length !== 14) {
       toast({

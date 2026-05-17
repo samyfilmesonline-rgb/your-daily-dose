@@ -815,6 +815,41 @@ export default function Pedidos() {
                       Pular workspace
                     </Button>
                   )}
+                  {detail.multi_workspace_mode && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={skipLoading}
+                      onClick={async () => {
+                        if (!detail) return;
+                        const running = Array.isArray(detail.workspaces_plan)
+                          ? detail.workspaces_plan.find((w) => w.status === "running")?.name
+                          : null;
+                        if (!confirm(`Marcar o workspace atual${running ? ` (${running})` : ""} como entregue (200 cr — já atingiu o limite diário) e seguir pro próximo?`)) return;
+                        setSkipLoading(true);
+                        try {
+                          const { data, error } = await supabase.rpc("skip_current_workspace", { _order_id: detail.id, _reason: "already_at_limit" });
+                          if (error) throw error;
+                          const d = data as { skipped?: string; nextWorkspace?: string | null } | null;
+                          toast({
+                            title: `Workspace ${d?.skipped ?? ""} marcado como entregue`,
+                            description: d?.nextWorkspace
+                              ? `Próximo: ${d.nextWorkspace}`
+                              : "Era o último — pedido finalizado.",
+                          });
+                          qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                        } catch (err) {
+                          const msg = err instanceof Error ? err.message : "Erro";
+                          toast({ title: "Falha", description: msg, variant: "destructive" });
+                        } finally {
+                          setSkipLoading(false);
+                        }
+                      }}
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                      Já está no limite (200 cr)
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"

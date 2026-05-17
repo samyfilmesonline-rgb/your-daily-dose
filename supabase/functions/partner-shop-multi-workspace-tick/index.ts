@@ -279,11 +279,17 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Para next/fail: precisamos do plan
+    // Para next/fail/limit_reached: precisamos do plan
     const plan = (order.workspaces_plan as WsItem[] | null) ?? [];
     if (!plan.length) return json(400, { error: "Plano de workspaces ausente — chame action=start primeiro" });
 
-    const targetName = b.action === "next" ? b.finishedWorkspace : b.workspace;
+    const targetName =
+      b.action === "next"
+        ? b.finishedWorkspace
+        : b.action === "limit_reached"
+        ? (b.workspace ?? order.current_workspace ?? "")
+        : b.workspace;
+    if (!targetName) return json(400, { error: "workspace é obrigatório" });
     let idx = plan.findIndex((w) => w.name === targetName);
     if (idx < 0) {
       const cleanedTarget = cleanWorkspaceName(targetName);
@@ -301,6 +307,12 @@ Deno.serve(async (req) => {
       plan[idx].farmed = Math.max(plan[idx].farmed, b.farmed);
       plan[idx].finished_at = nowIso;
       plan[idx].error = null;
+    } else if (b.action === "limit_reached") {
+      plan[idx].status = "done";
+      plan[idx].farmed = Math.max(plan[idx].farmed, 200);
+      plan[idx].finished_at = nowIso;
+      plan[idx].error = b.reason || "stripe_daily_farm_limit_reached";
+      plan[idx].limited = true;
     } else {
       plan[idx].status = "failed";
       plan[idx].finished_at = nowIso;

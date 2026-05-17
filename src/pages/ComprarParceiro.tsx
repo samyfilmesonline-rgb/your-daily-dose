@@ -2155,7 +2155,15 @@ function OrderTrackingInline({
   const progress = order?.progress ?? null;
   const isTerminalSuccess = status === "delivered";
   const isTerminalFailure = status === "failed" || status === "expired" || status === "refunded";
-  const showBotBlock = !!botEmail && (status === "processing" || status === "paid" || status === "queued");
+  const showBotBlock =
+    !!botEmail &&
+    (status === "processing" ||
+      status === "paid" ||
+      status === "queued" ||
+      status === "waiting_invite");
+  const showWorkspacePrompt =
+    status === "waiting_workspace" ||
+    (status === "paid" && !workspace);
   const headerIcon = isTerminalSuccess ? <CheckCircle2 className="w-6 h-6" />
     : isTerminalFailure ? <XCircle className="w-6 h-6" />
     : showBotBlock ? <Bot className="w-6 h-6" />

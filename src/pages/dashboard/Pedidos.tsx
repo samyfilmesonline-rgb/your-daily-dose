@@ -90,6 +90,25 @@ function isStopping(o: Pick<Order, "stop_requested_at" | "status">) {
   return !!o.stop_requested_at && ["paid", "queued", "processing"].includes(o.status);
 }
 
+const FARM_ACTIVE_HEARTBEAT_MS = 90 * 1000;
+const FARM_ACTIVE_BOOT_MS = 60 * 1000;
+
+function isFarmActive(
+  o: Pick<Order, "status" | "assigned_bot_id" | "assigned_at">,
+  bot: BotMini | undefined | null,
+): boolean {
+  if (o.status !== "processing") return false;
+  const now = Date.now();
+  if (bot && bot.status === "busy") {
+    const hb = bot.last_heartbeat_at ? new Date(bot.last_heartbeat_at).getTime() : 0;
+    if (hb && now - hb < FARM_ACTIVE_HEARTBEAT_MS) return true;
+  }
+  // grace period right after assignment, before the worker's first heartbeat
+  const assigned = o.assigned_at ? new Date(o.assigned_at).getTime() : 0;
+  if (assigned && now - assigned < FARM_ACTIVE_BOOT_MS) return true;
+  return false;
+}
+
 function effectiveBadge(o: Pick<Order, "stop_requested_at" | "status">): { label: string; cls: string } {
   if (isStopping(o)) {
     return { label: "Parando…", cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" };
@@ -762,6 +781,45 @@ export default function Pedidos() {
                       Cancelamento solicitado em {new Date(detail.stop_requested_at!).toLocaleString("pt-BR")} —
                       aguardando o worker finalizar o workspace atual. O status final aparece aqui assim que o ciclo fechar.
                     </p>
+                  ) : isFarmActive(detail, detailBot) ? (
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-amber-400">
+                        Farm em andamento. Aguarde o worker finalizar ou pare com segurança —
+                        clicar agora não interrompe o navegador, apenas pede para o worker encerrar no fim do workspace atual.
+                        {detailBot?.last_heartbeat_at && <> Último heartbeat {fmtAgo(detailBot.last_heartbeat_at)}.</>}
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={cancelLoading}
+                        onClick={async () => {
+                          if (!detail) return;
+                          if (!confirm("Solicitar parada segura? O worker fecha o workspace atual e libera o bot.")) return;
+                          setCancelLoading(true);
+                          try {
+                            const { data, error } = await supabase.functions.invoke(
+                              "partner-shop-cancel-manual-order",
+                              { body: { orderId: detail.id, reason: "stopped_by_admin" } }
+                            );
+                            if (error) throw error;
+                            const refunded = (data as { refundedCredits?: number } | null)?.refundedCredits ?? 0;
+                            toast({ title: "Parada solicitada", description: `Worker encerrará o workspace atual. Estorno previsto: ${refunded} cr.` });
+                            qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                          } catch (err) {
+                            const msg = err instanceof Error ? err.message : "Erro";
+                            toast({ title: "Falha", description: msg, variant: "destructive" });
+                          } finally {
+                            setCancelLoading(false);
+                          }
+                        }}
+                      >
+                        {cancelLoading ? (
+                          <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Solicitando…</>
+                        ) : (
+                          <><Square className="w-3.5 h-3.5 mr-1" /> Solicitar parada segura</>
+                        )}
+                      </Button>
+                    </div>
                   ) : (
                   <>
                   <p className="text-[11px] text-muted-foreground">
@@ -779,7 +837,7 @@ export default function Pedidos() {
                       try {
                         const { data, error } = await supabase.functions.invoke(
                           "partner-shop-cancel-manual-order",
-                          { body: { orderId: detail.id } }
+                          { body: { orderId: detail.id, reason: "stopped_by_admin" } }
                         );
                         if (error) throw error;
                         const refunded = (data as { refundedCredits?: number } | null)?.refundedCredits ?? 0;
@@ -909,6 +967,17 @@ export default function Pedidos() {
                     <RotateCw className="w-3.5 h-3.5" /> Tentar farmar novamente
                   </div>
                   {(() => {
+                    const botBusy = !!detailBot && detailBot.status === "busy"
+                      && !!detailBot.last_heartbeat_at
+                      && Date.now() - new Date(detailBot.last_heartbeat_at).getTime() < FARM_ACTIVE_HEARTBEAT_MS;
+                    if (!botBusy) return null;
+                    return (
+                      <div className="text-[11px] text-amber-400">
+                        Bot ainda ocupado — aguarde liberar antes de tentar de novo.
+                      </div>
+                    );
+                  })()}
+                  {(() => {
                     if (detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan)) {
                       const pending = detail.workspaces_plan.filter((w) => w.status !== "done").length;
                       return (
@@ -927,7 +996,7 @@ export default function Pedidos() {
                   })()}
                   <Button
                     size="sm"
-                    disabled={retryLoading}
+                    disabled={retryLoading || (!!detailBot && detailBot.status === "busy" && !!detailBot.last_heartbeat_at && Date.now() - new Date(detailBot.last_heartbeat_at).getTime() < FARM_ACTIVE_HEARTBEAT_MS)}
                     onClick={async () => {
                       if (!detail) return;
                       let confirmMsg = `Re-debitar ${detail.credits} créditos da cota e tentar farmar de novo?`;
@@ -976,7 +1045,7 @@ export default function Pedidos() {
                       size="sm"
                       variant="outline"
                       className="ml-2"
-                      disabled={retryFailedLoading}
+                      disabled={retryFailedLoading || (!!detailBot && detailBot.status === "busy" && !!detailBot.last_heartbeat_at && Date.now() - new Date(detailBot.last_heartbeat_at).getTime() < FARM_ACTIVE_HEARTBEAT_MS)}
                       onClick={async () => {
                         if (!detail || !Array.isArray(detail.workspaces_plan)) return;
                         const failedN = detail.workspaces_plan.filter((w) => w.status === "failed" || w.status === "skipped").length;

@@ -53,6 +53,9 @@ Deno.serve(async (req) => {
     if (ordErr || !order) return json(404, { error: "Pedido não encontrado" });
     if (!order.is_manual) return json(400, { error: "Pedido não é manual" });
     if (!isAdmin && order.partner_id !== callerId) return json(403, { error: "Sem permissão" });
+    if (!["paid", "queued", "processing"].includes(String(order.status))) {
+      return json(400, { error: `Status atual (${order.status}) não permite parar/cancelar` });
+    }
 
     const { data: refunded, error: rpcErr } = await sb.rpc("cancel_manual_order", {
       _order_id: order.id,

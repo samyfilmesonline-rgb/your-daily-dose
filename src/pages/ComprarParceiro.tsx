@@ -2380,6 +2380,35 @@ function OrderTrackingInline({
         </div>
       )}
 
+      {showWorkspacePrompt && (
+        <div className="rounded-lg border-2 border-amber-500/40 bg-amber-500/5 p-4 space-y-3 mt-3">
+          <div className="text-xs font-mono uppercase tracking-widest text-amber-400 flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5" /> Próximo passo: informe seu workspace Lovable
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Digite o <strong>nome exato</strong> do workspace onde você quer receber os créditos
+            (ex.: <span className="font-mono">Meu Projeto</span>). Não use rótulos como
+            "Em andamento" ou status — precisa ser o nome real do workspace no Lovable.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Input
+              value={wsInput}
+              onChange={(e) => setWsInput(e.target.value)}
+              placeholder="Nome do workspace Lovable"
+              className="font-mono"
+              disabled={wsSaving}
+            />
+            <Button onClick={saveWorkspace} disabled={wsSaving || wsInput.trim().length < 2}>
+              {wsSaving ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Salvando...</>
+              ) : (
+                <>Salvar workspace</>
+              )}
+            </Button>
+          </div>
+        </div>
+      )}
+
       {showBotBlock && botEmail && (
         <div className="rounded-lg border-2 border-primary/40 bg-primary/5 p-4 space-y-3 mt-3">
           <div className="text-xs font-mono uppercase tracking-widest text-primary flex items-center gap-1.5">
@@ -2423,7 +2452,7 @@ function OrderTrackingInline({
           )}
         </div>
       )}
-      {(status === "paid" || status === "queued" || (status === "processing" && !order?.assignedBotId)) && !showBotBlock && (
+      {(status === "paid" || status === "queued" || (status === "processing" && !order?.assignedBotId)) && !showBotBlock && !showWorkspacePrompt && (
         <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm flex items-center gap-2">
           <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
           Estamos preparando seu pedido. Se demorar, fale com o suporte.

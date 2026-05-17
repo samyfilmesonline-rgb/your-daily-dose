@@ -445,15 +445,38 @@ Deno.serve(async (req) => {
     await logEvent(
       sb,
       { ...order, status: isFinal ? finalStatus : "processing", credits: finalCredits, amount_cents: finalAmountCents },
-      isFinal ? `multi_ws_${finalStatus}` : "workspace_advanced",
+      b.action === "limit_reached"
+        ? "workspace_limit_reached"
+        : isFinal
+        ? `multi_ws_${finalStatus}`
+        : "workspace_advanced",
       {
         finished: targetName,
         finishedStatus: plan[idx].status,
         next: next?.name ?? null,
         done,
         total: plan.length,
+        reason: b.action === "limit_reached" ? (b.reason || "stripe_daily_farm_limit_reached") : undefined,
       },
     );
+
+    // Registrar execucao limite quando vier do limit_reached
+    if (b.action === "limit_reached") {
+      try {
+        await sb.from("execucoes_lovable").insert({
+          id_do_usuario: order.partner_id,
+          email_lovable: (await sb.from("farm_bots").select("email_lovable").eq("id", bot.id).maybeSingle()).data?.email_lovable ?? null,
+          workspace_nome: targetName,
+          creditos_adicionados: 200,
+          status: "limite",
+          erro: b.reason || "stripe_daily_farm_limit_reached",
+          iniciado_em: nowIso,
+          finalizado_em: nowIso,
+        });
+      } catch (e) {
+        console.warn("execucoes_lovable insert err", e);
+      }
+    }
 
     return json(200, {
       ok: true,

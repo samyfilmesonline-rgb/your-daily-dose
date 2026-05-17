@@ -13,7 +13,7 @@ import GlitchText from "@/components/landing/GlitchText";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import ManualOrderDialog from "@/components/dashboard/ManualOrderDialog";
-import { cleanWorkspaceName } from "@/lib/workspace-name";
+import { cleanWorkspaceName, isStatusLikeWorkspace } from "@/lib/workspace-name";
 
 const dn = (s: string | null | undefined) => cleanWorkspaceName(s) || "—";
 
@@ -73,6 +73,8 @@ type Order = {
     plan: Array<{ name: string; status: string; farmed: number }>;
     mode?: string;
   }> | null;
+  client_fingerprint?: string | null;
+  bot_invite_confirmed_at?: string | null;
 };
 
 type BotMini = {
@@ -131,6 +133,42 @@ function effectiveBadge(o: Pick<Order, "stop_requested_at" | "status">): { label
       cls: "bg-muted text-muted-foreground border-muted-foreground/30",
     }
   );
+}
+
+/**
+ * Pedidos legados podem ter `target_workspace` com um rótulo de status
+ * (ex.: "Em andamento"). Visualmente tratamos como waiting_workspace
+ * mesmo que o backend ainda não tenha sido reescrito.
+ */
+function needsRealWorkspace(o: Pick<Order, "status" | "target_workspace" | "multi_workspace_mode">): boolean {
+  if (o.multi_workspace_mode) return false;
+  if (o.status === "waiting_workspace") return true;
+  if (!o.target_workspace) {
+    return ["paid", "queued", "processing", "waiting_invite"].includes(o.status);
+  }
+  return isStatusLikeWorkspace(o.target_workspace);
+}
+
+function effectiveStatusForDisplay(o: Pick<Order, "status" | "target_workspace" | "multi_workspace_mode" | "stop_requested_at">): {
+  label: string;
+  cls: string;
+  hint?: string;
+} {
+  if (needsRealWorkspace(o) && o.status !== "waiting_workspace") {
+    return {
+      label: "Falta selecionar workspace",
+      cls: "bg-indigo-500/15 text-indigo-400 border-indigo-500/40",
+      hint: "Workspace real ainda não foi informado",
+    };
+  }
+  const base = effectiveBadge(o);
+  const hintMap: Partial<Record<OrderStatus, string>> = {
+    waiting_workspace: "Falta selecionar workspace real",
+    waiting_invite: "Falta confirmar bot como Owner",
+    processing: "Worker executando",
+    pending: "Aguardando pagamento / fila",
+  };
+  return { ...base, hint: hintMap[o.status] };
 }
 
 function brl(c: number) {

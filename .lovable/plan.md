@@ -1,79 +1,80 @@
-## Problemas observados no print
 
-Pedido multi-workspace parado/falhado mostra estado errado:
+## Problema observado
 
-1. **"Workspace atual ... 0 cr · falhou"** — workspace que estava `running` perde o que já foi farmado. Hoje o worker só reporta `farmed` quando chama `action=next` (sucesso). Se parar no meio, nada do parcial é gravado no `workspaces_plan`.
-2. **"Créditos: 0" / "Valor: R$ 0,00" / "0 / 0 créditos farmados" / "PROGRESSO 0%"** — `refund_order_remainder` (multi) faz `credits = v_farmed` somando só workspaces `done`. Como o `running` virou `skipped` sem farmed gravado, o total fica 0. Além disso, a query "progresso ao vivo" depende de `target_workspace`, que é zerado no refund, então a UI mostra 0/0.
-3. **"Workspace: — (todos · 1/1)"** — após o refund, `current_workspace` e `target_workspace` viram NULL, então a UI não mostra mais qual workspace estava rodando.
-4. **"Tentar novamente" zera tudo** — `retry_manual_order` (multi) só preserva linhas `done` no plano; tudo que foi parcialmente farmado em workspaces não-concluídos some das métricas, e o "progresso ao vivo" volta a contar do zero porque filtra por `assigned_at`.
-5. Faltam botões de controle além de "parar" e "tentar novamente".
+Você pulou o workspace, mas o pedido ficou como **"Falhou — all_workspaces_failed"** com **0 créditos**, mesmo tendo farmado 200. Isso aconteceu porque:
 
-## Correções
+1. O workspace estava `running` mas travado — o bot não enviou `next` porque o workspace **já estava no limite diário de 200 créditos** (não havia mais o que farmar nessa janela).
+2. Quando você clicou em **Pular workspace**, a função `skip_current_workspace`:
+   - Marcou o ws como `skipped` com `farmed=0` (porque `execucoes_lovable.creditos_adicionados` desta rodada era 0 — os 200 créditos já estavam no workspace **antes** do pedido começar).
+   - Como era o único `running` e não havia `pending`, chamou `refund_order_remainder` com motivo `skipped_last_workspace`.
+   - `refund_order_remainder` viu `done_count = 0` → marcou o pedido como `failed` com `all_workspaces_failed`.
+3. UI mostra "Créditos: 0" e "0% farmado" porque o pedido foi tratado como falha total, sem reconhecer que o workspace efetivamente **já estava com seus 200 créditos do dia**.
 
-### Backend
+## O que vou fazer
 
-**a) Heartbeat de progresso no `partner-shop-multi-workspace-tick`**
+### 1. Detectar "workspace já no limite diário" antes/durante o skip
 
-Adicionar `action: "progress"` no worker payload: `{ orderId, fingerprint, workspace, farmed }`. Atualiza `plan[idx].farmed = max(plan[idx].farmed, farmed)` sem mudar status. O worker chama isso a cada N créditos farmados (ou no `Ctrl+C` antes de morrer).
+Atualizar `skip_current_workspace(_order_id, _reason text default null)`:
 
-**b) Snapshot do parcial ao parar/falhar (`refund_order_remainder` multi path)**
+- Aceitar um parâmetro opcional `_reason` (`"manual"` padrão, ou `"already_at_limit"`).
+- Quando o worker (ou o admin) sinalizar `already_at_limit`, marcar o workspace como **`done`** (não `skipped`), com `farmed = 200`, e contabilizar como entregue. Isso reflete a realidade: o cliente recebeu os 200 créditos do dia naquele workspace, mesmo que farmados por outra rota.
+- Sem `_reason` explícito, manter o comportamento atual (skip = skipped + parcial).
 
-Antes de marcar `running` → `skipped`, fazer um best-effort: somar `execucoes_lovable` para `(partner_id, bot_email, workspace_name)` desde `started_at` do item, e gravar esse `farmed` no plano. Garante que mesmo sem heartbeat o parcial fica salvo.
+### 2. Heurística de fallback no skip manual
 
-**c) Preservar `target_workspace`/`current_workspace`**
+Quando o usuário pula um workspace `running` e o `partial` calculado por `execucoes_lovable` é `0`:
 
-Em `refund_order_remainder` (multi) e no `multi-workspace-tick` quando `isFinal`, não zerar `current_workspace` — manter a referência do último que rodou. Adicionar coluna nova `last_workspace text` se preferir não reusar, ou simplesmente parar de setar `current_workspace = NULL`.
+- Consultar `resumo_lovable_workspace` (ou direto na conta Lovable, via campo `meta_creditos_total` / `creditos_farmados_total` do snapshot) para verificar se o workspace está em **200/200** desde antes do `started_at`.
+- Se sim, marcar como `done` com `farmed = 200` e **não** debitar refund (cliente recebeu o serviço; o pedido entra em `delivered`).
+- Se não, manter `skipped` com `farmed = 0` como hoje.
 
-**d) Não destruir histórico em `retry_manual_order` (multi)**
+### 3. Botão extra na UI: "Marcar como entregue (200 cr)"
 
-Em vez de descartar `farmed` dos workspaces não-`done`, mover para um array `workspaces_history` (jsonb) com snapshot da tentativa anterior antes de rebuild. UI passa a somar `done` atual + soma do histórico para "total farmado acumulado".
+Em `Pedidos.tsx`, no modal de detalhe, quando o workspace está `running` e o pedido é multi-workspace:
 
-**e) Novas ações de controle** (edge function única `partner-shop-order-action` ou endpoints separados):
+- Adicionar botão **"Workspace já está no limite — marcar como entregue"** ao lado de "Pular workspace".
+- Chama `skip_current_workspace(_order_id, 'already_at_limit')`.
+- Toast: "Workspace marcado como entregue (200 cr). Seguindo pro próximo…" (ou "Pedido concluído" se era o último).
 
-- **Pular workspace atual** — marca `running` como `skipped`, continua para o próximo (sem cancelar pedido inteiro).
-- **Reatribuir bot** — libera bot atual, força nova atribuição (útil quando bot trava).
-- **Refazer só os falhados** — variante de retry que rebuilda só workspaces `failed`/`skipped`, ignora `done` e `running`.
-- **Forçar conclusão** — admin marca pedido como `delivered` com o que já farmou, faz refund do restante.
+### 4. Corrigir status final quando há `done` parciais misturados
 
-### Frontend (`src/pages/dashboard/Pedidos.tsx`)
+Em `refund_order_remainder`, ajustar a regra final:
 
-**f) Query de progresso multi-workspace**
+- Hoje: `done_count = 0 → failed`. Trocar para: se **algum** workspace tem `farmed > 0` (mesmo `skipped`), nunca usar `failed`; usar `refunded` com `failed_reason = "partial_only"`.
+- Hoje: `done_count >= total → delivered`. Manter.
+- UI já mostra "X cr parcial", então `refunded` com créditos > 0 fica claro.
 
-Quando `multi_workspace_mode`, em vez de filtrar `execucoes_lovable` por `target_workspace` (que pode ser null), filtrar por lista de `plan.map(w => w.name)` e somar tudo. Mostrar "X / Y créditos (todos os workspaces)" no painel de progresso ao vivo.
+### 5. Visual no modal
 
-**g) Exibir parcial gravado**
+- Quando `status = failed` mas `sum(workspaces_plan.farmed) > 0`, mostrar banner amarelo: *"Pedido encerrado com X créditos parciais farmados — nenhum workspace foi 100% concluído"* em vez do vermelho atual de falha total.
+- Já existe a label "parcial" por workspace; vou só ajustar o badge do header.
 
-Na lista de workspaces, quando `status` for `skipped` ou `failed` mas `farmed > 0`, mostrar "X cr parcial" em vez de "0 cr · falhou".
+## Detalhes técnicos
 
-**h) Cabeçalho do pedido**
+**Migration:**
 
-- "Workspace:" mostra `current_workspace ?? last_workspace ?? primeiro_done` em vez de "—".
-- "Créditos:" mostra `sum(plan.farmed)` (não só dos `done`) quando pedido finalizado.
+```sql
+-- Atualizar assinatura de skip_current_workspace para aceitar reason
+DROP FUNCTION IF EXISTS public.skip_current_workspace(uuid);
+CREATE FUNCTION public.skip_current_workspace(_order_id uuid, _reason text DEFAULT 'manual')
+RETURNS jsonb ...
+-- Se _reason = 'already_at_limit': status do ws = 'done', farmed = 200
+-- Senão: status = 'skipped', farmed = COALESCE(partial, parcial_execucoes)
 
-**i) Botões novos no dialog de detalhes** (estados `processing`/`paid`/`queued`):
+-- Ajustar refund_order_remainder:
+-- se v_done_count = 0 AND v_farmed = 0 → 'failed'
+-- se v_done_count = 0 AND v_farmed > 0 → 'refunded' com failed_reason='partial_only'
+-- demais regras inalteradas
+```
 
-- **Pular workspace** (ícone `SkipForward`)
-- **Trocar bot** (ícone `RefreshCcw`)
+**Frontend (`src/pages/dashboard/Pedidos.tsx`):**
 
-Em estados `refunded`/`failed`/`delivered parcial`:
-
-- **Tentar novamente (tudo)** — existente
-- **Refazer só falhados** — novo
-- **Forçar concluído** — novo (admin only)
-
-Cada botão com `AlertDialog` de confirmação descrevendo o impacto (re-débito de cota, refund parcial, etc).
-
-## Migrations envolvidas
-
-- `partner_credit_orders.workspaces_history jsonb default '[]'::jsonb`
-- (opcional) `partner_credit_orders.last_workspace text`
-- Atualizar `refund_order_remainder` (snapshot parcial + preservar workspace).
-- Atualizar `retry_manual_order` (mover histórico).
-- Nova RPC `skip_current_workspace(_order_id, _fingerprint)`.
-- Nova RPC `force_complete_order(_order_id)` (admin).
+- Novo botão "Marcar como entregue" chamando `supabase.rpc("skip_current_workspace", { _order_id, _reason: "already_at_limit" })`.
+- Banner amarelo quando `status === 'failed' && farmedSum > 0` (computar de `workspaces_plan`).
+- Manter labels e badges existentes.
 
 ## Fora de escopo
 
-- Reescrever a UI de pedidos do zero.
-- Mudar o modelo single-workspace.
-- Alterar quanto cada workspace farma (continua 200).
+- Não vou mexer no worker (bot) — a detecção automática "já no limite" no lado do bot fica para outro pedido.
+- Não vou mexer em `retry_manual_order` / `retry_failed_workspaces_only`.
+- Não vou mudar o modelo de cobrança (200 cr/ws permanece).

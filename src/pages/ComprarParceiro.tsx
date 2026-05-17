@@ -2146,6 +2146,8 @@ function OrderTrackingInline({
   const [localConfirmedAt, setLocalConfirmedAt] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
+  const [wsInput, setWsInput] = useState("");
+  const [wsSaving, setWsSaving] = useState(false);
   const status = order?.status;
   const botEmail = order?.botEmail ?? null;
   const workspace = order?.targetWorkspace ?? fallbackWorkspace ?? null;
@@ -2226,6 +2228,38 @@ function OrderTrackingInline({
     }
   };
 
+  const saveWorkspace = async () => {
+    const cleaned = wsInput.trim();
+    if (cleaned.length < 2) {
+      toast({ title: "Informe o nome do workspace", variant: "destructive" });
+      return;
+    }
+    let orderId: string | null = null;
+    try { orderId = localStorage.getItem("mf_active_order_id"); } catch { /* ignore */ }
+    const winId = (window as unknown as { __mf_tracking_id?: string }).__mf_tracking_id;
+    if (winId) orderId = winId;
+    if (!orderId) {
+      toast({ title: "Não foi possível identificar o pedido", variant: "destructive" });
+      return;
+    }
+    let fp = "";
+    try { fp = localStorage.getItem("mf_client_fp") ?? ""; } catch { /* ignore */ }
+    setWsSaving(true);
+    try {
+      const { error } = await supabase.functions.invoke("partner-shop-set-target-workspace", {
+        body: { orderId, fingerprint: fp, workspace: cleaned },
+      });
+      if (error) throw error;
+      toast({ title: "Workspace salvo!", description: "Atribuindo bot e preparando convite." });
+      setWsInput("");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Erro";
+      toast({ title: "Falha ao salvar workspace", description: msg, variant: "destructive" });
+    } finally {
+      setWsSaving(false);
+    }
+  };
+
   return (
     <>
       <DialogHeader>
@@ -2239,6 +2273,8 @@ function OrderTrackingInline({
             ? "Veja os detalhes abaixo. Em caso de cobrança, o reembolso é automático."
             : showProgress
             ? "Estamos farmando seus créditos. Acompanhe o progresso em tempo real abaixo."
+            : showWorkspacePrompt
+            ? "Pagamento confirmado. Informe o nome exato do seu workspace Lovable para iniciarmos."
             : showBotBlock
             ? "Falta um passo manual: convide o bot abaixo como Owner do seu workspace Lovable."
             : "Estamos preparando seu pedido. Esta tela atualiza sozinha."}

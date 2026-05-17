@@ -560,6 +560,9 @@ export default function Pedidos() {
                         {(() => {
                           const ineligible =
                             w.status === "failed" && (w.error ?? "").startsWith("workspace_ineligible:");
+                          const limited =
+                            w.status === "done" &&
+                            (w.limited === true || (w.error ?? "").startsWith("stripe_daily_farm_limit_reached"));
                           const map: Record<string, { label: string; cls: string }> = {
                             done:    { label: "concluído",      cls: "text-primary" },
                             running: { label: "em andamento",   cls: "text-amber-400" },
@@ -569,6 +572,8 @@ export default function Pedidos() {
                           };
                           const m = ineligible
                             ? { label: "inapto · pulado", cls: "text-amber-500" }
+                            : limited
+                            ? { label: "limite diário · 200 cr", cls: "text-sky-400" }
                             : map[w.status] ?? { label: w.status, cls: "text-muted-foreground" };
                           return <span className={m.cls}>{m.label}</span>;
                         })()}

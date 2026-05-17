@@ -95,7 +95,7 @@ const FARM_ACTIVE_BOOT_MS = 60 * 1000;
 
 function isFarmActive(
   o: Pick<Order, "status" | "assigned_bot_id" | "assigned_at">,
-  bot: BotMini | undefined,
+  bot: BotMini | undefined | null,
 ): boolean {
   if (o.status !== "processing") return false;
   const now = Date.now();

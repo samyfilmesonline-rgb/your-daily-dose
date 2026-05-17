@@ -1,80 +1,88 @@
+# Normalização de workspaces no painel + Edge Function
 
-## Problema observado
+## Objetivo
 
-Você pulou o workspace, mas o pedido ficou como **"Falhou — all_workspaces_failed"** com **0 créditos**, mesmo tendo farmado 200. Isso aconteceu porque:
+Garantir que todo nome de workspace lido, exibido, salvo ou enviado para Supabase/Edge Functions passe pela mesma rotina de normalização — eliminando letra/avatar duplicada no início, acentos, aspas curvas, espaços extras e sufixos de plano para comparação — e que pedidos/schedules nunca sejam criados com workspace vazio ou duplicado.
 
-1. O workspace estava `running` mas travado — o bot não enviou `next` porque o workspace **já estava no limite diário de 200 créditos** (não havia mais o que farmar nessa janela).
-2. Quando você clicou em **Pular workspace**, a função `skip_current_workspace`:
-   - Marcou o ws como `skipped` com `farmed=0` (porque `execucoes_lovable.creditos_adicionados` desta rodada era 0 — os 200 créditos já estavam no workspace **antes** do pedido começar).
-   - Como era o único `running` e não havia `pending`, chamou `refund_order_remainder` com motivo `skipped_last_workspace`.
-   - `refund_order_remainder` viu `done_count = 0` → marcou o pedido como `failed` com `all_workspaces_failed`.
-3. UI mostra "Créditos: 0" e "0% farmado" porque o pedido foi tratado como falha total, sem reconhecer que o workspace efetivamente **já estava com seus 200 créditos do dia**.
+## 1. Helper compartilhado de normalização
 
-## O que vou fazer
+Criar `src/lib/workspace-name.ts` com:
 
-### 1. Detectar "workspace já no limite diário" antes/durante o skip
+- `stripAvatarPrefix(name)` — se o nome começa com `X` + `[xX]...` (mesma letra repetida no começo, case-insensitive, considerando que a segunda pode ser maiúscula ou minúscula), remove a primeira letra. Exemplos:
+  - `Cclose's Lovablee` → `close's Lovablee`
+  - `Ddoug's Lovable` → `doug's Lovable`
+  - `AAlex's Lovable` → `Alex's Lovable`
+  - Não toca em `Alex's Lovable`, `Close`, `Aa` (curto demais, < 4 chars).
+- `cleanWorkspaceName(name)` — `stripAvatarPrefix` + trim + colapsa espaços + normaliza aspas curvas (`’` → `'`).
+- `normalizeWorkspaceKey(name)` — versão para comparação/dedupe: `cleanWorkspaceName` + lowercase + remove acentos (NFD) + remove sufixos de plano `\b(PRO|LITE|FREE|STARTER|TEAM|BUSINESS|ENTERPRISE)\b` no final.
+- `dedupeWorkspaces(list)` — aplica `cleanWorkspaceName` em cada um, descarta vazios, mantém a primeira ocorrência por `normalizeWorkspaceKey`.
 
-Atualizar `skip_current_workspace(_order_id, _reason text default null)`:
+Espelhar a mesma lógica em `supabase/functions/_shared/workspace-name.ts` (já existe a pasta `_shared/`) para uso nas Edge Functions, com export idêntico.
 
-- Aceitar um parâmetro opcional `_reason` (`"manual"` padrão, ou `"already_at_limit"`).
-- Quando o worker (ou o admin) sinalizar `already_at_limit`, marcar o workspace como **`done`** (não `skipped`), com `farmed = 200`, e contabilizar como entregue. Isso reflete a realidade: o cliente recebeu os 200 créditos do dia naquele workspace, mesmo que farmados por outra rota.
-- Sem `_reason` explícito, manter o comportamento atual (skip = skipped + parcial).
+## 2. Frontend — pontos de leitura, exibição e envio
 
-### 2. Heurística de fallback no skip manual
+Aplicar `cleanWorkspaceName` ao exibir e `dedupeWorkspaces` antes de enviar para Supabase/Edge:
 
-Quando o usuário pula um workspace `running` e o `partial` calculado por `execucoes_lovable` é `0`:
+- `src/components/dashboard/ManualOrderDialog.tsx` — ao montar a lista de workspaces do dropdown/multi-select (vinda de `resumo_lovable_workspace` ou input manual), passar por `dedupeWorkspaces`. Antes de chamar a edge function de criação, validar que `workspaces.length > 0` e mostrar toast "Selecione ao menos um workspace válido" caso contrário.
+- `src/pages/dashboard/Pedidos.tsx` — exibir `current_workspace`, `target_workspace`, `last_workspace` e itens de `workspaces_plan[].name` via `cleanWorkspaceName`. Manter o nome bruto no banco; só limpar na renderização.
+- `src/pages/dashboard/Programacoes.tsx` — mesma regra: dedupe na criação/edição, `cleanWorkspaceName` na exibição.
+- `src/pages/dashboard/Workspaces.tsx` — usar `cleanWorkspaceName` na coluna de nome.
 
-- Consultar `resumo_lovable_workspace` (ou direto na conta Lovable, via campo `meta_creditos_total` / `creditos_farmados_total` do snapshot) para verificar se o workspace está em **200/200** desde antes do `started_at`.
-- Se sim, marcar como `done` com `farmed = 200` e **não** debitar refund (cliente recebeu o serviço; o pedido entra em `delivered`).
-- Se não, manter `skipped` com `farmed = 0` como hoje.
+Nenhuma mudança no schema do banco. Não tocar em `senha_lovable`, secrets, service_role.
 
-### 3. Botão extra na UI: "Marcar como entregue (200 cr)"
+## 3. UI — separar "descobrindo workspaces" de "farm em execução"
 
-Em `Pedidos.tsx`, no modal de detalhe, quando o workspace está `running` e o pedido é multi-workspace:
+Em `Pedidos.tsx`, no modal/linha do pedido:
 
-- Adicionar botão **"Workspace já está no limite — marcar como entregue"** ao lado de "Pular workspace".
-- Chama `skip_current_workspace(_order_id, 'already_at_limit')`.
-- Toast: "Workspace marcado como entregue (200 cr). Seguindo pro próximo…" (ou "Pedido concluído" se era o último).
+- Quando `status === 'processing'` e `workspaces_total IS NULL` (ou `workspaces_plan` vazio) → badge azul "Descobrindo workspaces…" com spinner. Não mostrar progresso, não mostrar "falha".
+- Quando `status === 'processing'` e `workspaces_plan` populado → barra de progresso atual `workspaces_done / workspaces_total` + nome do `current_workspace`.
+- Não exibir mensagens de falha/restart durante a fase de descoberta.
 
-### 4. Corrigir status final quando há `done` parciais misturados
+## 4. Edge Functions — validação anti-vazio + uso do helper
 
-Em `refund_order_remainder`, ajustar a regra final:
+- `partner-shop-create-manual-order` e `partner-shop-create-order-schedule`:
+  - Importar `dedupeWorkspaces`/`cleanWorkspaceName` de `_shared/workspace-name.ts`.
+  - Após validar o payload, aplicar dedupe. Se a lista resultante estiver vazia (ou se `target_workspace` único ficar vazio depois de limpar), retornar 400 com `{ error: "Nenhum workspace válido informado" }`.
+  - Salvar `workspaces_plan`/`target_workspace` já normalizados (sem acento/sufixo perdido — guardamos o `cleanWorkspaceName`, não a key).
+- `partner-shop-multi-workspace-tick` (deploy obrigatório):
+  - Em `action=start`: aplicar `dedupeWorkspaces(b.workspaces)` antes de calcular `allowed`/quota. Se vazio, 400 "Nenhum workspace válido".
+  - Em `action=next`/`action=fail`: localizar o item por `normalizeWorkspaceKey(target) === normalizeWorkspaceKey(plan[i].name)` antes de cair em comparação literal, para tolerar variação visual vinda do worker. Manter o `name` original do plano no update (não reescrever).
+  - Não tocar em `current_workspace`/`target_workspace` fora dessa função — já é o caso, apenas reforçar.
+- Demais funções que leem o plano (`partner-shop-list-orders`, `partner-shop-check-status`, `partner-shop-stalled-watchdog`, `partner-shop-stop-order`, `partner-shop-schedule-tick`, `partner-shop-redeem-balance`, `partner-shop-create-balance-only-order`, `partner-shop-create-pix`, `admin-checkout-list`): não reescrevem nomes; só consumir. Sem mudança, exceto se algum também monta plano — verificarei e replicarei dedupe se necessário.
 
-- Hoje: `done_count = 0 → failed`. Trocar para: se **algum** workspace tem `farmed > 0` (mesmo `skipped`), nunca usar `failed`; usar `refunded` com `failed_reason = "partial_only"`.
-- Hoje: `done_count >= total → delivered`. Manter.
-- UI já mostra "X cr parcial", então `refunded` com créditos > 0 fica claro.
+## 5. Status — sem mudanças
 
-### 5. Visual no modal
+Os enums já refletem o spec do usuário:
+- `partner_credit_orders.status`: pending, processing, delivered, failed, refunded, expired
+- `execucoes_lovable.status`: em_andamento, sucesso, falha, limite
+- `workspaces_plan[].status`: pending, running, done, failed, skipped
 
-- Quando `status = failed` mas `sum(workspaces_plan.farmed) > 0`, mostrar banner amarelo: *"Pedido encerrado com X créditos parciais farmados — nenhum workspace foi 100% concluído"* em vez do vermelho atual de falha total.
-- Já existe a label "parcial" por workspace; vou só ajustar o badge do header.
+Nenhuma migration de schema. Sem alteração de RLS.
 
-## Detalhes técnicos
+## 6. Segurança
 
-**Migration:**
-
-```sql
--- Atualizar assinatura de skip_current_workspace para aceitar reason
-DROP FUNCTION IF EXISTS public.skip_current_workspace(uuid);
-CREATE FUNCTION public.skip_current_workspace(_order_id uuid, _reason text DEFAULT 'manual')
-RETURNS jsonb ...
--- Se _reason = 'already_at_limit': status do ws = 'done', farmed = 200
--- Senão: status = 'skipped', farmed = COALESCE(partial, parcial_execucoes)
-
--- Ajustar refund_order_remainder:
--- se v_done_count = 0 AND v_farmed = 0 → 'failed'
--- se v_done_count = 0 AND v_farmed > 0 → 'refunded' com failed_reason='partial_only'
--- demais regras inalteradas
-```
-
-**Frontend (`src/pages/dashboard/Pedidos.tsx`):**
-
-- Novo botão "Marcar como entregue" chamando `supabase.rpc("skip_current_workspace", { _order_id, _reason: "already_at_limit" })`.
-- Banner amarelo quando `status === 'failed' && farmedSum > 0` (computar de `workspaces_plan`).
-- Manter labels e badges existentes.
+- Helper roda 100% client-side e em edge — nenhum dado sensível trafega.
+- Nenhuma exposição nova de service_role, senhas, cartões ou chaves.
+- `senha_lovable` continua restrita ao desktop conforme `SECURITY.md`.
 
 ## Fora de escopo
 
-- Não vou mexer no worker (bot) — a detecção automática "já no limite" no lado do bot fica para outro pedido.
-- Não vou mexer em `retry_manual_order` / `retry_failed_workspaces_only`.
-- Não vou mudar o modelo de cobrança (200 cr/ws permanece).
+- Mudar enums/status no banco.
+- Mexer no worker (Python/desktop) — só a edge function trata a variação recebida.
+- Refatorar `refund_order_remainder` / `skip_current_workspace` (já tratado em pedidos anteriores).
+
+## Arquivos previstos
+
+Novos:
+- `src/lib/workspace-name.ts`
+- `supabase/functions/_shared/workspace-name.ts`
+- `src/lib/__tests__/workspace-name.test.ts` (vitest, casos do spec)
+
+Editados:
+- `src/components/dashboard/ManualOrderDialog.tsx`
+- `src/pages/dashboard/Pedidos.tsx`
+- `src/pages/dashboard/Programacoes.tsx`
+- `src/pages/dashboard/Workspaces.tsx`
+- `supabase/functions/partner-shop-multi-workspace-tick/index.ts`
+- `supabase/functions/partner-shop-create-manual-order/index.ts`
+- `supabase/functions/partner-shop-create-order-schedule/index.ts`

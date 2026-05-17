@@ -53,6 +53,7 @@ type PixData = {
 };
 type OrderStatus =
   | "pending" | "paid" | "queued" | "processing"
+  | "waiting_workspace" | "waiting_invite"
   | "delivered" | "failed" | "expired" | "refunded";
 type OrderState = {
   status: OrderStatus;
@@ -198,6 +199,8 @@ const STATUS_BADGE: Record<OrderStatus, { label: string; cls: string }> = {
   paid: { label: "Pago", cls: "bg-primary/15 text-primary border-primary/40" },
   queued: { label: "Na fila", cls: "bg-primary/15 text-primary border-primary/40" },
   processing: { label: "Processando", cls: "bg-primary/15 text-primary border-primary/40" },
+  waiting_workspace: { label: "Falta workspace", cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" },
+  waiting_invite: { label: "Falta confirmar bot", cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" },
   delivered: { label: "Entregue", cls: "bg-emerald-500/15 text-emerald-400 border-emerald-500/40" },
   failed: { label: "Falhou", cls: "bg-destructive/15 text-destructive border-destructive/40" },
   expired: { label: "Expirado", cls: "bg-muted text-muted-foreground border-border" },
@@ -1747,6 +1750,8 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   paid: "Pagamento confirmado",
   queued: "Na fila para receber um bot",
   processing: "Processando seu pedido",
+  waiting_workspace: "Falta informar o workspace",
+  waiting_invite: "Falta confirmar bot como Owner",
   delivered: "Créditos entregues",
   failed: "Não foi possível entregar os créditos",
   expired: "Pagamento expirado",
@@ -1755,6 +1760,12 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
 
 function statusHeadline(s: OrderState | null): string {
   if (!s) return "Carregando status do pedido...";
+  if (s.status === "waiting_workspace") {
+    return "Informe o workspace para iniciarmos";
+  }
+  if (s.status === "waiting_invite") {
+    return "Adicione o bot como Owner no seu workspace";
+  }
   if (s.status === "processing" && s.assignedBotId) {
     return "Aguardando convite do bot ou processamento";
   }
@@ -2135,6 +2146,8 @@ function OrderTrackingInline({
   const [localConfirmedAt, setLocalConfirmedAt] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
+  const [wsInput, setWsInput] = useState("");
+  const [wsSaving, setWsSaving] = useState(false);
   const status = order?.status;
   const botEmail = order?.botEmail ?? null;
   const workspace = order?.targetWorkspace ?? fallbackWorkspace ?? null;
@@ -2144,7 +2157,15 @@ function OrderTrackingInline({
   const progress = order?.progress ?? null;
   const isTerminalSuccess = status === "delivered";
   const isTerminalFailure = status === "failed" || status === "expired" || status === "refunded";
-  const showBotBlock = !!botEmail && (status === "processing" || status === "paid" || status === "queued");
+  const showBotBlock =
+    !!botEmail &&
+    (status === "processing" ||
+      status === "paid" ||
+      status === "queued" ||
+      status === "waiting_invite");
+  const showWorkspacePrompt =
+    status === "waiting_workspace" ||
+    (status === "paid" && !workspace);
   const headerIcon = isTerminalSuccess ? <CheckCircle2 className="w-6 h-6" />
     : isTerminalFailure ? <XCircle className="w-6 h-6" />
     : showBotBlock ? <Bot className="w-6 h-6" />
@@ -2207,6 +2228,38 @@ function OrderTrackingInline({
     }
   };
 
+  const saveWorkspace = async () => {
+    const cleaned = wsInput.trim();
+    if (cleaned.length < 2) {
+      toast({ title: "Informe o nome do workspace", variant: "destructive" });
+      return;
+    }
+    let orderId: string | null = null;
+    try { orderId = localStorage.getItem("mf_active_order_id"); } catch { /* ignore */ }
+    const winId = (window as unknown as { __mf_tracking_id?: string }).__mf_tracking_id;
+    if (winId) orderId = winId;
+    if (!orderId) {
+      toast({ title: "Não foi possível identificar o pedido", variant: "destructive" });
+      return;
+    }
+    let fp = "";
+    try { fp = localStorage.getItem("mf_client_fp") ?? ""; } catch { /* ignore */ }
+    setWsSaving(true);
+    try {
+      const { error } = await supabase.functions.invoke("partner-shop-set-target-workspace", {
+        body: { orderId, fingerprint: fp, workspace: cleaned },
+      });
+      if (error) throw error;
+      toast({ title: "Workspace salvo!", description: "Atribuindo bot e preparando convite." });
+      setWsInput("");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Erro";
+      toast({ title: "Falha ao salvar workspace", description: msg, variant: "destructive" });
+    } finally {
+      setWsSaving(false);
+    }
+  };
+
   return (
     <>
       <DialogHeader>
@@ -2220,6 +2273,8 @@ function OrderTrackingInline({
             ? "Veja os detalhes abaixo. Em caso de cobrança, o reembolso é automático."
             : showProgress
             ? "Estamos farmando seus créditos. Acompanhe o progresso em tempo real abaixo."
+            : showWorkspacePrompt
+            ? "Pagamento confirmado. Informe o nome exato do seu workspace Lovable para iniciarmos."
             : showBotBlock
             ? "Falta um passo manual: convide o bot abaixo como Owner do seu workspace Lovable."
             : "Estamos preparando seu pedido. Esta tela atualiza sozinha."}
@@ -2325,6 +2380,35 @@ function OrderTrackingInline({
         </div>
       )}
 
+      {showWorkspacePrompt && (
+        <div className="rounded-lg border-2 border-amber-500/40 bg-amber-500/5 p-4 space-y-3 mt-3">
+          <div className="text-xs font-mono uppercase tracking-widest text-amber-400 flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5" /> Próximo passo: informe seu workspace Lovable
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Digite o <strong>nome exato</strong> do workspace onde você quer receber os créditos
+            (ex.: <span className="font-mono">Meu Projeto</span>). Não use rótulos como
+            "Em andamento" ou status — precisa ser o nome real do workspace no Lovable.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Input
+              value={wsInput}
+              onChange={(e) => setWsInput(e.target.value)}
+              placeholder="Nome do workspace Lovable"
+              className="font-mono"
+              disabled={wsSaving}
+            />
+            <Button onClick={saveWorkspace} disabled={wsSaving || wsInput.trim().length < 2}>
+              {wsSaving ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Salvando...</>
+              ) : (
+                <>Salvar workspace</>
+              )}
+            </Button>
+          </div>
+        </div>
+      )}
+
       {showBotBlock && botEmail && (
         <div className="rounded-lg border-2 border-primary/40 bg-primary/5 p-4 space-y-3 mt-3">
           <div className="text-xs font-mono uppercase tracking-widest text-primary flex items-center gap-1.5">
@@ -2368,7 +2452,7 @@ function OrderTrackingInline({
           )}
         </div>
       )}
-      {(status === "paid" || status === "queued" || (status === "processing" && !order?.assignedBotId)) && !showBotBlock && (
+      {(status === "paid" || status === "queued" || (status === "processing" && !order?.assignedBotId)) && !showBotBlock && !showWorkspacePrompt && (
         <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm flex items-center gap-2">
           <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
           Estamos preparando seu pedido. Se demorar, fale com o suporte.

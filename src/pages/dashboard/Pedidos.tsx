@@ -906,6 +906,41 @@ export default function Pedidos() {
                       <><RotateCw className="w-3.5 h-3.5 mr-1" /> Tentar novamente</>
                     )}
                   </Button>
+                  {detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan) &&
+                    detail.workspaces_plan.some((w) => w.status === "failed" || w.status === "skipped") && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="ml-2"
+                      disabled={retryFailedLoading}
+                      onClick={async () => {
+                        if (!detail || !Array.isArray(detail.workspaces_plan)) return;
+                        const failedN = detail.workspaces_plan.filter((w) => w.status === "failed" || w.status === "skipped").length;
+                        if (!confirm(`Refazer apenas ${failedN} workspace(s) com falha/ignorados? Re-debita ${failedN * 200} créditos.`)) return;
+                        setRetryFailedLoading(true);
+                        try {
+                          const { data, error } = await supabase.rpc("retry_failed_workspaces_only", { _order_id: detail.id });
+                          if (error) throw error;
+                          const status = (data as { status?: string } | null)?.status;
+                          toast({
+                            title: "Reprocessando falhados",
+                            description: status === "processing" ? "Bot iniciou agora." : status === "queued" ? "Sem bot livre — fila." : `Status: ${status ?? "ok"}`,
+                          });
+                          setDetail(null);
+                          qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                          qc.invalidateQueries({ queryKey: ["my-bots-mini", user?.id] });
+                        } catch (err) {
+                          const msg = err instanceof Error ? err.message : "Erro";
+                          toast({ title: "Falha", description: msg, variant: "destructive" });
+                        } finally {
+                          setRetryFailedLoading(false);
+                        }
+                      }}
+                    >
+                      {retryFailedLoading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCcw className="w-3.5 h-3.5 mr-1" />}
+                      Refazer só falhados
+                    </Button>
+                  )}
                 </div>
               )}
             </div>

@@ -30,6 +30,7 @@ import {
   AlertTriangle, Coins, AlertCircle, History, TrendingUp, Wallet,
 } from "lucide-react";
 import { toast } from "sonner";
+import { cleanWorkspaceName } from "@/lib/workspace-name";
 
 type Resumo = {
   id: string;

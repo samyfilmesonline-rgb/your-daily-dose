@@ -29,6 +29,13 @@ const Body = z.discriminatedUnion("action", [
     workspace: z.string().min(1).max(200),
     reason: z.string().max(500).optional().default(""),
   }),
+  z.object({
+    action: z.literal("limit_reached"),
+    orderId: z.string().uuid(),
+    fingerprint: z.string().min(8).max(256),
+    workspace: z.string().min(1).max(200).optional(),
+    reason: z.string().max(500).optional().default("stripe_daily_farm_limit_reached"),
+  }),
 ]);
 
 const PER_WS = 200;
@@ -40,6 +47,7 @@ type WsItem = {
   started_at: string | null;
   finished_at: string | null;
   error: string | null;
+  limited?: boolean;
 };
 
 function json(status: number, payload: unknown) {

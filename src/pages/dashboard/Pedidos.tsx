@@ -611,7 +611,10 @@ export default function Pedidos() {
                 </div>
                 <div><span className="text-muted-foreground">Valor:</span> {brl(detail.amount_cents)}</div>
                 <div><span className="text-muted-foreground">Tx:</span> <span className="font-mono">{detail.tx_id ?? "—"}</span></div>
-                <div><span className="text-muted-foreground">Status:</span> {effectiveBadge(detail).label}</div>
+                <div>
+                  <span className="text-muted-foreground">Status:</span>{" "}
+                  {effectiveStatusForDisplay(detail).label}
+                </div>
                 <div><span className="text-muted-foreground">Pago em:</span> {detail.paid_at ? new Date(detail.paid_at).toLocaleString("pt-BR") : "—"}</div>
                 <div><span className="text-muted-foreground">Entregue em:</span> {detail.delivered_at ? new Date(detail.delivered_at).toLocaleString("pt-BR") : "—"}</div>
                 <div><span className="text-muted-foreground">Pix expira:</span> {detail.pix_expires_at ? new Date(detail.pix_expires_at).toLocaleString("pt-BR") : "—"}</div>

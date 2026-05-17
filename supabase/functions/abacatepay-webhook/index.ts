@@ -101,13 +101,21 @@ Deno.serve(async (req) => {
             // Busca dados completos para aplicar saldo se necessário
             const { data: fullOrder } = await supabase
               .from("partner_credit_orders")
-              .select("partner_id, customer_email, balance_applied_credits, raw_payload")
+              .select("partner_id, customer_email, balance_applied_credits, raw_payload, bot_invite_confirmed_at, target_workspace")
               .eq("id", order.id)
               .maybeSingle();
+            // Define status pós-pagamento: respeita estados de espera.
+            const hasInvite = !!fullOrder?.bot_invite_confirmed_at;
+            const hasWs = !!(fullOrder?.target_workspace && String(fullOrder.target_workspace).trim().length > 1);
+            const postPaidStatus = !hasInvite
+              ? "waiting_invite"
+              : !hasWs
+              ? "waiting_workspace"
+              : "paid";
             await supabase
               .from("partner_credit_orders")
               .update({
-                status: "paid",
+                status: postPaidStatus,
                 paid_at: new Date().toISOString(),
                 raw_payload: payload as unknown as Record<string, unknown>,
               })
@@ -136,8 +144,14 @@ Deno.serve(async (req) => {
               }
             }
           }
-          // Tenta atribuir bot — idempotente p/ paid/queued sem bot.
-          if (["pending", "paid", "queued"].includes(order.status)) {
+          // Tenta atribuir bot apenas se já saiu dos estados de espera.
+          // A RPC assign_bot_to_order ignora waiting_* internamente, mas evitamos a chamada.
+          const { data: cur } = await supabase
+            .from("partner_credit_orders")
+            .select("status")
+            .eq("id", order.id)
+            .maybeSingle();
+          if (cur && ["pending", "paid", "queued"].includes(cur.status)) {
             const { data: botId, error: rpcErr } = await supabase.rpc(
               "assign_bot_to_order",
               { _order_id: order.id }

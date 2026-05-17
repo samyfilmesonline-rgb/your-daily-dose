@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { CalendarClock, Pause, Play, X, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import GlitchText from "@/components/landing/GlitchText";
+import { cleanWorkspaceName } from "@/lib/workspace-name";
 
 type Schedule = {
   id: string;

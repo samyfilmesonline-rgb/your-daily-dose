@@ -1497,6 +1497,14 @@ export default function ComprarParceiro() {
                 toast({ title: "Workspace obrigatório", variant: "destructive" });
                 return;
               }
+              if (isStatusLikeWorkspace(redeemWorkspace)) {
+                toast({
+                  title: "Workspace inválido",
+                  description: `"${redeemWorkspace.trim()}" parece um rótulo de status. Informe o nome real do workspace Lovable.`,
+                  variant: "destructive",
+                });
+                return;
+              }
               if (!customerBalance.email) {
                 toast({ title: "Saldo sem e-mail vinculado", variant: "destructive" });
                 return;

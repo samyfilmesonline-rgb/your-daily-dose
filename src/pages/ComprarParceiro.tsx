@@ -53,6 +53,7 @@ type PixData = {
 };
 type OrderStatus =
   | "pending" | "paid" | "queued" | "processing"
+  | "waiting_workspace" | "waiting_invite"
   | "delivered" | "failed" | "expired" | "refunded";
 type OrderState = {
   status: OrderStatus;

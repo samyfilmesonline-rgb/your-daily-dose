@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Activity, Search, AlertTriangle, Clock, Loader2, CheckCircle2, Plus, XCircle, RotateCw, Square } from "lucide-react";
+import { Activity, Search, AlertTriangle, Clock, Loader2, CheckCircle2, Plus, XCircle, RotateCw, Square, SkipForward, CheckSquare, RefreshCcw } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import GlitchText from "@/components/landing/GlitchText";
 import { Textarea } from "@/components/ui/textarea";
@@ -43,12 +43,21 @@ type Order = {
   workspaces_total?: number | null;
   workspaces_done?: number | null;
   current_workspace?: string | null;
+  last_workspace?: string | null;
   stop_requested_at?: string | null;
   workspaces_plan?: Array<{
     name: string;
     status: "pending" | "running" | "done" | "failed" | "skipped";
     farmed: number;
     error: string | null;
+    started_at?: string | null;
+    finished_at?: string | null;
+  }> | null;
+  workspaces_history?: Array<{
+    attempted_at: string;
+    failed_reason: string | null;
+    plan: Array<{ name: string; status: string; farmed: number }>;
+    mode?: string;
   }> | null;
 };
 
@@ -102,6 +111,9 @@ export default function Pedidos() {
   const [manualOpen, setManualOpen] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [retryLoading, setRetryLoading] = useState(false);
+  const [skipLoading, setSkipLoading] = useState(false);
+  const [forceCompleteLoading, setForceCompleteLoading] = useState(false);
+  const [retryFailedLoading, setRetryFailedLoading] = useState(false);
 
   const { data: orders = [] } = useQuery({
     queryKey: ["my-orders", user?.id],
@@ -201,19 +213,36 @@ export default function Pedidos() {
   const detailBot = detail?.assigned_bot_id ? botById.get(detail.assigned_bot_id) ?? null : null;
 
   const { data: progress } = useQuery({
-    queryKey: ["order-progress", detail?.id, detailBot?.email_lovable, detail?.target_workspace],
-    enabled: !!detail?.id && !!detailBot?.email_lovable && !!detail?.target_workspace,
+    queryKey: [
+      "order-progress",
+      detail?.id,
+      detailBot?.email_lovable,
+      detail?.target_workspace,
+      detail?.multi_workspace_mode ? (detail?.workspaces_plan?.map((w) => w.name).join(",") ?? "") : "",
+    ],
+    enabled:
+      !!detail?.id &&
+      !!detailBot?.email_lovable &&
+      (
+        (!!detail?.multi_workspace_mode && Array.isArray(detail?.workspaces_plan) && (detail?.workspaces_plan?.length ?? 0) > 0)
+        || !!detail?.target_workspace
+      ),
     refetchInterval: 5000,
     queryFn: async () => {
       const since = detail!.assigned_at ?? detail!.paid_at;
       let q = supabase
         .from("execucoes_lovable")
-        .select("status, creditos_adicionados, erro, atualizado_em, iniciado_em")
+        .select("status, creditos_adicionados, erro, atualizado_em, iniciado_em, workspace_nome")
         .eq("id_do_usuario", detail!.partner_id)
         .eq("email_lovable", detailBot!.email_lovable)
-        .eq("workspace_nome", detail!.target_workspace!)
         .order("iniciado_em", { ascending: false })
-        .limit(20);
+        .limit(50);
+      if (detail!.multi_workspace_mode && Array.isArray(detail!.workspaces_plan)) {
+        const names = detail!.workspaces_plan.map((w) => w.name);
+        if (names.length > 0) q = q.in("workspace_nome", names);
+      } else if (detail!.target_workspace) {
+        q = q.eq("workspace_nome", detail!.target_workspace);
+      }
       if (since) q = q.gte("iniciado_em", since);
       const { data } = await q;
       const list = (data ?? []) as Array<{
@@ -456,10 +485,24 @@ export default function Pedidos() {
                 <div>
                   <span className="text-muted-foreground">Workspace:</span>{" "}
                   {detail.multi_workspace_mode
-                    ? `${detail.current_workspace ?? "—"} (todos · ${detail.workspaces_done ?? 0}/${detail.workspaces_total ?? "?"})`
+                    ? `${detail.current_workspace ?? detail.last_workspace ?? "—"} (todos · ${detail.workspaces_done ?? 0}/${detail.workspaces_total ?? "?"})`
                     : detail.target_workspace ?? "—"}
                 </div>
-                <div><span className="text-muted-foreground">Créditos:</span> {detail.credits}</div>
+                <div>
+                  <span className="text-muted-foreground">Créditos:</span>{" "}
+                  {(() => {
+                    if (detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan)) {
+                      const farmedNow = detail.workspaces_plan.reduce((a, w) => a + (Number(w.farmed) || 0), 0);
+                      const farmedHist = (detail.workspaces_history ?? []).reduce(
+                        (a, h) => a + (h.plan ?? []).reduce((b, w) => b + (Number(w.farmed) || 0), 0),
+                        0,
+                      );
+                      const totalHist = farmedHist > 0 ? ` (+${farmedHist} de tentativas anteriores)` : "";
+                      return <>{farmedNow}{totalHist}</>;
+                    }
+                    return detail.credits;
+                  })()}
+                </div>
                 <div><span className="text-muted-foreground">Valor:</span> {brl(detail.amount_cents)}</div>
                 <div><span className="text-muted-foreground">Tx:</span> <span className="font-mono">{detail.tx_id ?? "—"}</span></div>
                 <div><span className="text-muted-foreground">Status:</span> {effectiveBadge(detail).label}</div>
@@ -506,7 +549,10 @@ export default function Pedidos() {
                         className="flex items-center justify-between gap-2 text-[11px] font-mono py-0.5 border-b border-border/40 last:border-0"
                       >
                         <span className="truncate flex-1">{w.name}</span>
-                        <span className="text-muted-foreground">{w.farmed} cr</span>
+                        <span className="text-muted-foreground">
+                          {w.farmed} cr
+                          {(w.status === "skipped" || w.status === "failed") && w.farmed > 0 ? " parcial" : ""}
+                        </span>
                         {(() => {
                           const ineligible =
                             w.status === "failed" && (w.error ?? "").startsWith("workspace_ineligible:");
@@ -566,8 +612,17 @@ export default function Pedidos() {
               {(() => {
                 const showProgress = ["paid", "queued", "processing", "delivered", "refunded", "failed"].includes(detail.status);
                 if (!showProgress) return null;
-                const farmed = detail.status === "delivered" ? detail.credits : (progress?.farmed ?? 0);
-                const pct = detail.credits > 0 ? Math.min(100, Math.round((farmed / detail.credits) * 100)) : 0;
+                const planFarmed = detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan)
+                  ? detail.workspaces_plan.reduce((a, w) => a + (Number(w.farmed) || 0), 0)
+                  : 0;
+                const target = detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan)
+                  ? (detail.workspaces_plan.length * 200)
+                  : detail.credits;
+                const liveFarmed = progress?.farmed ?? 0;
+                const farmed = detail.status === "delivered"
+                  ? target
+                  : Math.max(planFarmed, liveFarmed);
+                const pct = target > 0 ? Math.min(100, Math.round((farmed / target) * 100)) : 0;
                 const tenMinAgo = Date.now() - 10 * 60 * 1000;
                 const hbMs = detailBot?.last_heartbeat_at ? new Date(detailBot.last_heartbeat_at).getTime() : 0;
                 const stale = detail.status === "processing" && !!detailBot && hbMs < tenMinAgo;
@@ -580,7 +635,7 @@ export default function Pedidos() {
                     </div>
                     <Progress value={pct} className="h-2" />
                     <div className="text-xs font-mono text-muted-foreground">
-                      {farmed} / {detail.credits} créditos farmados
+                      {farmed} / {target} créditos farmados
                     </div>
                     {detailBot && (
                       <div className="text-[11px] flex items-center gap-2 flex-wrap">
@@ -717,6 +772,68 @@ export default function Pedidos() {
                       <><Square className="w-3.5 h-3.5 mr-1" /> Parar e estornar</>
                     )}
                   </Button>
+                  {detail.multi_workspace_mode && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={skipLoading}
+                      onClick={async () => {
+                        if (!detail) return;
+                        const running = Array.isArray(detail.workspaces_plan)
+                          ? detail.workspaces_plan.find((w) => w.status === "running")?.name
+                          : null;
+                        if (!confirm(`Pular o workspace atual${running ? ` (${running})` : ""} e seguir pro próximo?`)) return;
+                        setSkipLoading(true);
+                        try {
+                          const { data, error } = await supabase.rpc("skip_current_workspace", { _order_id: detail.id });
+                          if (error) throw error;
+                          const d = data as { skipped?: string; nextWorkspace?: string | null; partial?: number } | null;
+                          toast({
+                            title: `Workspace ${d?.skipped ?? ""} pulado`,
+                            description: d?.nextWorkspace
+                              ? `Próximo: ${d.nextWorkspace}${d?.partial ? ` · parcial salvo: ${d.partial} cr` : ""}`
+                              : "Era o último — pedido finalizado.",
+                          });
+                          qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                        } catch (err) {
+                          const msg = err instanceof Error ? err.message : "Erro";
+                          toast({ title: "Falha", description: msg, variant: "destructive" });
+                        } finally {
+                          setSkipLoading(false);
+                        }
+                      }}
+                    >
+                      {skipLoading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <SkipForward className="w-3.5 h-3.5 mr-1" />}
+                      Pular workspace
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={forceCompleteLoading}
+                    onClick={async () => {
+                      if (!detail) return;
+                      if (!confirm("Forçar conclusão do pedido com o que já foi farmado? O restante será estornado.")) return;
+                      setForceCompleteLoading(true);
+                      try {
+                        const { data, error } = await supabase.rpc("force_complete_order", { _order_id: detail.id });
+                        if (error) throw error;
+                        const ref = (data as { refunded?: number } | null)?.refunded ?? 0;
+                        toast({ title: "Pedido concluído", description: `Estornados ${ref} créditos.` });
+                        setDetail(null);
+                        qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                        qc.invalidateQueries({ queryKey: ["my-bots-mini", user?.id] });
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : "Erro";
+                        toast({ title: "Falha", description: msg, variant: "destructive" });
+                      } finally {
+                        setForceCompleteLoading(false);
+                      }
+                    }}
+                  >
+                    {forceCompleteLoading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <CheckSquare className="w-3.5 h-3.5 mr-1" />}
+                    Forçar concluído
+                  </Button>
                   </div>
                   </>
                   )}
@@ -789,6 +906,41 @@ export default function Pedidos() {
                       <><RotateCw className="w-3.5 h-3.5 mr-1" /> Tentar novamente</>
                     )}
                   </Button>
+                  {detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan) &&
+                    detail.workspaces_plan.some((w) => w.status === "failed" || w.status === "skipped") && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="ml-2"
+                      disabled={retryFailedLoading}
+                      onClick={async () => {
+                        if (!detail || !Array.isArray(detail.workspaces_plan)) return;
+                        const failedN = detail.workspaces_plan.filter((w) => w.status === "failed" || w.status === "skipped").length;
+                        if (!confirm(`Refazer apenas ${failedN} workspace(s) com falha/ignorados? Re-debita ${failedN * 200} créditos.`)) return;
+                        setRetryFailedLoading(true);
+                        try {
+                          const { data, error } = await supabase.rpc("retry_failed_workspaces_only", { _order_id: detail.id });
+                          if (error) throw error;
+                          const status = (data as { status?: string } | null)?.status;
+                          toast({
+                            title: "Reprocessando falhados",
+                            description: status === "processing" ? "Bot iniciou agora." : status === "queued" ? "Sem bot livre — fila." : `Status: ${status ?? "ok"}`,
+                          });
+                          setDetail(null);
+                          qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                          qc.invalidateQueries({ queryKey: ["my-bots-mini", user?.id] });
+                        } catch (err) {
+                          const msg = err instanceof Error ? err.message : "Erro";
+                          toast({ title: "Falha", description: msg, variant: "destructive" });
+                        } finally {
+                          setRetryFailedLoading(false);
+                        }
+                      }}
+                    >
+                      {retryFailedLoading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCcw className="w-3.5 h-3.5 mr-1" />}
+                      Refazer só falhados
+                    </Button>
+                  )}
                 </div>
               )}
             </div>

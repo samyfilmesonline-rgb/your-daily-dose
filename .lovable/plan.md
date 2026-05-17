@@ -1,69 +1,23 @@
-## Causa raiz
+O problema atual é de banco/estado, não da tela: o novo pedido `8560b498-abfe-4429-ab62-a90d89f7eb0c` está `queued`, mas existem vários bots `idle`. Ele não inicia porque a regra de “bot fixo por workspace” tenta reutilizar o bot histórico do workspace `PRO 04`; esse bot está marcado como `busy` apontando para um pedido antigo já `refunded` (`09101730-cc69-43b6-a9ab-34c9f4cd3158`). Como a função vê esse bot como ocupado, ela deixa o novo pedido na fila em vez de cair para outro bot livre.
 
-O pedido `09101730…` está com:
-- `status = paid` (esperado: `processing`)
-- `assigned_bot_id = acc4d4c2…` ✓
-- `target_workspace = 'PRO 04'` ✓
-- `bot_invite_confirmed_at = 2026-05-17 14:25:08` ✓
+Plano de correção:
 
-E o bot `acc4d4c2…` está com `status = idle`, `current_order_id = NULL`.
+1. Criar uma migration de banco para limpar bots travados:
+   - liberar qualquer `farm_bots.status = busy` cujo `current_order_id` aponta para pedido finalizado (`refunded`, `delivered`, `failed`, `expired`);
+   - isso remove o bloqueio causado por pedidos antigos já encerrados.
 
-Todas as 4 condições para iniciar o farm estão satisfeitas, mas o worker não pega o pedido porque:
+2. Corrigir a função `find_sticky_bot_for_order`:
+   - quando o bot histórico/preferido estiver `busy`, verificar se o `current_order_id` dele ainda é um pedido realmente ativo;
+   - se o pedido atual do bot já estiver finalizado ou inexistente, liberar esse bot e permitir a atribuição;
+   - manter a espera apenas quando o bot estiver ocupado com pedido ativo de verdade.
 
-1. **Status ficou em `paid` em vez de `processing`.** Quando o cliente clicou em "Já adicionei o bot como Owner", a função SQL `confirm_bot_invite` transicionou de `waiting_invite` → `paid`. Em seguida, ela só chama `assign_bot_to_order` quando `assigned_bot_id IS NULL`. Como o bot já estava pré-atribuído na fase `waiting_invite`, o `IF` não disparou, e o pedido nunca subiu para `processing`.
-2. **O bot foi marcado como `idle` (provavelmente pelo watchdog ao detectar bot ocioso).** O `current_order_id` foi limpo. Sem isso, o worker não enxerga o vínculo.
+3. Corrigir o pedido atual:
+   - após liberar o bot travado, chamar `assign_next_queued_order` para o parceiro `1dc707a3-c9dd-4b0a-91f8-24f264eee0b6`;
+   - o pedido `8560b498-abfe-4429-ab62-a90d89f7eb0c` deve sair de `queued` para `processing`, com `assigned_bot_id` preenchido e o bot marcado como `busy`.
 
-Resultado: pedido pago + bot atribuído + workspace + convite confirmado, mas nada acontece.
+4. Validar no banco:
+   - confirmar que o pedido novo ficou `processing`;
+   - confirmar que o bot atual aponta para esse pedido;
+   - confirmar que pedidos antigos finalizados não continuam prendendo bots.
 
-## Mudanças
-
-### 1. Migração SQL — corrigir `confirm_bot_invite`
-
-Quando estiver transicionando para `paid` com bot atribuído e workspace presente, promover direto para `processing` e reclamar o bot:
-
-```sql
-CREATE OR REPLACE FUNCTION public.confirm_bot_invite(_order_id uuid, _fingerprint text)
-... (mesma assinatura) ...
--- após o UPDATE que seta status = v_new_status:
-IF v_new_status = 'paid' AND v_order.assigned_bot_id IS NULL THEN
-  PERFORM public.assign_bot_to_order(_order_id);
-ELSIF v_new_status = 'paid'
-   AND v_order.assigned_bot_id IS NOT NULL
-   AND v_order.target_workspace IS NOT NULL
-   AND length(btrim(v_order.target_workspace)) > 0 THEN
-  -- Reclamar o bot e promover para processing
-  UPDATE public.farm_bots
-     SET status = 'busy', current_order_id = _order_id, last_heartbeat_at = now()
-   WHERE id = v_order.assigned_bot_id
-     AND (status = 'idle' OR current_order_id = _order_id OR current_order_id IS NULL);
-  UPDATE public.partner_credit_orders
-     SET status = 'processing', assigned_at = COALESCE(assigned_at, now()), updated_at = now()
-   WHERE id = _order_id;
-END IF;
-```
-
-### 2. One-shot dentro da mesma migração — destravar o pedido `09101730…`
-
-```sql
-UPDATE public.farm_bots
-   SET status = 'busy', current_order_id = '09101730-cc69-43b6-a9ab-34c9f4cd3158',
-       last_heartbeat_at = now()
- WHERE id = 'acc4d4c2-0678-482d-b288-c2b6641b3491';
-UPDATE public.partner_credit_orders
-   SET status = 'processing', assigned_at = COALESCE(assigned_at, now()),
-       failed_reason = NULL, updated_at = now()
- WHERE id = '09101730-cc69-43b6-a9ab-34c9f4cd3158' AND status = 'paid';
-```
-
-(Limpa o `failed_reason` "Aguardando cliente clicar…" que ficou stale.)
-
-## Fora do escopo
-
-- Frontend: nada a mudar — assim que o pedido virar `processing`, o painel de progresso já renderiza (essa parte já está pronta em `OrderTrackingInline`).
-- Edge function `partner-shop-confirm-invite`: continua igual; só chama a RPC.
-- `assign_bot_to_order`: continua igual; ela já bloqueia bots em estado de espera corretamente.
-
-## Critérios de aceite
-
-- Após a migração, o pedido `09101730…` aparece em `processing` e o worker inicia o farm em até 1 ciclo.
-- Para qualquer pedido futuro: clicar em "Já adicionei o bot como Owner" leva o pedido direto para `processing` quando bot + workspace já estão definidos.
+Não vou mexer no front-end nem criar novo pedido: a correção é no estado do farm e na regra de atribuição para impedir que isso volte a acontecer.

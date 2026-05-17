@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import GlitchText from "@/components/landing/GlitchText";
 import MatrixRain from "@/components/landing/MatrixRain";
 import { matrixThemeStyle } from "@/lib/matrix-theme";
+import { isStatusLikeWorkspace } from "@/lib/workspace-name";
 import {
   Sparkles, ShieldCheck, AlertTriangle, Ban, Clock, Coins,
   CheckCircle2, Copy, Loader2, QrCode, Mail, ExternalLink, XCircle, Hourglass, Bot,
@@ -282,7 +283,9 @@ export default function ComprarParceiro() {
     if (item.customerName) setName(item.customerName);
     if (item.customerWhatsapp) setWhatsapp(item.customerWhatsapp);
     if (item.customerTaxId) setTaxId(item.customerTaxId);
-    if (item.targetWorkspace) setWorkspace(item.targetWorkspace);
+    if (item.targetWorkspace && !isStatusLikeWorkspace(item.targetWorkspace)) {
+      setWorkspace(item.targetWorkspace);
+    }
     setUseBalance(true);
     setPrefillOrderId(item.id);
     setStep("form");

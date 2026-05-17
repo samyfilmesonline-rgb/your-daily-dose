@@ -1370,6 +1370,8 @@ export type Database = {
         | "failed"
         | "refunded"
         | "expired"
+        | "waiting_invite"
+        | "waiting_workspace"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1511,6 +1513,8 @@ export const Constants = {
         "failed",
         "refunded",
         "expired",
+        "waiting_invite",
+        "waiting_workspace",
       ],
     },
   },

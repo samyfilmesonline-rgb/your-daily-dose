@@ -125,7 +125,12 @@ function effectiveBadge(o: Pick<Order, "stop_requested_at" | "status">): { label
   if (isStopping(o)) {
     return { label: "Parando…", cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" };
   }
-  return statusMeta[o.status];
+  return (
+    statusMeta[o.status] ?? {
+      label: String(o.status ?? "—"),
+      cls: "bg-muted text-muted-foreground border-muted-foreground/30",
+    }
+  );
 }
 
 function brl(c: number) {

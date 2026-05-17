@@ -372,9 +372,10 @@ export default function Pedidos() {
             {STATUSES.map((s) => {
               const count = orders.filter((o) => o.status === s).length;
               if (count === 0) return null;
+              const sm = statusMeta[s] ?? { label: String(s), cls: "" };
               return (
                 <Button key={s} size="sm" variant={statusFilter === s ? "default" : "outline"} onClick={() => setStatusFilter(s)}>
-                  {statusMeta[s].label} ({count})
+                  {sm.label} ({count})
                 </Button>
               );
             })}

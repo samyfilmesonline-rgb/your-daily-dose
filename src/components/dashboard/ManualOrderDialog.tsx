@@ -26,6 +26,7 @@ import { Loader2, Zap, Clock, Layers, CalendarClock } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { z } from "zod";
+import { cleanWorkspaceName } from "@/lib/workspace-name";
 
 type Bot = {
   id: string;
@@ -235,6 +236,14 @@ export default function ManualOrderDialog({
     setSubmitting(true);
     try {
       const v = parsed.data as typeof form & { credits?: number; amountReais?: number; targetWorkspace?: string; pricePerWorkspaceReais?: number; totalDays?: number; endAt?: string; totalCreditsTarget?: number };
+      if (!multiWs) {
+        const cleaned = cleanWorkspaceName(v.targetWorkspace ?? "");
+        if (!cleaned) {
+          toast({ title: "Workspace inválido", description: "Informe um workspace válido.", variant: "destructive" });
+          return;
+        }
+        v.targetWorkspace = cleaned;
+      }
       const fnName = recurring
         ? "partner-shop-create-order-schedule"
         : "partner-shop-create-manual-order";

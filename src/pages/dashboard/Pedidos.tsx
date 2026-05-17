@@ -967,6 +967,17 @@ export default function Pedidos() {
                     <RotateCw className="w-3.5 h-3.5" /> Tentar farmar novamente
                   </div>
                   {(() => {
+                    const botBusy = !!detailBot && detailBot.status === "busy"
+                      && !!detailBot.last_heartbeat_at
+                      && Date.now() - new Date(detailBot.last_heartbeat_at).getTime() < FARM_ACTIVE_HEARTBEAT_MS;
+                    if (!botBusy) return null;
+                    return (
+                      <div className="text-[11px] text-amber-400">
+                        Bot ainda ocupado — aguarde liberar antes de tentar de novo.
+                      </div>
+                    );
+                  })()}
+                  {(() => {
                     if (detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan)) {
                       const pending = detail.workspaces_plan.filter((w) => w.status !== "done").length;
                       return (
@@ -985,7 +996,7 @@ export default function Pedidos() {
                   })()}
                   <Button
                     size="sm"
-                    disabled={retryLoading}
+                    disabled={retryLoading || (!!detailBot && detailBot.status === "busy" && !!detailBot.last_heartbeat_at && Date.now() - new Date(detailBot.last_heartbeat_at).getTime() < FARM_ACTIVE_HEARTBEAT_MS)}
                     onClick={async () => {
                       if (!detail) return;
                       let confirmMsg = `Re-debitar ${detail.credits} créditos da cota e tentar farmar de novo?`;
@@ -1034,7 +1045,7 @@ export default function Pedidos() {
                       size="sm"
                       variant="outline"
                       className="ml-2"
-                      disabled={retryFailedLoading}
+                      disabled={retryFailedLoading || (!!detailBot && detailBot.status === "busy" && !!detailBot.last_heartbeat_at && Date.now() - new Date(detailBot.last_heartbeat_at).getTime() < FARM_ACTIVE_HEARTBEAT_MS)}
                       onClick={async () => {
                         if (!detail || !Array.isArray(detail.workspaces_plan)) return;
                         const failedN = detail.workspaces_plan.filter((w) => w.status === "failed" || w.status === "skipped").length;

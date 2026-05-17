@@ -1,88 +1,82 @@
-# Normalização de workspaces no painel + Edge Function
+# Tratar "Too many requests…" do Stripe como limite diário (200 cr)
 
 ## Objetivo
 
-Garantir que todo nome de workspace lido, exibido, salvo ou enviado para Supabase/Edge Functions passe pela mesma rotina de normalização — eliminando letra/avatar duplicada no início, acentos, aspas curvas, espaços extras e sufixos de plano para comparação — e que pedidos/schedules nunca sejam criados com workspace vazio ou duplicado.
+Quando o worker detectar na página Stripe (downgrade LITE ou upgrade Pro US$5) a mensagem `Too many requests are being made. Please try again later.`, o painel deve interpretar como **limite diário do workspace atingido** — equivalente a 200 créditos farmados — e nunca como falha crítica nem disparar retries.
 
-## 1. Helper compartilhado de normalização
+## 1. Edge Function `partner-shop-multi-workspace-tick`
 
-Criar `src/lib/workspace-name.ts` com:
+Adicionar uma nova ação no schema Zod, `action: "limit_reached"`:
 
-- `stripAvatarPrefix(name)` — se o nome começa com `X` + `[xX]...` (mesma letra repetida no começo, case-insensitive, considerando que a segunda pode ser maiúscula ou minúscula), remove a primeira letra. Exemplos:
-  - `Cclose's Lovablee` → `close's Lovablee`
-  - `Ddoug's Lovable` → `doug's Lovable`
-  - `AAlex's Lovable` → `Alex's Lovable`
-  - Não toca em `Alex's Lovable`, `Close`, `Aa` (curto demais, < 4 chars).
-- `cleanWorkspaceName(name)` — `stripAvatarPrefix` + trim + colapsa espaços + normaliza aspas curvas (`’` → `'`).
-- `normalizeWorkspaceKey(name)` — versão para comparação/dedupe: `cleanWorkspaceName` + lowercase + remove acentos (NFD) + remove sufixos de plano `\b(PRO|LITE|FREE|STARTER|TEAM|BUSINESS|ENTERPRISE)\b` no final.
-- `dedupeWorkspaces(list)` — aplica `cleanWorkspaceName` em cada um, descarta vazios, mantém a primeira ocorrência por `normalizeWorkspaceKey`.
+```
+{
+  action: "limit_reached",
+  orderId, fingerprint,
+  workspace: string,
+  reason?: string  // default "stripe_daily_farm_limit_reached"
+}
+```
 
-Espelhar a mesma lógica em `supabase/functions/_shared/workspace-name.ts` (já existe a pasta `_shared/`) para uso nas Edge Functions, com export idêntico.
+Comportamento:
 
-## 2. Frontend — pontos de leitura, exibição e envio
+- Localizar o item por nome bruto → `cleanWorkspaceName` → `normalizeWorkspaceKey` (helper já existe).
+- Marcar `plan[idx].status = "done"`, `plan[idx].farmed = 200`, `finished_at = now`, `error = null`.
+- Promover o próximo `pending` para `running` (mesma lógica do `next`). Se não houver, finalizar o pedido:
+  - `doneCount > 0 → "delivered"`, calcular `credits = sum(farmed dos done)` e `amount_cents = doneCount * price_cents_per_workspace`.
+  - Chamar `refund_order_remainder` com `_reason = "stripe_daily_farm_limit_reached"` para devolver o que sobrar.
+  - Liberar o bot (`status=idle`, `current_order_id=null`) e chamar `assign_next_queued_order`.
+- Logar em `payment_events` com `event_type = "workspace_limit_reached"` e `metadata = { workspace, reason: "stripe_daily_farm_limit_reached" }`.
 
-Aplicar `cleanWorkspaceName` ao exibir e `dedupeWorkspaces` antes de enviar para Supabase/Edge:
+Para **pedido de workspace único** (`multi_workspace_mode = false`) o worker não usa o tick. Vamos adicionar um endpoint paralelo nesta mesma função: aceitar `action: "limit_reached"` também sem `workspaces_plan` — quando `order.multi_workspace_mode = false`, marcar o pedido direto como `delivered` com `credits = 200`, `amount_cents = price já cobrado`, `delivered_at = now`, `failed_reason = null`, liberar bot, registrar evento.
 
-- `src/components/dashboard/ManualOrderDialog.tsx` — ao montar a lista de workspaces do dropdown/multi-select (vinda de `resumo_lovable_workspace` ou input manual), passar por `dedupeWorkspaces`. Antes de chamar a edge function de criação, validar que `workspaces.length > 0` e mostrar toast "Selecione ao menos um workspace válido" caso contrário.
-- `src/pages/dashboard/Pedidos.tsx` — exibir `current_workspace`, `target_workspace`, `last_workspace` e itens de `workspaces_plan[].name` via `cleanWorkspaceName`. Manter o nome bruto no banco; só limpar na renderização.
-- `src/pages/dashboard/Programacoes.tsx` — mesma regra: dedupe na criação/edição, `cleanWorkspaceName` na exibição.
-- `src/pages/dashboard/Workspaces.tsx` — usar `cleanWorkspaceName` na coluna de nome.
+## 2. RPC auxiliar — opcional reuso
 
-Nenhuma mudança no schema do banco. Não tocar em `senha_lovable`, secrets, service_role.
+A RPC `skip_current_workspace(_order_id, _reason)` já aceita `'already_at_limit'` e faz exatamente o necessário em multi-ws (marca done com farmed=200 e avança). Vou:
 
-## 3. UI — separar "descobrindo workspaces" de "farm em execução"
+- Adicionar `'stripe_daily_farm_limit_reached'` como reason aceita (mesmo comportamento de `already_at_limit`, mas com `failed_reason` distinto no log).
+- A nova action `limit_reached` da edge function delega para essa RPC quando o pedido é multi-ws — mantendo uma única fonte de verdade. Para single-ws, a edge function trata inline (não há plano).
 
-Em `Pedidos.tsx`, no modal/linha do pedido:
+## 3. `execucoes_lovable`
 
-- Quando `status === 'processing'` e `workspaces_total IS NULL` (ou `workspaces_plan` vazio) → badge azul "Descobrindo workspaces…" com spinner. Não mostrar progresso, não mostrar "falha".
-- Quando `status === 'processing'` e `workspaces_plan` populado → barra de progresso atual `workspaces_done / workspaces_total` + nome do `current_workspace`.
-- Não exibir mensagens de falha/restart durante a fase de descoberta.
+Adicionar registro com `status = 'limite'`, `erro = 'stripe_daily_farm_limit_reached'`, `creditos_adicionados = 200`, `creditos_finais = creditos_iniciais + 200`, `finalizado_em = now`. Inserção feita dentro da edge function via service role.
 
-## 4. Edge Functions — validação anti-vazio + uso do helper
+## 4. UI — `Pedidos.tsx`
 
-- `partner-shop-create-manual-order` e `partner-shop-create-order-schedule`:
-  - Importar `dedupeWorkspaces`/`cleanWorkspaceName` de `_shared/workspace-name.ts`.
-  - Após validar o payload, aplicar dedupe. Se a lista resultante estiver vazia (ou se `target_workspace` único ficar vazio depois de limpar), retornar 400 com `{ error: "Nenhum workspace válido informado" }`.
-  - Salvar `workspaces_plan`/`target_workspace` já normalizados (sem acento/sufixo perdido — guardamos o `cleanWorkspaceName`, não a key).
-- `partner-shop-multi-workspace-tick` (deploy obrigatório):
-  - Em `action=start`: aplicar `dedupeWorkspaces(b.workspaces)` antes de calcular `allowed`/quota. Se vazio, 400 "Nenhum workspace válido".
-  - Em `action=next`/`action=fail`: localizar o item por `normalizeWorkspaceKey(target) === normalizeWorkspaceKey(plan[i].name)` antes de cair em comparação literal, para tolerar variação visual vinda do worker. Manter o `name` original do plano no update (não reescrever).
-  - Não tocar em `current_workspace`/`target_workspace` fora dessa função — já é o caso, apenas reforçar.
-- Demais funções que leem o plano (`partner-shop-list-orders`, `partner-shop-check-status`, `partner-shop-stalled-watchdog`, `partner-shop-stop-order`, `partner-shop-schedule-tick`, `partner-shop-redeem-balance`, `partner-shop-create-balance-only-order`, `partner-shop-create-pix`, `admin-checkout-list`): não reescrevem nomes; só consumir. Sem mudança, exceto se algum também monta plano — verificarei e replicarei dedupe se necessário.
+- Quando `workspaces_plan[].status === 'done'` E o item tem marker de limite (campo `error` começa com `stripe_daily_farm_limit_reached` ou nova flag `limited: true` no item), exibir badge cinza-azul **"limite diário"** ao lado do nome (em vez de check verde puro).
+- Modal/Detalhe: se `failed_reason === 'stripe_daily_farm_limit_reached'` em pedido `delivered`, mostrar banner azul informativo *"Limite diário do workspace atingido — 200 cr contabilizados"* em vez de qualquer aviso vermelho.
+- Não tratar como falha crítica em nenhuma view (linha da tabela, badge, contadores).
 
-## 5. Status — sem mudanças
+Para sinalizar o item: adicionar `limited?: boolean` ao item de `workspaces_plan` quando a função `limit_reached` rodar (apenas campo informativo, não muda o status `done`).
 
-Os enums já refletem o spec do usuário:
-- `partner_credit_orders.status`: pending, processing, delivered, failed, refunded, expired
-- `execucoes_lovable.status`: em_andamento, sucesso, falha, limite
-- `workspaces_plan[].status`: pending, running, done, failed, skipped
+## 5. Logs / eventos
 
-Nenhuma migration de schema. Sem alteração de RLS.
+- `payment_events.event_type = "workspace_limit_reached"` (multi-ws) ou `"order_limit_reached"` (single-ws).
+- `metadata` inclui `{ reason: "stripe_daily_farm_limit_reached", workspace, finalStatus }`.
+- Worker continua sendo a fonte: ele detecta a string exata e chama `action: "limit_reached"` em vez de `fail`.
 
-## 6. Segurança
+## 6. Status enums — sem mudanças de schema
 
-- Helper roda 100% client-side e em edge — nenhum dado sensível trafega.
-- Nenhuma exposição nova de service_role, senhas, cartões ou chaves.
-- `senha_lovable` continua restrita ao desktop conforme `SECURITY.md`.
+Compatíveis com o que já existe:
+- `partner_credit_orders.status`: processing → delivered (ou refunded se 0 done em multi-ws, já tratado em pedido anterior).
+- `execucoes_lovable.status`: já tem `'limite'`.
+- `workspaces_plan[].status`: `done` (limite contabiliza como done).
+
+## 7. Segurança
+
+Nenhum secret novo. Worker manda fingerprint igual ao das outras actions. Service role só na edge. Frontend continua sem ver senha/cartão/secret.
 
 ## Fora de escopo
 
-- Mudar enums/status no banco.
-- Mexer no worker (Python/desktop) — só a edge function trata a variação recebida.
-- Refatorar `refund_order_remainder` / `skip_current_workspace` (já tratado em pedidos anteriores).
+- Não vou mexer no worker desktop (Python). O contrato é só a nova `action: "limit_reached"` da edge — o worker é atualizado em release separada.
+- Não vou alterar o fluxo de Stripe nem fazer scraping da página no servidor — a detecção é responsabilidade do worker.
+- Não vou mexer em `refund_order_remainder` (já está OK para `done_count>0 → delivered`).
 
 ## Arquivos previstos
 
-Novos:
-- `src/lib/workspace-name.ts`
-- `supabase/functions/_shared/workspace-name.ts`
-- `src/lib/__tests__/workspace-name.test.ts` (vitest, casos do spec)
-
 Editados:
-- `src/components/dashboard/ManualOrderDialog.tsx`
-- `src/pages/dashboard/Pedidos.tsx`
-- `src/pages/dashboard/Programacoes.tsx`
-- `src/pages/dashboard/Workspaces.tsx`
-- `supabase/functions/partner-shop-multi-workspace-tick/index.ts`
-- `supabase/functions/partner-shop-create-manual-order/index.ts`
-- `supabase/functions/partner-shop-create-order-schedule/index.ts`
+- `supabase/functions/partner-shop-multi-workspace-tick/index.ts` — nova action.
+- `supabase/migrations/<novo>.sql` — pequena atualização em `skip_current_workspace` para aceitar reason `'stripe_daily_farm_limit_reached'` com mesmo efeito de `'already_at_limit'`, e gravar `failed_reason` específico.
+- `src/pages/dashboard/Pedidos.tsx` — badge "limite diário" em workspace e banner azul no modal.
+- (opcional) `src/integrations/supabase/types.ts` regenerado pelo migration.
+
+Sem novos secrets, sem mudanças em RLS, sem mudanças no schema base (apenas update de função).

@@ -29,6 +29,13 @@ const Body = z.discriminatedUnion("action", [
     workspace: z.string().min(1).max(200),
     reason: z.string().max(500).optional().default(""),
   }),
+  z.object({
+    action: z.literal("limit_reached"),
+    orderId: z.string().uuid(),
+    fingerprint: z.string().min(8).max(256),
+    workspace: z.string().min(1).max(200).optional(),
+    reason: z.string().max(500).optional().default("stripe_daily_farm_limit_reached"),
+  }),
 ]);
 
 const PER_WS = 200;
@@ -40,6 +47,7 @@ type WsItem = {
   started_at: string | null;
   finished_at: string | null;
   error: string | null;
+  limited?: boolean;
 };
 
 function json(status: number, payload: unknown) {
@@ -97,7 +105,70 @@ Deno.serve(async (req) => {
       .eq("id", b.orderId)
       .maybeSingle();
     if (ordErr || !order) return json(404, { error: "Pedido não encontrado" });
-    if (!order.multi_workspace_mode) return json(400, { error: "Pedido não está no modo multi-workspace" });
+    // Single-workspace limit_reached path (worker reportou limite diário)
+    if (!order.multi_workspace_mode) {
+      if (b.action !== "limit_reached") {
+        return json(400, { error: "Pedido não está no modo multi-workspace" });
+      }
+      if (!order.assigned_bot_id) return json(400, { error: "Pedido não tem bot atribuído" });
+      const { data: bot } = await sb
+        .from("farm_bots")
+        .select("id, email_lovable")
+        .eq("id", order.assigned_bot_id)
+        .maybeSingle();
+      if (!bot) return json(404, { error: "Bot não encontrado" });
+      if (!b.fingerprint || b.fingerprint.length < 8) return json(401, { error: "Fingerprint inválido" });
+
+      const nowIso = new Date().toISOString();
+      const targetCredits = Math.max(Number(order.credits ?? 200), 200);
+      await sb
+        .from("partner_credit_orders")
+        .update({
+          status: "delivered",
+          credits: targetCredits,
+          delivered_at: nowIso,
+          failed_reason: null,
+          current_workspace: null,
+          target_workspace: null,
+          last_workspace: order.current_workspace ?? order.target_workspace,
+        })
+        .eq("id", order.id);
+
+      // execucoes_lovable: registrar limite
+      try {
+        await sb.from("execucoes_lovable").insert({
+          id_do_usuario: order.partner_id,
+          email_lovable: bot.email_lovable,
+          workspace_nome: order.current_workspace ?? order.target_workspace ?? null,
+          creditos_adicionados: 200,
+          status: "limite",
+          erro: b.reason || "stripe_daily_farm_limit_reached",
+          iniciado_em: nowIso,
+          finalizado_em: nowIso,
+        });
+      } catch (e) {
+        console.warn("execucoes_lovable insert err", e);
+      }
+
+      // libera bot e atribui próximo
+      await sb
+        .from("farm_bots")
+        .update({ status: "idle", current_order_id: null, last_heartbeat_at: nowIso })
+        .eq("id", bot.id)
+        .eq("current_order_id", order.id);
+      try {
+        await sb.rpc("assign_next_queued_order", { _partner_id: order.partner_id });
+      } catch (e) {
+        console.warn("assign_next_queued_order err", e);
+      }
+
+      await logEvent(sb, { ...order, status: "delivered", credits: targetCredits }, "order_limit_reached", {
+        reason: b.reason || "stripe_daily_farm_limit_reached",
+        workspace: order.current_workspace ?? order.target_workspace ?? null,
+      });
+
+      return json(200, { ok: true, done: true, finalStatus: "delivered", reason: "stripe_daily_farm_limit_reached" });
+    }
     if (!order.assigned_bot_id) return json(400, { error: "Pedido não tem bot atribuído" });
 
     const { data: bot } = await sb
@@ -208,11 +279,17 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Para next/fail: precisamos do plan
+    // Para next/fail/limit_reached: precisamos do plan
     const plan = (order.workspaces_plan as WsItem[] | null) ?? [];
     if (!plan.length) return json(400, { error: "Plano de workspaces ausente — chame action=start primeiro" });
 
-    const targetName = b.action === "next" ? b.finishedWorkspace : b.workspace;
+    const targetName =
+      b.action === "next"
+        ? b.finishedWorkspace
+        : b.action === "limit_reached"
+        ? (b.workspace ?? order.current_workspace ?? "")
+        : b.workspace;
+    if (!targetName) return json(400, { error: "workspace é obrigatório" });
     let idx = plan.findIndex((w) => w.name === targetName);
     if (idx < 0) {
       const cleanedTarget = cleanWorkspaceName(targetName);
@@ -230,6 +307,12 @@ Deno.serve(async (req) => {
       plan[idx].farmed = Math.max(plan[idx].farmed, b.farmed);
       plan[idx].finished_at = nowIso;
       plan[idx].error = null;
+    } else if (b.action === "limit_reached") {
+      plan[idx].status = "done";
+      plan[idx].farmed = Math.max(plan[idx].farmed, 200);
+      plan[idx].finished_at = nowIso;
+      plan[idx].error = b.reason || "stripe_daily_farm_limit_reached";
+      plan[idx].limited = true;
     } else {
       plan[idx].status = "failed";
       plan[idx].finished_at = nowIso;
@@ -362,15 +445,38 @@ Deno.serve(async (req) => {
     await logEvent(
       sb,
       { ...order, status: isFinal ? finalStatus : "processing", credits: finalCredits, amount_cents: finalAmountCents },
-      isFinal ? `multi_ws_${finalStatus}` : "workspace_advanced",
+      b.action === "limit_reached"
+        ? "workspace_limit_reached"
+        : isFinal
+        ? `multi_ws_${finalStatus}`
+        : "workspace_advanced",
       {
         finished: targetName,
         finishedStatus: plan[idx].status,
         next: next?.name ?? null,
         done,
         total: plan.length,
+        reason: b.action === "limit_reached" ? (b.reason || "stripe_daily_farm_limit_reached") : undefined,
       },
     );
+
+    // Registrar execucao limite quando vier do limit_reached
+    if (b.action === "limit_reached") {
+      try {
+        await sb.from("execucoes_lovable").insert({
+          id_do_usuario: order.partner_id,
+          email_lovable: (await sb.from("farm_bots").select("email_lovable").eq("id", bot.id).maybeSingle()).data?.email_lovable ?? null,
+          workspace_nome: targetName,
+          creditos_adicionados: 200,
+          status: "limite",
+          erro: b.reason || "stripe_daily_farm_limit_reached",
+          iniciado_em: nowIso,
+          finalizado_em: nowIso,
+        });
+      } catch (e) {
+        console.warn("execucoes_lovable insert err", e);
+      }
+    }
 
     return json(200, {
       ok: true,

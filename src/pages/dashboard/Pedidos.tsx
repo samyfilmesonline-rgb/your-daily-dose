@@ -90,6 +90,25 @@ function isStopping(o: Pick<Order, "stop_requested_at" | "status">) {
   return !!o.stop_requested_at && ["paid", "queued", "processing"].includes(o.status);
 }
 
+const FARM_ACTIVE_HEARTBEAT_MS = 90 * 1000;
+const FARM_ACTIVE_BOOT_MS = 60 * 1000;
+
+function isFarmActive(
+  o: Pick<Order, "status" | "assigned_bot_id" | "assigned_at">,
+  bot: BotMini | undefined,
+): boolean {
+  if (o.status !== "processing") return false;
+  const now = Date.now();
+  if (bot && bot.status === "busy") {
+    const hb = bot.last_heartbeat_at ? new Date(bot.last_heartbeat_at).getTime() : 0;
+    if (hb && now - hb < FARM_ACTIVE_HEARTBEAT_MS) return true;
+  }
+  // grace period right after assignment, before the worker's first heartbeat
+  const assigned = o.assigned_at ? new Date(o.assigned_at).getTime() : 0;
+  if (assigned && now - assigned < FARM_ACTIVE_BOOT_MS) return true;
+  return false;
+}
+
 function effectiveBadge(o: Pick<Order, "stop_requested_at" | "status">): { label: string; cls: string } {
   if (isStopping(o)) {
     return { label: "Parando…", cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" };

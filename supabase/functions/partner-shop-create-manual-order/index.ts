@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { z } from "https://esm.sh/zod@3.23.8";
+import { cleanWorkspaceName } from "../_shared/workspace-name.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -62,6 +63,12 @@ Deno.serve(async (req) => {
       return json(400, { error: "Parâmetros inválidos", details: parsed.error.flatten().fieldErrors });
     }
     const b = parsed.data;
+
+    // Normalize single-ws target_workspace
+    let targetWs = b.targetWorkspace ? cleanWorkspaceName(b.targetWorkspace) : "";
+    if (!b.multiWorkspaceMode && !targetWs) {
+      return json(400, { error: "Nenhum workspace válido informado" });
+    }
 
     const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
 
@@ -158,7 +165,7 @@ Deno.serve(async (req) => {
       });
     } else {
       Object.assign(orderInsert, {
-        target_workspace: b.targetWorkspace,
+        target_workspace: targetWs,
         credits: b.credits,
         amount_cents: b.amountCents,
       });

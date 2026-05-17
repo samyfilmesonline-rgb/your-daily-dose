@@ -13,6 +13,9 @@ import GlitchText from "@/components/landing/GlitchText";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import ManualOrderDialog from "@/components/dashboard/ManualOrderDialog";
+import { cleanWorkspaceName } from "@/lib/workspace-name";
+
+const dn = (s: string | null | undefined) => cleanWorkspaceName(s) || "—";
 
 type OrderStatus = "pending" | "paid" | "queued" | "processing" | "delivered" | "failed" | "expired" | "refunded";
 
@@ -392,10 +395,10 @@ export default function Pedidos() {
                     <TableCell className="text-xs font-mono">
                       {o.multi_workspace_mode ? (
                         <>
-                          <div>{o.current_workspace ?? "—"}</div>
+                          <div>{dn(o.current_workspace)}</div>
                           {o.workspaces_total == null ? (
-                            <div className="text-[10px] text-primary mt-0.5">
-                              aguardando worker iniciar (multi-ws)
+                            <div className="text-[10px] text-primary mt-0.5 flex items-center gap-1">
+                              <Loader2 className="w-3 h-3 animate-spin" /> Descobrindo workspaces…
                             </div>
                           ) : (
                             <div className="mt-1 w-32 max-w-full">
@@ -410,7 +413,7 @@ export default function Pedidos() {
                           )}
                         </>
                       ) : (
-                        o.target_workspace ?? <span className="text-destructive">— faltando</span>
+                        o.target_workspace ? dn(o.target_workspace) : <span className="text-destructive">— faltando</span>
                       )}
                       {wsMissing && !o.multi_workspace_mode && (
                         <div className="text-[10px] text-destructive mt-0.5 flex items-center gap-1">
@@ -485,8 +488,8 @@ export default function Pedidos() {
                 <div>
                   <span className="text-muted-foreground">Workspace:</span>{" "}
                   {detail.multi_workspace_mode
-                    ? `${detail.current_workspace ?? detail.last_workspace ?? "—"} (todos · ${detail.workspaces_done ?? 0}/${detail.workspaces_total ?? "?"})`
-                    : detail.target_workspace ?? "—"}
+                    ? `${dn(detail.current_workspace ?? detail.last_workspace)} (todos · ${detail.workspaces_done ?? 0}/${detail.workspaces_total ?? "?"})`
+                    : dn(detail.target_workspace)}
                 </div>
                 <div>
                   <span className="text-muted-foreground">Créditos:</span>{" "}
@@ -535,7 +538,7 @@ export default function Pedidos() {
                         <span className="text-muted-foreground">{counts.skipped} ignorado</span>
                         {detail.status === "processing" && next && (
                           <span className="ml-auto text-primary/80">
-                            {counts.running > 0 ? "atual" : "próximo"}: <strong>{next.name}</strong>
+                            {counts.running > 0 ? "atual" : "próximo"}: <strong>{dn(next.name)}</strong>
                           </span>
                         )}
                       </div>
@@ -548,7 +551,7 @@ export default function Pedidos() {
                         title={w.error ?? undefined}
                         className="flex items-center justify-between gap-2 text-[11px] font-mono py-0.5 border-b border-border/40 last:border-0"
                       >
-                        <span className="truncate flex-1">{w.name}</span>
+                        <span className="truncate flex-1">{dn(w.name)}</span>
                         <span className="text-muted-foreground">
                           {w.farmed} cr
                           {(w.status === "skipped" || w.status === "failed") && w.farmed > 0 ? " parcial" : ""}

@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { CalendarClock, Pause, Play, X, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import GlitchText from "@/components/landing/GlitchText";
+import { cleanWorkspaceName } from "@/lib/workspace-name";
 
 type Schedule = {
   id: string;
@@ -150,7 +151,7 @@ export default function Programacoes() {
                               Single
                             </Badge>
                             <div className="text-muted-foreground mt-0.5">
-                              {s.target_workspace} · {s.credits_per_run} cr
+                              {cleanWorkspaceName(s.target_workspace)} · {s.credits_per_run} cr
                             </div>
                           </div>
                         )}

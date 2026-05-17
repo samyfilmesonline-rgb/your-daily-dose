@@ -428,9 +428,9 @@ export default function Pedidos() {
       {(stats.noWs > 0 || stats.stale > 0) && (
         <div className="grid sm:grid-cols-2 gap-3">
           {stats.noWs > 0 && (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-destructive" />
-              <span><strong>{stats.noWs}</strong> pedido(s) sem workspace informado</span>
+            <div className="rounded-lg border border-indigo-500/40 bg-indigo-500/5 p-3 text-sm flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-indigo-400" />
+              <span><strong>{stats.noWs}</strong> pedido(s) aguardando workspace real</span>
             </div>
           )}
           {stats.stale > 0 && (
@@ -440,6 +440,99 @@ export default function Pedidos() {
             </div>
           )}
         </div>
+      )}
+
+      {stuckOrders.length > 0 && (
+        <Card className="border-indigo-500/40 bg-indigo-500/[0.03]">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2 text-indigo-300">
+              <AlertTriangle className="w-4 h-4" />
+              Pedidos aguardando workspace ({stuckOrders.length})
+            </CardTitle>
+            <p className="text-[11px] text-muted-foreground">
+              Informe o nome exato do workspace do cliente (igual ao Lovable). Ao salvar,
+              o pedido é validado e — se o bot já estiver confirmado como Owner — começa a farmar automaticamente.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {stuckOrders.map((o) => {
+              const ed = stuckEditors[o.id] ?? { value: "", saving: false };
+              const cleaned = cleanWorkspaceName(ed.value);
+              const looksBad = !!cleaned && isStatusLikeWorkspace(cleaned);
+              const canSave = !ed.saving && cleaned.length >= 2 && !looksBad;
+              const inviteOk = !!o.bot_invite_confirmed_at;
+              const handleSave = async () => {
+                setStuckEditors((m) => ({ ...m, [o.id]: { ...ed, saving: true } }));
+                try {
+                  const fingerprint = o.client_fingerprint || `admin:${user?.id ?? "unknown"}`;
+                  const { error } = await supabase.functions.invoke(
+                    "partner-shop-set-target-workspace",
+                    { body: { orderId: o.id, fingerprint, workspace: cleaned } },
+                  );
+                  if (error) throw error;
+                  toast({
+                    title: "Workspace salvo",
+                    description: inviteOk
+                      ? `${cleaned} — pedido pronto para farmar.`
+                      : `${cleaned} — falta confirmar o bot como Owner.`,
+                  });
+                  setStuckEditors((m) => {
+                    const n = { ...m }; delete n[o.id]; return n;
+                  });
+                  qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : "Erro";
+                  toast({ title: "Falha ao salvar workspace", description: msg, variant: "destructive" });
+                  setStuckEditors((m) => ({ ...m, [o.id]: { ...ed, saving: false } }));
+                }
+              };
+              return (
+                <div
+                  key={o.id}
+                  className="rounded border border-border bg-background/50 p-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-medium truncate">{o.customer_name}</div>
+                    <div className="text-[10px] text-muted-foreground font-mono truncate">{o.customer_email}</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {o.credits} cr · {brl(o.amount_cents)} ·{" "}
+                      <span className={inviteOk ? "text-primary" : "text-sky-400"}>
+                        {inviteOk ? "bot confirmado" : "falta confirmar bot"}
+                      </span>
+                      {o.target_workspace && isStatusLikeWorkspace(o.target_workspace) && (
+                        <> · <span className="text-amber-400">valor atual: "{o.target_workspace}"</span></>
+                      )}
+                    </div>
+                  </div>
+                  <Input
+                    value={ed.value}
+                    onChange={(e) =>
+                      setStuckEditors((m) => ({ ...m, [o.id]: { value: e.target.value, saving: ed.saving } }))
+                    }
+                    onKeyDown={(e) => { if (e.key === "Enter" && canSave) handleSave(); }}
+                    placeholder="Workspace do cliente (ex.: Betinho's Lovable)"
+                    className="text-xs font-mono sm:w-72"
+                  />
+                  <div className="flex gap-2">
+                    <Button size="sm" disabled={!canSave} onClick={handleSave}>
+                      {ed.saving ? (
+                        <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Salvando…</>
+                      ) : (
+                        <><CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Salvar</>
+                      )}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setDetail(o)}>Abrir</Button>
+                  </div>
+                  {looksBad && (
+                    <div className="basis-full text-[10px] text-amber-400">
+                      "{cleaned}" parece um rótulo de status, não um workspace real.
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
       )}
 
       <Card>

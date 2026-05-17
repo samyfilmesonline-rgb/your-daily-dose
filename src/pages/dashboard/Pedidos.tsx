@@ -195,6 +195,8 @@ export default function Pedidos() {
   const [wsInput, setWsInput] = useState("");
   const [wsSaveLoading, setWsSaveLoading] = useState(false);
   const [inviteConfirmLoading, setInviteConfirmLoading] = useState(false);
+  // Editor inline do banner: { [orderId]: { value, saving } }
+  const [stuckEditors, setStuckEditors] = useState<Record<string, { value: string; saving: boolean }>>({});
 
   useEffect(() => {
     // Reset workspace input quando troca o pedido em foco

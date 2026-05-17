@@ -442,7 +442,7 @@ export default function Pedidos() {
                 const tenMinAgo = Date.now() - 10 * 60 * 1000;
                 const hbMs = bot?.last_heartbeat_at ? new Date(bot.last_heartbeat_at).getTime() : 0;
                 const stale = o.status === "processing" && !!bot && hbMs < tenMinAgo;
-                const wsMissing = !o.target_workspace && ["paid", "queued", "processing"].includes(o.status);
+                const wsMissing = needsRealWorkspace(o);
                 return (
                   <TableRow key={o.id} className="cursor-pointer" onClick={() => setDetail(o)}>
                     <TableCell>
@@ -488,23 +488,30 @@ export default function Pedidos() {
                             </div>
                           )}
                         </>
+                      ) : wsMissing ? (
+                        <span className="text-indigo-400">— selecionar</span>
                       ) : (
-                        o.target_workspace ? dn(o.target_workspace) : <span className="text-destructive">— faltando</span>
+                        dn(o.target_workspace)
                       )}
                       {wsMissing && !o.multi_workspace_mode && (
-                        <div className="text-[10px] text-destructive mt-0.5 flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" /> precisa contato
+                        <div className="text-[10px] text-indigo-400 mt-0.5 flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" /> falta workspace real
                         </div>
                       )}
                     </TableCell>
                     <TableCell className="font-mono text-sm">{o.credits} cr · {brl(o.amount_cents)}</TableCell>
                     <TableCell>
                       {(() => {
-                        const eb = effectiveBadge(o);
+                        const eb = effectiveStatusForDisplay(o);
                         return (
-                          <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${eb.cls}`}>
-                            {eb.label}
-                          </span>
+                          <>
+                            <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${eb.cls}`}>
+                              {eb.label}
+                            </span>
+                            {eb.hint && (
+                              <div className="text-[10px] text-muted-foreground mt-1">{eb.hint}</div>
+                            )}
+                          </>
                         );
                       })()}
                       {o.status === "failed" && o.failed_reason && (

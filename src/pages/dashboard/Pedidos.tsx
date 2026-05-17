@@ -781,6 +781,45 @@ export default function Pedidos() {
                       Cancelamento solicitado em {new Date(detail.stop_requested_at!).toLocaleString("pt-BR")} —
                       aguardando o worker finalizar o workspace atual. O status final aparece aqui assim que o ciclo fechar.
                     </p>
+                  ) : isFarmActive(detail, detailBot) ? (
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-amber-400">
+                        Farm em andamento. Aguarde o worker finalizar ou pare com segurança —
+                        clicar agora não interrompe o navegador, apenas pede para o worker encerrar no fim do workspace atual.
+                        {detailBot?.last_heartbeat_at && <> Último heartbeat {fmtAgo(detailBot.last_heartbeat_at)}.</>}
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={cancelLoading}
+                        onClick={async () => {
+                          if (!detail) return;
+                          if (!confirm("Solicitar parada segura? O worker fecha o workspace atual e libera o bot.")) return;
+                          setCancelLoading(true);
+                          try {
+                            const { data, error } = await supabase.functions.invoke(
+                              "partner-shop-cancel-manual-order",
+                              { body: { orderId: detail.id, reason: "stopped_by_admin" } }
+                            );
+                            if (error) throw error;
+                            const refunded = (data as { refundedCredits?: number } | null)?.refundedCredits ?? 0;
+                            toast({ title: "Parada solicitada", description: `Worker encerrará o workspace atual. Estorno previsto: ${refunded} cr.` });
+                            qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                          } catch (err) {
+                            const msg = err instanceof Error ? err.message : "Erro";
+                            toast({ title: "Falha", description: msg, variant: "destructive" });
+                          } finally {
+                            setCancelLoading(false);
+                          }
+                        }}
+                      >
+                        {cancelLoading ? (
+                          <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Solicitando…</>
+                        ) : (
+                          <><Square className="w-3.5 h-3.5 mr-1" /> Solicitar parada segura</>
+                        )}
+                      </Button>
+                    </div>
                   ) : (
                   <>
                   <p className="text-[11px] text-muted-foreground">
@@ -798,7 +837,7 @@ export default function Pedidos() {
                       try {
                         const { data, error } = await supabase.functions.invoke(
                           "partner-shop-cancel-manual-order",
-                          { body: { orderId: detail.id } }
+                          { body: { orderId: detail.id, reason: "stopped_by_admin" } }
                         );
                         if (error) throw error;
                         const refunded = (data as { refundedCredits?: number } | null)?.refundedCredits ?? 0;

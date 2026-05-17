@@ -125,7 +125,12 @@ function effectiveBadge(o: Pick<Order, "stop_requested_at" | "status">): { label
   if (isStopping(o)) {
     return { label: "Parando…", cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" };
   }
-  return statusMeta[o.status];
+  return (
+    statusMeta[o.status] ?? {
+      label: String(o.status ?? "—"),
+      cls: "bg-muted text-muted-foreground border-muted-foreground/30",
+    }
+  );
 }
 
 function brl(c: number) {
@@ -367,9 +372,10 @@ export default function Pedidos() {
             {STATUSES.map((s) => {
               const count = orders.filter((o) => o.status === s).length;
               if (count === 0) return null;
+              const sm = statusMeta[s] ?? { label: String(s), cls: "" };
               return (
                 <Button key={s} size="sm" variant={statusFilter === s ? "default" : "outline"} onClick={() => setStatusFilter(s)}>
-                  {statusMeta[s].label} ({count})
+                  {sm.label} ({count})
                 </Button>
               );
             })}

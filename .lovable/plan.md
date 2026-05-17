@@ -1,82 +1,58 @@
-# Tratar "Too many requests…" do Stripe como limite diário (200 cr)
+# Plano — Cancel/Retry seguros durante farm em andamento
 
-## Objetivo
+Alinhar painel + edge functions com o worker para nunca derrubar uma sessão ativa por clique no painel. Mudanças ficam quase todas em UI + 1 edge function; lógica de RPCs já está adequada.
 
-Quando o worker detectar na página Stripe (downgrade LITE ou upgrade Pro US$5) a mensagem `Too many requests are being made. Please try again later.`, o painel deve interpretar como **limite diário do workspace atingido** — equivalente a 200 créditos farmados — e nunca como falha crítica nem disparar retries.
+## 1. UI — `src/pages/dashboard/Pedidos.tsx`
 
-## 1. Edge Function `partner-shop-multi-workspace-tick`
+### 1.1 Detectar "farm ativo"
+- Já há `useMyBots` (`my-bots-mini`). Construir um `Map<botId, bot>` indexado.
+- Criar helper `isFarmActive(order, botsMap)`:
+  - retorna `true` quando `order.status === 'processing'` **e** o bot atribuído (`assigned_bot_id`) tem `status === 'busy'` **e** `last_heartbeat_at` recente (< 90s).
+  - retorna `true` também se `order.status === 'processing'` há menos de 60s mesmo sem heartbeat (evita race no boot do worker).
 
-Adicionar uma nova ação no schema Zod, `action: "limit_reached"`:
+### 1.2 Bloquear botões do modal de detalhes
+Quando `isFarmActive(detail)` for verdadeiro:
+- Desabilitar: "Parar e estornar", "Pular workspace", "Já está no limite", "Forçar concluído", "Tentar novamente", "Refazer só falhados".
+- Substituir bloco por aviso: *"Farm em andamento. Aguarde o worker finalizar ou parar com segurança. Heartbeat: {x}s atrás."* + botão secundário "Solicitar parada segura" que só seta `stop_requested_at` (chama `partner-shop-cancel-manual-order` com flag/reason `stopped_by_admin`, sem confirmação dupla diferente).
+- Mostrar `current_workspace`, `workspaces_done/total`, bot nickname, último heartbeat e `failed_reason` se existir (já parcialmente exposto; consolidar num bloco "Status do farm").
 
-```
-{
-  action: "limit_reached",
-  orderId, fingerprint,
-  workspace: string,
-  reason?: string  // default "stripe_daily_farm_limit_reached"
-}
-```
+### 1.3 Cancelamento seguro
+- O botão "Parar e estornar" passa a chamar a edge com `reason: "stopped_by_admin"`.
+- UI nunca muda status localmente para `pending`; apenas invalida queries e exibe badge "parada solicitada" (já existe via `isStopping`). Mantém `delivered_at` intocado.
 
-Comportamento:
+### 1.4 Retry seguro
+- "Tentar novamente" e "Refazer só falhados" só aparecem se status ∈ `{failed, refunded}` (já é o caso) **e** `!isFarmActive`. Adicionar checagem extra: se `assigned_bot_id` ainda aparece como `busy`, bloquear com tooltip "Bot ainda ocupado — aguarde liberar".
+- Multi-workspace: nada muda no payload (RPC `retry_failed_workspaces_only` já preserva `workspaces_plan`/`done`).
 
-- Localizar o item por nome bruto → `cleanWorkspaceName` → `normalizeWorkspaceKey` (helper já existe).
-- Marcar `plan[idx].status = "done"`, `plan[idx].farmed = 200`, `finished_at = now`, `error = null`.
-- Promover o próximo `pending` para `running` (mesma lógica do `next`). Se não houver, finalizar o pedido:
-  - `doneCount > 0 → "delivered"`, calcular `credits = sum(farmed dos done)` e `amount_cents = doneCount * price_cents_per_workspace`.
-  - Chamar `refund_order_remainder` com `_reason = "stripe_daily_farm_limit_reached"` para devolver o que sobrar.
-  - Liberar o bot (`status=idle`, `current_order_id=null`) e chamar `assign_next_queued_order`.
-- Logar em `payment_events` com `event_type = "workspace_limit_reached"` e `metadata = { workspace, reason: "stripe_daily_farm_limit_reached" }`.
+## 2. Edge function `partner-shop-retry-manual-order`
 
-Para **pedido de workspace único** (`multi_workspace_mode = false`) o worker não usa o tick. Vamos adicionar um endpoint paralelo nesta mesma função: aceitar `action: "limit_reached"` também sem `workspaces_plan` — quando `order.multi_workspace_mode = false`, marcar o pedido direto como `delivered` com `credits = 200`, `amount_cents = price já cobrado`, `delivered_at = now`, `failed_reason = null`, liberar bot, registrar evento.
+Adicionar guarda dura antes de chamar `retry_manual_order`:
+- Se `order.status === 'processing'` → 409 `{ error: "Pedido em processamento. Aguarde o worker liberar." }`.
+- Se `order.assigned_bot_id` apontar para bot com `status='busy'` e heartbeat < 90s → 409 mesma mensagem.
+- Permite quando bot está `idle/offline` ou sem assignment.
 
-## 2. RPC auxiliar — opcional reuso
+Selecionar campos extras (`assigned_bot_id`) na query existente e fazer um segundo `select` em `farm_bots` para checar status/heartbeat. Sem alteração de schema.
 
-A RPC `skip_current_workspace(_order_id, _reason)` já aceita `'already_at_limit'` e faz exatamente o necessário em multi-ws (marca done com farmed=200 e avança). Vou:
+## 3. Edge function `partner-shop-cancel-manual-order`
 
-- Adicionar `'stripe_daily_farm_limit_reached'` como reason aceita (mesmo comportamento de `already_at_limit`, mas com `failed_reason` distinto no log).
-- A nova action `limit_reached` da edge function delega para essa RPC quando o pedido é multi-ws — mantendo uma única fonte de verdade. Para single-ws, a edge function trata inline (não há plano).
+Repassar `reason` recebido do painel para a RPC (já repassa). Garantir que quando `reason === 'stopped_by_admin'` o comportamento seja apenas marcar `stop_requested_at` + `failed_reason='stopped_by_admin'` sem mudar status para `pending` — a RPC `cancel_manual_order` atual já faz isso (apenas seta `stop_requested_at`, deixa o worker fechar). Adicionar uma asserção: se status não é `paid|queued|processing`, retornar 400 explicando.
 
-## 3. `execucoes_lovable`
+## 4. Stripe "Too many requests"
+Já tratado em loop anterior (`limit_reached` em `partner-shop-multi-workspace-tick` + badge "limite diário" em Pedidos). Sem nova mudança — apenas validar que o caminho de single-workspace marca `delivered` quando 200 cr já foram contabilizados e não dispara retry.
 
-Adicionar registro com `status = 'limite'`, `erro = 'stripe_daily_farm_limit_reached'`, `creditos_adicionados = 200`, `creditos_finais = creditos_iniciais + 200`, `finalizado_em = now`. Inserção feita dentro da edge function via service role.
+## 5. Sem mudanças de schema / RLS / secrets
+- Nenhuma migração necessária.
+- Nenhum secret novo.
+- Service role permanece apenas dentro das edges.
 
-## 4. UI — `Pedidos.tsx`
+## Arquivos a editar
+- `src/pages/dashboard/Pedidos.tsx` — helper `isFarmActive`, desabilitar botões, novo bloco "Farm em andamento".
+- `supabase/functions/partner-shop-retry-manual-order/index.ts` — guarda processing/bot busy.
+- `supabase/functions/partner-shop-cancel-manual-order/index.ts` — validar status permitido.
 
-- Quando `workspaces_plan[].status === 'done'` E o item tem marker de limite (campo `error` começa com `stripe_daily_farm_limit_reached` ou nova flag `limited: true` no item), exibir badge cinza-azul **"limite diário"** ao lado do nome (em vez de check verde puro).
-- Modal/Detalhe: se `failed_reason === 'stripe_daily_farm_limit_reached'` em pedido `delivered`, mostrar banner azul informativo *"Limite diário do workspace atingido — 200 cr contabilizados"* em vez de qualquer aviso vermelho.
-- Não tratar como falha crítica em nenhuma view (linha da tabela, badge, contadores).
-
-Para sinalizar o item: adicionar `limited?: boolean` ao item de `workspaces_plan` quando a função `limit_reached` rodar (apenas campo informativo, não muda o status `done`).
-
-## 5. Logs / eventos
-
-- `payment_events.event_type = "workspace_limit_reached"` (multi-ws) ou `"order_limit_reached"` (single-ws).
-- `metadata` inclui `{ reason: "stripe_daily_farm_limit_reached", workspace, finalStatus }`.
-- Worker continua sendo a fonte: ele detecta a string exata e chama `action: "limit_reached"` em vez de `fail`.
-
-## 6. Status enums — sem mudanças de schema
-
-Compatíveis com o que já existe:
-- `partner_credit_orders.status`: processing → delivered (ou refunded se 0 done em multi-ws, já tratado em pedido anterior).
-- `execucoes_lovable.status`: já tem `'limite'`.
-- `workspaces_plan[].status`: `done` (limite contabiliza como done).
-
-## 7. Segurança
-
-Nenhum secret novo. Worker manda fingerprint igual ao das outras actions. Service role só na edge. Frontend continua sem ver senha/cartão/secret.
-
-## Fora de escopo
-
-- Não vou mexer no worker desktop (Python). O contrato é só a nova `action: "limit_reached"` da edge — o worker é atualizado em release separada.
-- Não vou alterar o fluxo de Stripe nem fazer scraping da página no servidor — a detecção é responsabilidade do worker.
-- Não vou mexer em `refund_order_remainder` (já está OK para `done_count>0 → delivered`).
-
-## Arquivos previstos
-
-Editados:
-- `supabase/functions/partner-shop-multi-workspace-tick/index.ts` — nova action.
-- `supabase/migrations/<novo>.sql` — pequena atualização em `skip_current_workspace` para aceitar reason `'stripe_daily_farm_limit_reached'` com mesmo efeito de `'already_at_limit'`, e gravar `failed_reason` específico.
-- `src/pages/dashboard/Pedidos.tsx` — badge "limite diário" em workspace e banner azul no modal.
-- (opcional) `src/integrations/supabase/types.ts` regenerado pelo migration.
-
-Sem novos secrets, sem mudanças em RLS, sem mudanças no schema base (apenas update de função).
+## Critério de aceite
+- Cancelar em `processing` não vira `pending` (apenas `stop_requested_at`).
+- Retry bloqueado em `processing` (UI desabilita + edge 409).
+- Retry só procede com bot `idle`.
+- Multi-workspace preserva `workspaces_plan/done/current_workspace`.
+- Worker não é reiniciado por clique indevido.

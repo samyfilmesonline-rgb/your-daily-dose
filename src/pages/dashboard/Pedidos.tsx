@@ -13,7 +13,7 @@ import GlitchText from "@/components/landing/GlitchText";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import ManualOrderDialog from "@/components/dashboard/ManualOrderDialog";
-import { cleanWorkspaceName } from "@/lib/workspace-name";
+import { cleanWorkspaceName, isStatusLikeWorkspace } from "@/lib/workspace-name";
 
 const dn = (s: string | null | undefined) => cleanWorkspaceName(s) || "—";
 
@@ -73,6 +73,8 @@ type Order = {
     plan: Array<{ name: string; status: string; farmed: number }>;
     mode?: string;
   }> | null;
+  client_fingerprint?: string | null;
+  bot_invite_confirmed_at?: string | null;
 };
 
 type BotMini = {
@@ -133,6 +135,42 @@ function effectiveBadge(o: Pick<Order, "stop_requested_at" | "status">): { label
   );
 }
 
+/**
+ * Pedidos legados podem ter `target_workspace` com um rótulo de status
+ * (ex.: "Em andamento"). Visualmente tratamos como waiting_workspace
+ * mesmo que o backend ainda não tenha sido reescrito.
+ */
+function needsRealWorkspace(o: Pick<Order, "status" | "target_workspace" | "multi_workspace_mode">): boolean {
+  if (o.multi_workspace_mode) return false;
+  if (o.status === "waiting_workspace") return true;
+  if (!o.target_workspace) {
+    return ["paid", "queued", "processing", "waiting_invite"].includes(o.status);
+  }
+  return isStatusLikeWorkspace(o.target_workspace);
+}
+
+function effectiveStatusForDisplay(o: Pick<Order, "status" | "target_workspace" | "multi_workspace_mode" | "stop_requested_at">): {
+  label: string;
+  cls: string;
+  hint?: string;
+} {
+  if (needsRealWorkspace(o) && o.status !== "waiting_workspace") {
+    return {
+      label: "Falta selecionar workspace",
+      cls: "bg-indigo-500/15 text-indigo-400 border-indigo-500/40",
+      hint: "Workspace real ainda não foi informado",
+    };
+  }
+  const base = effectiveBadge(o);
+  const hintMap: Partial<Record<OrderStatus, string>> = {
+    waiting_workspace: "Falta selecionar workspace real",
+    waiting_invite: "Falta confirmar bot como Owner",
+    processing: "Worker executando",
+    pending: "Aguardando pagamento / fila",
+  };
+  return { ...base, hint: hintMap[o.status] };
+}
+
 function brl(c: number) {
   return (c / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
@@ -154,6 +192,14 @@ export default function Pedidos() {
   const [skipLoading, setSkipLoading] = useState(false);
   const [forceCompleteLoading, setForceCompleteLoading] = useState(false);
   const [retryFailedLoading, setRetryFailedLoading] = useState(false);
+  const [wsInput, setWsInput] = useState("");
+  const [wsSaveLoading, setWsSaveLoading] = useState(false);
+  const [inviteConfirmLoading, setInviteConfirmLoading] = useState(false);
+
+  useEffect(() => {
+    // Reset workspace input quando troca o pedido em foco
+    setWsInput("");
+  }, [detail?.id]);
 
   const { data: orders = [] } = useQuery({
     queryKey: ["my-orders", user?.id],
@@ -404,7 +450,7 @@ export default function Pedidos() {
                 const tenMinAgo = Date.now() - 10 * 60 * 1000;
                 const hbMs = bot?.last_heartbeat_at ? new Date(bot.last_heartbeat_at).getTime() : 0;
                 const stale = o.status === "processing" && !!bot && hbMs < tenMinAgo;
-                const wsMissing = !o.target_workspace && ["paid", "queued", "processing"].includes(o.status);
+                const wsMissing = needsRealWorkspace(o);
                 return (
                   <TableRow key={o.id} className="cursor-pointer" onClick={() => setDetail(o)}>
                     <TableCell>
@@ -450,23 +496,30 @@ export default function Pedidos() {
                             </div>
                           )}
                         </>
+                      ) : wsMissing ? (
+                        <span className="text-indigo-400">— selecionar</span>
                       ) : (
-                        o.target_workspace ? dn(o.target_workspace) : <span className="text-destructive">— faltando</span>
+                        dn(o.target_workspace)
                       )}
                       {wsMissing && !o.multi_workspace_mode && (
-                        <div className="text-[10px] text-destructive mt-0.5 flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" /> precisa contato
+                        <div className="text-[10px] text-indigo-400 mt-0.5 flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" /> falta workspace real
                         </div>
                       )}
                     </TableCell>
                     <TableCell className="font-mono text-sm">{o.credits} cr · {brl(o.amount_cents)}</TableCell>
                     <TableCell>
                       {(() => {
-                        const eb = effectiveBadge(o);
+                        const eb = effectiveStatusForDisplay(o);
                         return (
-                          <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${eb.cls}`}>
-                            {eb.label}
-                          </span>
+                          <>
+                            <span className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${eb.cls}`}>
+                              {eb.label}
+                            </span>
+                            {eb.hint && (
+                              <div className="text-[10px] text-muted-foreground mt-1">{eb.hint}</div>
+                            )}
+                          </>
                         );
                       })()}
                       {o.status === "failed" && o.failed_reason && (
@@ -558,12 +611,123 @@ export default function Pedidos() {
                 </div>
                 <div><span className="text-muted-foreground">Valor:</span> {brl(detail.amount_cents)}</div>
                 <div><span className="text-muted-foreground">Tx:</span> <span className="font-mono">{detail.tx_id ?? "—"}</span></div>
-                <div><span className="text-muted-foreground">Status:</span> {effectiveBadge(detail).label}</div>
+                <div>
+                  <span className="text-muted-foreground">Status:</span>{" "}
+                  {effectiveStatusForDisplay(detail).label}
+                </div>
                 <div><span className="text-muted-foreground">Pago em:</span> {detail.paid_at ? new Date(detail.paid_at).toLocaleString("pt-BR") : "—"}</div>
                 <div><span className="text-muted-foreground">Entregue em:</span> {detail.delivered_at ? new Date(detail.delivered_at).toLocaleString("pt-BR") : "—"}</div>
                 <div><span className="text-muted-foreground">Pix expira:</span> {detail.pix_expires_at ? new Date(detail.pix_expires_at).toLocaleString("pt-BR") : "—"}</div>
                 <div><span className="text-muted-foreground">Bot:</span> {detail.assigned_bot_id ? (botById.get(detail.assigned_bot_id)?.email_lovable ?? detail.assigned_bot_id) : "—"}</div>
               </div>
+              {needsRealWorkspace(detail) && (
+                <div className="rounded border border-indigo-500/40 bg-indigo-500/5 p-3 space-y-2">
+                  <div className="text-xs font-medium text-indigo-300 flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5" /> Selecionar workspace do cliente
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    O worker só inicia o farm quando existe um workspace real. Informe o nome
+                    exato do workspace do cliente (igual ao que aparece no Lovable).
+                  </p>
+                  {detail.target_workspace && isStatusLikeWorkspace(detail.target_workspace) && (
+                    <div className="text-[11px] text-amber-400">
+                      Valor atual <span className="font-mono">"{detail.target_workspace}"</span> é um rótulo
+                      de status — não conta como workspace.
+                    </div>
+                  )}
+                  <Input
+                    value={wsInput}
+                    onChange={(e) => setWsInput(e.target.value)}
+                    placeholder="Ex.: Betinho's Lovable"
+                    className="text-xs font-mono"
+                  />
+                  <Button
+                    size="sm"
+                    disabled={wsSaveLoading || cleanWorkspaceName(wsInput).length < 2}
+                    onClick={async () => {
+                      if (!detail) return;
+                      const cleaned = cleanWorkspaceName(wsInput);
+                      if (cleaned.length < 2) {
+                        toast({ title: "Workspace inválido", description: "Informe um nome válido.", variant: "destructive" });
+                        return;
+                      }
+                      if (isStatusLikeWorkspace(cleaned)) {
+                        toast({
+                          title: "Workspace inválido",
+                          description: `"${cleaned}" parece um rótulo de status, não um workspace.`,
+                          variant: "destructive",
+                        });
+                        return;
+                      }
+                      const fingerprint = detail.client_fingerprint || `admin:${user?.id ?? "unknown"}`;
+                      setWsSaveLoading(true);
+                      try {
+                        const { error } = await supabase.functions.invoke(
+                          "partner-shop-set-target-workspace",
+                          { body: { orderId: detail.id, fingerprint, workspace: cleaned } },
+                        );
+                        if (error) throw error;
+                        toast({ title: "Workspace salvo", description: cleaned });
+                        setWsInput("");
+                        setDetail(null);
+                        qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : "Erro";
+                        toast({ title: "Falha ao salvar workspace", description: msg, variant: "destructive" });
+                      } finally {
+                        setWsSaveLoading(false);
+                      }
+                    }}
+                  >
+                    {wsSaveLoading ? (
+                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Salvando…</>
+                    ) : (
+                      <><CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Salvar workspace</>
+                    )}
+                  </Button>
+                </div>
+              )}
+              {!!detail.assigned_bot_id && !detail.bot_invite_confirmed_at && (
+                <div className="rounded border border-sky-500/40 bg-sky-500/5 p-3 space-y-2">
+                  <div className="text-xs font-medium text-sky-300 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Confirmar bot como Owner
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Clique abaixo quando o bot já estiver adicionado como Owner no workspace do cliente.
+                    {needsRealWorkspace(detail) && " O farm só começa após o workspace real ser informado também."}
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={inviteConfirmLoading}
+                    onClick={async () => {
+                      if (!detail) return;
+                      const fingerprint = detail.client_fingerprint || `admin:${user?.id ?? "unknown"}`;
+                      setInviteConfirmLoading(true);
+                      try {
+                        const { error } = await supabase.functions.invoke(
+                          "partner-shop-confirm-invite",
+                          { body: { orderId: detail.id, fingerprint } },
+                        );
+                        if (error) throw error;
+                        toast({ title: "Convite confirmado" });
+                        qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : "Erro";
+                        toast({ title: "Falha", description: msg, variant: "destructive" });
+                      } finally {
+                        setInviteConfirmLoading(false);
+                      }
+                    }}
+                  >
+                    {inviteConfirmLoading ? (
+                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Confirmando…</>
+                    ) : (
+                      <><CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Já adicionei o bot como Owner</>
+                    )}
+                  </Button>
+                </div>
+              )}
               {detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan) && detail.workspaces_plan.length > 0 && (
                 <div className="rounded-md border p-2">
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">

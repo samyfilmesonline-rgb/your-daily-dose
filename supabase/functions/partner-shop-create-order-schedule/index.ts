@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { z } from "https://esm.sh/zod@3.23.8";
-import { cleanWorkspaceName } from "../_shared/workspace-name.ts";
+import { cleanWorkspaceName, isStatusLikeWorkspace } from "../_shared/workspace-name.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -157,6 +157,11 @@ Deno.serve(async (req) => {
       const s = b as z.infer<typeof SingleBody>;
       const cleaned = cleanWorkspaceName(s.targetWorkspace);
       if (!cleaned) return json(400, { error: "Nenhum workspace válido informado" });
+      if (isStatusLikeWorkspace(cleaned)) {
+        return json(400, {
+          error: `Workspace inválido: '${cleaned}' parece um rótulo de status, não um workspace real`,
+        });
+      }
       insertRow.target_workspace = cleaned;
       insertRow.credits_per_run = s.credits;
       insertRow.amount_cents_per_run = s.amountCents;

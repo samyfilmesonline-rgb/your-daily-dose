@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { z } from "https://esm.sh/zod@3.23.8";
 import { createPixCharge, normalizeQrImage } from "../_shared/abacate.ts";
+import { assertRealWorkspaceName } from "../_shared/workspace-name.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -40,6 +41,14 @@ Deno.serve(async (req) => {
       });
     }
     const b = parsed.data;
+    try {
+      assertRealWorkspaceName(b.targetWorkspace);
+    } catch (e) {
+      return new Response(JSON.stringify({ error: (e as Error).message }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     const taxIdDigits = b.customerTaxId.replace(/\D/g, "");
     if (taxIdDigits.length !== 11 && taxIdDigits.length !== 14) {
       return new Response(JSON.stringify({ error: "CPF/CNPJ inválido" }), {

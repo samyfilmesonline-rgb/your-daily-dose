@@ -591,6 +591,14 @@ export default function Pedidos() {
                       );
                     }
                     if (detail.status === "failed") {
+                      const partialFarmed = plan.reduce((a, w) => a + (Number(w.farmed) || 0), 0);
+                      if (partialFarmed > 0) {
+                        return (
+                          <div className="text-[10px] text-amber-400 mt-1.5">
+                            Encerrado com {partialFarmed} cr parciais — nenhum workspace foi 100% concluído.
+                          </div>
+                        );
+                      }
                       return (
                         <div className="text-[10px] text-destructive mt-1.5">
                           Nenhum workspace foi concluído com sucesso.

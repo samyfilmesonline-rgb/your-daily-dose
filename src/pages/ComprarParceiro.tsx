@@ -568,6 +568,14 @@ export default function ComprarParceiro() {
       toast({ title: "Workspace obrigatório", description: "Informe o nome exato do workspace Lovable de destino.", variant: "destructive" });
       return;
     }
+    if (isStatusLikeWorkspace(workspace)) {
+      toast({
+        title: "Workspace inválido",
+        description: `"${workspace.trim()}" parece um rótulo de status. Informe o nome real do workspace Lovable.`,
+        variant: "destructive",
+      });
+      return;
+    }
     if (name.trim().length < 2) {
       toast({ title: "Nome obrigatório", variant: "destructive" });
       return;

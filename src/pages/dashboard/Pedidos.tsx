@@ -482,6 +482,18 @@ export default function Pedidos() {
           </DialogHeader>
           {detail && (
             <div className="space-y-2 text-sm">
+              {(() => {
+                const reason = detail.failed_reason ?? "";
+                const planLimited = Array.isArray(detail.workspaces_plan) && detail.workspaces_plan.some(
+                  (w) => w.limited === true || (w.error ?? "").startsWith("stripe_daily_farm_limit_reached"),
+                );
+                if (!planLimited && !reason.startsWith("stripe_daily_farm_limit_reached")) return null;
+                return (
+                  <div className="rounded-md border border-sky-500/40 bg-sky-500/10 text-sky-200 text-[11px] p-2">
+                    Limite diário do workspace atingido — 200 cr contabilizados. Sem retry no Stripe.
+                  </div>
+                );
+              })()}
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div><span className="text-muted-foreground">Cliente:</span> {detail.customer_name}</div>
                 <div><span className="text-muted-foreground">Email:</span> {detail.customer_email}</div>

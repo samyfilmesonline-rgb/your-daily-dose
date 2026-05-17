@@ -620,6 +620,114 @@ export default function Pedidos() {
                 <div><span className="text-muted-foreground">Pix expira:</span> {detail.pix_expires_at ? new Date(detail.pix_expires_at).toLocaleString("pt-BR") : "—"}</div>
                 <div><span className="text-muted-foreground">Bot:</span> {detail.assigned_bot_id ? (botById.get(detail.assigned_bot_id)?.email_lovable ?? detail.assigned_bot_id) : "—"}</div>
               </div>
+              {needsRealWorkspace(detail) && (
+                <div className="rounded border border-indigo-500/40 bg-indigo-500/5 p-3 space-y-2">
+                  <div className="text-xs font-medium text-indigo-300 flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5" /> Selecionar workspace do cliente
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    O worker só inicia o farm quando existe um workspace real. Informe o nome
+                    exato do workspace do cliente (igual ao que aparece no Lovable).
+                  </p>
+                  {detail.target_workspace && isStatusLikeWorkspace(detail.target_workspace) && (
+                    <div className="text-[11px] text-amber-400">
+                      Valor atual <span className="font-mono">"{detail.target_workspace}"</span> é um rótulo
+                      de status — não conta como workspace.
+                    </div>
+                  )}
+                  <Input
+                    value={wsInput}
+                    onChange={(e) => setWsInput(e.target.value)}
+                    placeholder="Ex.: Betinho's Lovable"
+                    className="text-xs font-mono"
+                  />
+                  <Button
+                    size="sm"
+                    disabled={wsSaveLoading || cleanWorkspaceName(wsInput).length < 2}
+                    onClick={async () => {
+                      if (!detail) return;
+                      const cleaned = cleanWorkspaceName(wsInput);
+                      if (cleaned.length < 2) {
+                        toast({ title: "Workspace inválido", description: "Informe um nome válido.", variant: "destructive" });
+                        return;
+                      }
+                      if (isStatusLikeWorkspace(cleaned)) {
+                        toast({
+                          title: "Workspace inválido",
+                          description: `"${cleaned}" parece um rótulo de status, não um workspace.`,
+                          variant: "destructive",
+                        });
+                        return;
+                      }
+                      const fingerprint = detail.client_fingerprint || `admin:${user?.id ?? "unknown"}`;
+                      setWsSaveLoading(true);
+                      try {
+                        const { error } = await supabase.functions.invoke(
+                          "partner-shop-set-target-workspace",
+                          { body: { orderId: detail.id, fingerprint, workspace: cleaned } },
+                        );
+                        if (error) throw error;
+                        toast({ title: "Workspace salvo", description: cleaned });
+                        setWsInput("");
+                        setDetail(null);
+                        qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : "Erro";
+                        toast({ title: "Falha ao salvar workspace", description: msg, variant: "destructive" });
+                      } finally {
+                        setWsSaveLoading(false);
+                      }
+                    }}
+                  >
+                    {wsSaveLoading ? (
+                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Salvando…</>
+                    ) : (
+                      <><CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Salvar workspace</>
+                    )}
+                  </Button>
+                </div>
+              )}
+              {!!detail.assigned_bot_id && !detail.bot_invite_confirmed_at && (
+                <div className="rounded border border-sky-500/40 bg-sky-500/5 p-3 space-y-2">
+                  <div className="text-xs font-medium text-sky-300 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Confirmar bot como Owner
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Clique abaixo quando o bot já estiver adicionado como Owner no workspace do cliente.
+                    {needsRealWorkspace(detail) && " O farm só começa após o workspace real ser informado também."}
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={inviteConfirmLoading}
+                    onClick={async () => {
+                      if (!detail) return;
+                      const fingerprint = detail.client_fingerprint || `admin:${user?.id ?? "unknown"}`;
+                      setInviteConfirmLoading(true);
+                      try {
+                        const { error } = await supabase.functions.invoke(
+                          "partner-shop-confirm-invite",
+                          { body: { orderId: detail.id, fingerprint } },
+                        );
+                        if (error) throw error;
+                        toast({ title: "Convite confirmado" });
+                        qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : "Erro";
+                        toast({ title: "Falha", description: msg, variant: "destructive" });
+                      } finally {
+                        setInviteConfirmLoading(false);
+                      }
+                    }}
+                  >
+                    {inviteConfirmLoading ? (
+                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Confirmando…</>
+                    ) : (
+                      <><CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Já adicionei o bot como Owner</>
+                    )}
+                  </Button>
+                </div>
+              )}
               {detail.multi_workspace_mode && Array.isArray(detail.workspaces_plan) && detail.workspaces_plan.length > 0 && (
                 <div className="rounded-md border p-2">
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">

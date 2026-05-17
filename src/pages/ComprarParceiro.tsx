@@ -1760,6 +1760,12 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
 
 function statusHeadline(s: OrderState | null): string {
   if (!s) return "Carregando status do pedido...";
+  if (s.status === "waiting_workspace") {
+    return "Informe o workspace para iniciarmos";
+  }
+  if (s.status === "waiting_invite") {
+    return "Adicione o bot como Owner no seu workspace";
+  }
   if (s.status === "processing" && s.assignedBotId) {
     return "Aguardando convite do bot ou processamento";
   }

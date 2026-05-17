@@ -105,7 +105,70 @@ Deno.serve(async (req) => {
       .eq("id", b.orderId)
       .maybeSingle();
     if (ordErr || !order) return json(404, { error: "Pedido não encontrado" });
-    if (!order.multi_workspace_mode) return json(400, { error: "Pedido não está no modo multi-workspace" });
+    // Single-workspace limit_reached path (worker reportou limite diário)
+    if (!order.multi_workspace_mode) {
+      if (b.action !== "limit_reached") {
+        return json(400, { error: "Pedido não está no modo multi-workspace" });
+      }
+      if (!order.assigned_bot_id) return json(400, { error: "Pedido não tem bot atribuído" });
+      const { data: bot } = await sb
+        .from("farm_bots")
+        .select("id, email_lovable")
+        .eq("id", order.assigned_bot_id)
+        .maybeSingle();
+      if (!bot) return json(404, { error: "Bot não encontrado" });
+      if (!b.fingerprint || b.fingerprint.length < 8) return json(401, { error: "Fingerprint inválido" });
+
+      const nowIso = new Date().toISOString();
+      const targetCredits = Math.max(Number(order.credits ?? 200), 200);
+      await sb
+        .from("partner_credit_orders")
+        .update({
+          status: "delivered",
+          credits: targetCredits,
+          delivered_at: nowIso,
+          failed_reason: null,
+          current_workspace: null,
+          target_workspace: null,
+          last_workspace: order.current_workspace ?? order.target_workspace,
+        })
+        .eq("id", order.id);
+
+      // execucoes_lovable: registrar limite
+      try {
+        await sb.from("execucoes_lovable").insert({
+          id_do_usuario: order.partner_id,
+          email_lovable: bot.email_lovable,
+          workspace_nome: order.current_workspace ?? order.target_workspace ?? null,
+          creditos_adicionados: 200,
+          status: "limite",
+          erro: b.reason || "stripe_daily_farm_limit_reached",
+          iniciado_em: nowIso,
+          finalizado_em: nowIso,
+        });
+      } catch (e) {
+        console.warn("execucoes_lovable insert err", e);
+      }
+
+      // libera bot e atribui próximo
+      await sb
+        .from("farm_bots")
+        .update({ status: "idle", current_order_id: null, last_heartbeat_at: nowIso })
+        .eq("id", bot.id)
+        .eq("current_order_id", order.id);
+      try {
+        await sb.rpc("assign_next_queued_order", { _partner_id: order.partner_id });
+      } catch (e) {
+        console.warn("assign_next_queued_order err", e);
+      }
+
+      await logEvent(sb, { ...order, status: "delivered", credits: targetCredits }, "order_limit_reached", {
+        reason: b.reason || "stripe_daily_farm_limit_reached",
+        workspace: order.current_workspace ?? order.target_workspace ?? null,
+      });
+
+      return json(200, { ok: true, done: true, finalStatus: "delivered", reason: "stripe_daily_farm_limit_reached" });
+    }
     if (!order.assigned_bot_id) return json(400, { error: "Pedido não tem bot atribuído" });
 
     const { data: bot } = await sb

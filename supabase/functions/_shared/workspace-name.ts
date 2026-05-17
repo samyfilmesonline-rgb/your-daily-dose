@@ -37,3 +37,42 @@ export function dedupeWorkspaces(list: Array<string | null | undefined>): string
   }
   return out;
 }
+
+const STATUS_LIKE_NAMES = new Set([
+  "em andamento",
+  "processando",
+  "aguardando",
+  "aguardando pagamento",
+  "aguardando worker",
+  "aguardando workspace",
+  "aguardando convite",
+  "pending",
+  "processing",
+  "queued",
+  "paid",
+  "waiting",
+  "waiting_invite",
+  "waiting_workspace",
+  "delivered",
+  "failed",
+  "refunded",
+  "expired",
+]);
+
+export function isStatusLikeWorkspace(name: string | null | undefined): boolean {
+  const cleaned = cleanWorkspaceName(name).toLowerCase();
+  if (!cleaned) return true;
+  return STATUS_LIKE_NAMES.has(cleaned);
+}
+
+/** Lança quando o nome é vazio ou parece um rótulo de status. Retorna o nome limpo. */
+export function assertRealWorkspaceName(name: string | null | undefined): string {
+  const cleaned = cleanWorkspaceName(name);
+  if (!cleaned || cleaned.length < 2) {
+    throw new Error("Workspace inválido: nome ausente");
+  }
+  if (isStatusLikeWorkspace(cleaned)) {
+    throw new Error(`Workspace inválido: '${cleaned}' parece um rótulo de status`);
+  }
+  return cleaned;
+}

@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { z } from "https://esm.sh/zod@3.23.8";
-import { cleanWorkspaceName, dedupeWorkspaces, normalizeWorkspaceKey } from "../_shared/workspace-name.ts";
+import { cleanWorkspaceName, dedupeWorkspaces, normalizeWorkspaceKey, isStatusLikeWorkspace } from "../_shared/workspace-name.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -207,7 +207,7 @@ Deno.serve(async (req) => {
         .maybeSingle();
       const remaining = pq ? Math.max(0, Number(pq.limite_creditos) - Number(pq.creditos_consumidos)) : 0;
       const maxWs = Math.floor(remaining / PER_WS);
-      const cleanedList = dedupeWorkspaces(b.workspaces);
+      const cleanedList = dedupeWorkspaces(b.workspaces).filter((n) => !isStatusLikeWorkspace(n));
       if (cleanedList.length === 0) {
         return json(400, { error: "Nenhum workspace válido informado" });
       }

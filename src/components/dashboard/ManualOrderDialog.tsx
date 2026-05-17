@@ -26,7 +26,7 @@ import { Loader2, Zap, Clock, Layers, CalendarClock } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { z } from "zod";
-import { cleanWorkspaceName } from "@/lib/workspace-name";
+import { cleanWorkspaceName, isStatusLikeWorkspace } from "@/lib/workspace-name";
 
 type Bot = {
   id: string;
@@ -240,6 +240,10 @@ export default function ManualOrderDialog({
         const cleaned = cleanWorkspaceName(v.targetWorkspace ?? "");
         if (!cleaned) {
           toast({ title: "Workspace inválido", description: "Informe um workspace válido.", variant: "destructive" });
+          return;
+        }
+        if (isStatusLikeWorkspace(cleaned)) {
+          toast({ title: "Workspace inválido", description: `'${cleaned}' parece um rótulo de status. Use o nome real do workspace.`, variant: "destructive" });
           return;
         }
         v.targetWorkspace = cleaned;

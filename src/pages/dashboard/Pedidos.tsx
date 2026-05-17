@@ -17,7 +17,17 @@ import { cleanWorkspaceName } from "@/lib/workspace-name";
 
 const dn = (s: string | null | undefined) => cleanWorkspaceName(s) || "—";
 
-type OrderStatus = "pending" | "paid" | "queued" | "processing" | "delivered" | "failed" | "expired" | "refunded";
+type OrderStatus =
+  | "pending"
+  | "paid"
+  | "queued"
+  | "processing"
+  | "waiting_invite"
+  | "waiting_workspace"
+  | "delivered"
+  | "failed"
+  | "expired"
+  | "refunded";
 
 type Order = {
   id: string;
@@ -77,14 +87,16 @@ const statusMeta: Record<OrderStatus, { label: string; cls: string }> = {
   pending:    { label: "Aguardando pagamento", cls: "bg-muted text-muted-foreground border-muted-foreground/30" },
   paid:       { label: "Pago",                 cls: "bg-primary/10 text-primary border-primary/40" },
   queued:     { label: "Na fila",              cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" },
-  processing: { label: "Processando",          cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" },
+  processing: { label: "Farm em execução",     cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" },
+  waiting_invite:    { label: "Aguardando confirmação do bot como Owner", cls: "bg-sky-500/15 text-sky-400 border-sky-500/40" },
+  waiting_workspace: { label: "Aguardando workspace válido",              cls: "bg-indigo-500/15 text-indigo-400 border-indigo-500/40" },
   delivered:  { label: "Entregue",             cls: "bg-primary/15 text-primary border-primary/40" },
   failed:     { label: "Falhou",               cls: "bg-destructive/15 text-destructive border-destructive/40" },
   expired:    { label: "Expirado",             cls: "bg-muted text-muted-foreground border-muted-foreground/30" },
   refunded:   { label: "Reembolsado",          cls: "bg-muted text-muted-foreground border-muted-foreground/30" },
 };
 
-const STATUSES: OrderStatus[] = ["pending", "paid", "queued", "processing", "delivered", "failed", "expired", "refunded"];
+const STATUSES: OrderStatus[] = ["pending", "paid", "queued", "processing", "waiting_invite", "waiting_workspace", "delivered", "failed", "expired", "refunded"];
 
 function isStopping(o: Pick<Order, "stop_requested_at" | "status">) {
   return !!o.stop_requested_at && ["paid", "queued", "processing"].includes(o.status);

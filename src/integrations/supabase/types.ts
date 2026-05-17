@@ -1337,6 +1337,58 @@ export type Database = {
         Returns: Json
       }
       retry_manual_order: { Args: { _order_id: string }; Returns: Json }
+      set_order_target_workspace: {
+        Args: { _fingerprint: string; _order_id: string; _workspace: string }
+        Returns: {
+          amount_cents: number
+          assigned_at: string | null
+          assigned_bot_id: string | null
+          balance_applied_cents: number
+          balance_applied_credits: number
+          bot_invite_confirmed_at: string | null
+          bot_invite_confirmed_fingerprint: string | null
+          client_fingerprint: string | null
+          created_at: string
+          credits: number
+          current_workspace: string | null
+          customer_email: string
+          customer_name: string
+          customer_tax_id: string | null
+          customer_whatsapp: string | null
+          delivered_at: string | null
+          failed_reason: string | null
+          id: string
+          is_manual: boolean
+          last_workspace: string | null
+          multi_workspace_mode: boolean
+          pack_id: string | null
+          paid_at: string | null
+          partner_id: string
+          pix_copy_paste: string | null
+          pix_expires_at: string | null
+          pix_qrcode: string | null
+          price_cents_per_workspace: number | null
+          raw_payload: Json | null
+          refunded_credits: number
+          schedule_id: string | null
+          schedule_run_index: number | null
+          status: Database["public"]["Enums"]["partner_order_status"]
+          stop_requested_at: string | null
+          target_workspace: string | null
+          tx_id: string | null
+          updated_at: string
+          workspaces_done: number
+          workspaces_history: Json
+          workspaces_plan: Json | null
+          workspaces_total: number | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "partner_credit_orders"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       skip_current_workspace: {
         Args: { _order_id: string; _reason?: string }
         Returns: Json

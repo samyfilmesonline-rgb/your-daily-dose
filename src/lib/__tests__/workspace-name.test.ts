@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cleanWorkspaceName, normalizeWorkspaceKey, dedupeWorkspaces, stripAvatarPrefix } from "@/lib/workspace-name";
+import { cleanWorkspaceName, normalizeWorkspaceKey, dedupeWorkspaces, stripAvatarPrefix, isStatusLikeWorkspace, assertRealWorkspaceName } from "@/lib/workspace-name";
 
 describe("workspace-name", () => {
   it("strips duplicated avatar prefix", () => {
@@ -20,5 +20,17 @@ describe("workspace-name", () => {
   it("dedupes by normalized key, keeps first", () => {
     const out = dedupeWorkspaces(["AAlex's Lovable", "alex's lovable PRO", "", "Ddoug's Lovable"]);
     expect(out).toEqual(["Alex's Lovable", "doug's Lovable"]);
+  });
+  it("flags status-like names", () => {
+    expect(isStatusLikeWorkspace("Em andamento")).toBe(true);
+    expect(isStatusLikeWorkspace("processing")).toBe(true);
+    expect(isStatusLikeWorkspace("waiting_invite")).toBe(true);
+    expect(isStatusLikeWorkspace("Alex's Lovable")).toBe(false);
+    expect(isStatusLikeWorkspace("")).toBe(true);
+  });
+  it("assertRealWorkspaceName rejects status-like and empty", () => {
+    expect(() => assertRealWorkspaceName("Em andamento")).toThrow();
+    expect(() => assertRealWorkspaceName("")).toThrow();
+    expect(assertRealWorkspaceName("Gabriel's Lovable")).toBe("Gabriel's Lovable");
   });
 });

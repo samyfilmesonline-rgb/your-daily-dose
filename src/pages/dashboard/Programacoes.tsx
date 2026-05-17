@@ -150,7 +150,7 @@ export default function Programacoes() {
                               Single
                             </Badge>
                             <div className="text-muted-foreground mt-0.5">
-                              {s.target_workspace} · {s.credits_per_run} cr
+                              {cleanWorkspaceName(s.target_workspace)} · {s.credits_per_run} cr
                             </div>
                           </div>
                         )}

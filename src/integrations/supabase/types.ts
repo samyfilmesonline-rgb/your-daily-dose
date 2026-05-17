@@ -1337,7 +1337,10 @@ export type Database = {
         Returns: Json
       }
       retry_manual_order: { Args: { _order_id: string }; Returns: Json }
-      skip_current_workspace: { Args: { _order_id: string }; Returns: Json }
+      skip_current_workspace: {
+        Args: { _order_id: string; _reason?: string }
+        Returns: Json
+      }
       stop_order_partial: {
         Args: { _fingerprint: string; _order_id: string }
         Returns: number

@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import GlitchText from "@/components/landing/GlitchText";
 import MatrixRain from "@/components/landing/MatrixRain";
 import { matrixThemeStyle } from "@/lib/matrix-theme";
+import { isStatusLikeWorkspace } from "@/lib/workspace-name";
 import {
   Sparkles, ShieldCheck, AlertTriangle, Ban, Clock, Coins,
   CheckCircle2, Copy, Loader2, QrCode, Mail, ExternalLink, XCircle, Hourglass, Bot,
@@ -282,7 +283,9 @@ export default function ComprarParceiro() {
     if (item.customerName) setName(item.customerName);
     if (item.customerWhatsapp) setWhatsapp(item.customerWhatsapp);
     if (item.customerTaxId) setTaxId(item.customerTaxId);
-    if (item.targetWorkspace) setWorkspace(item.targetWorkspace);
+    if (item.targetWorkspace && !isStatusLikeWorkspace(item.targetWorkspace)) {
+      setWorkspace(item.targetWorkspace);
+    }
     setUseBalance(true);
     setPrefillOrderId(item.id);
     setStep("form");
@@ -464,6 +467,14 @@ export default function ComprarParceiro() {
       });
       return;
     }
+    if (isStatusLikeWorkspace(workspace)) {
+      toast({
+        title: "Workspace inválido",
+        description: `"${workspace.trim()}" parece um rótulo de status. Informe o nome real do workspace Lovable (ex: "Meu's Lovable").`,
+        variant: "destructive",
+      });
+      return;
+    }
     const taxDigits = taxId.replace(/\D/g, "");
     if (taxDigits.length !== 11 && taxDigits.length !== 14) {
       toast({
@@ -555,6 +566,14 @@ export default function ComprarParceiro() {
   const submitBalanceOnly = async () => {
     if (workspace.trim().length < 2) {
       toast({ title: "Workspace obrigatório", description: "Informe o nome exato do workspace Lovable de destino.", variant: "destructive" });
+      return;
+    }
+    if (isStatusLikeWorkspace(workspace)) {
+      toast({
+        title: "Workspace inválido",
+        description: `"${workspace.trim()}" parece um rótulo de status. Informe o nome real do workspace Lovable.`,
+        variant: "destructive",
+      });
       return;
     }
     if (name.trim().length < 2) {
@@ -1476,6 +1495,14 @@ export default function ComprarParceiro() {
               }
               if (redeemWorkspace.trim().length < 2) {
                 toast({ title: "Workspace obrigatório", variant: "destructive" });
+                return;
+              }
+              if (isStatusLikeWorkspace(redeemWorkspace)) {
+                toast({
+                  title: "Workspace inválido",
+                  description: `"${redeemWorkspace.trim()}" parece um rótulo de status. Informe o nome real do workspace Lovable.`,
+                  variant: "destructive",
+                });
                 return;
               }
               if (!customerBalance.email) {

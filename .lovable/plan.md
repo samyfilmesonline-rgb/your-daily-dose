@@ -1,108 +1,67 @@
-# Plano — Estados `waiting_invite` / `waiting_workspace` + guarda anti-"Em andamento"
+## Diagnóstico — pedido do `betinhoabsoluto@gmail.com` não inicia
 
-Alinhar painel + Supabase com o worker para que:
-- `target_workspace` / `current_workspace` nunca contenham rótulos visuais ("Em andamento", "Processando", "Aguardando", "Pending");
-- Pedidos esperando o cliente confirmar bot ou escolher workspace não tomem bot e não fiquem como `processing`;
-- A fila continue andando, pulando esses estados de espera.
+Histórico do cliente (`partner_credit_orders`):
 
-## 1. Migração Supabase
+| id (curto) | criado | status final | target_workspace | failed_reason |
+|---|---|---|---|---|
+| 45a5bc3b | 12:58 | refunded | **"Em andamento"** | `worker_stalled_auto:no_exec_since_assigned` |
+| ac85d492 | 13:09 | refunded | **"Em andamento"** | `workspace_not_found: alvo='Em andamento'` |
+| 8bc820c3 | 13:12 | refunded | **"Em andamento"** | `workspace_not_found: alvo='Em andamento'` |
+| b38ccad8 | 13:15 | refunded | **"Em andamento"** | `workspace_not_found: alvo='Em andamento'` |
+| 02a0a90c | 13:18 | refunded | **"Em andamento"** | `bot_orphan` |
+| 5cbefe1b | 13:25 | refunded | **"Em andamento"** | `bot_orphan` |
+| cb71f332 | 13:32 | **waiting_invite** | **"Em andamento"** | aguardando cliente confirmar bot |
 
-Arquivo novo `supabase/migrations/<ts>_partner_order_waiting_states.sql`:
+Causa raiz: **todos os pedidos automáticos do cliente foram criados com `target_workspace = "Em andamento"`**, que é um rótulo de status, não um nome de workspace real. O worker tenta abrir esse "workspace", o Lovable retorna `workspace_not_found` (workspaces reais dele incluem "Betinho's Lovable"), o pedido é estornado, e o cliente refaz a compra — repetindo o problema.
 
-1. `partner_credit_orders.status` já é `enum partner_order_status` (confirmado em `types.ts`). Adicionar dois valores sem destruir dados:
-   ```sql
-   ALTER TYPE public.partner_order_status ADD VALUE IF NOT EXISTS 'waiting_invite';
-   ALTER TYPE public.partner_order_status ADD VALUE IF NOT EXISTS 'waiting_workspace';
-   ```
-2. Atualizar `assign_next_queued_order(_partner_id)` para ignorar explicitamente `waiting_*` (já só pega `queued`, mas formalizar com filtro `AND status = 'queued'` mantido e comentário).
-3. Atualizar `assign_bot_to_order(_order_id)` para abortar (retornar NULL sem tocar bot) se o pedido estiver em `waiting_invite` ou `waiting_workspace`, evitando race com triggers/webhook.
-4. Atualizar `confirm_bot_invite`:
-   - Aceitar pedidos em status `waiting_invite` (além de `paid/queued/processing`).
-   - Após confirmar: se `target_workspace IS NULL` → `status = waiting_workspace`; senão, se ainda `waiting_invite` → `status = paid` (deixa `assign_bot_to_order` promover a `processing/queued`).
-5. Criar RPC `set_order_target_workspace(_order_id uuid, _fingerprint text, _workspace text)`:
-   - Valida fingerprint (igual `confirm_bot_invite`).
-   - Limpa/normaliza nome (reutilizar `cleanWorkspaceName` no edge antes de chamar; aqui apenas trim/raise se vazio).
-   - Bloqueia textos proibidos: lança erro se `lower(_workspace) IN ('em andamento','processando','aguardando','pending','processing','waiting_invite','waiting_workspace')`.
-   - Grava `target_workspace = _workspace`, limpa `failed_reason` se era `waiting_workspace_*`, e se `bot_invite_confirmed_at IS NOT NULL` chama `assign_bot_to_order` (que vai para `processing`); caso contrário deixa em `waiting_invite`.
-6. Nenhum `DROP`/`TRUNCATE`. Sem mexer em RLS.
+Como o "Em andamento" entra no pedido:
 
-Após a migração o `src/integrations/supabase/types.ts` será regenerado automaticamente — apenas reusar os novos valores via cast `as Database["public"]["Enums"]["partner_order_status"]`.
+1. Na página pública `src/pages/ComprarParceiro.tsx` o cliente clica em **"Refazer pedido"** a partir do histórico (`reorderFromHistory`, linha 285): `if (item.targetWorkspace) setWorkspace(item.targetWorkspace);`
+2. O histórico vem de pedidos anteriores que já tinham `target_workspace="Em andamento"` (lixo herdado de versões antigas do painel, antes das proteções adicionadas).
+3. O input fica pré-preenchido com "Em andamento", o cliente confirma sem perceber e a edge function `partner-shop-create-pix` aceita o valor sem validar (não usa `assertRealWorkspaceName`, ao contrário de `partner-shop-create-manual-order` / `partner-shop-multi-workspace-tick`).
+4. Cada novo Pix herda o mesmo workspace inválido. Loop infinito.
 
-## 2. Edge Functions
+Total de pedidos no banco com `target_workspace` parecendo rótulo de status: **7** (todos deste cliente).
 
-### 2.1 Helper compartilhado `supabase/functions/_shared/workspace-name.ts`
-Adicionar `isStatusLikeWorkspace(name)` e `assertRealWorkspaceName(name)` que rejeitam: `"em andamento"`, `"processando"`, `"aguardando"`, `"pending"`, `"processing"`, `"waiting"`, `"waiting_invite"`, `"waiting_workspace"`, vazio. Comparação via `normalizeWorkspaceKey`.
+O pedido atual `cb71f332` está em `waiting_invite`, com bot atribuído mas ainda com o `target_workspace` ruim — mesmo se o cliente confirmar o convite agora, o worker vai falhar de novo com `workspace_not_found`.
 
-### 2.2 Pontos de gravação a blindar
-Em cada um, passar `targetWorkspace` por `cleanWorkspaceName` + `assertRealWorkspaceName` e definir status inicial conforme regra nova:
+## Mudanças propostas
 
-- `partner-shop-create-pix/index.ts` (l.142, l.221): se `targetWorkspace` ausente → `target_workspace: null`. Status inicial permanece `pending` (espera Pix). Quando confirmar Pix, se ainda sem workspace, ir para `waiting_workspace` em vez de `paid`/`processing`.
-- `partner-shop-create-manual-order/index.ts` (l.160, l.168):
-  - Multi-WS sem plano resolvido → `status: 'waiting_invite'`, `target_workspace: null`, sem `assign_bot_to_order`.
-  - Single-WS com `targetWs` válido → manter `status: 'paid'` e seguir fluxo atual.
-  - Single-WS sem workspace → `status: 'waiting_workspace'`.
-- `partner-shop-create-balance-only-order/index.ts` (l.75) e `partner-shop-redeem-balance/index.ts` (l.73): mesma validação.
-- `partner-shop-create-order-schedule/index.ts` (l.160): validar antes de inserir.
-- `partner-shop-multi-workspace-tick/index.ts` (l.131-132, 258-259): ao escolher `first` do `allowed`, validar; se `allowed` vazio → não promover a `processing`, marcar `waiting_workspace` e retornar `{ ok:true, waiting:'workspace' }`.
-- `partner-shop-confirm-invite/index.ts`: já delega para RPC; RPC já passa a tratar `waiting_invite`.
+### 1. Bloquear na edge function de compra pública (causa raiz)
+`supabase/functions/partner-shop-create-pix/index.ts`:
+- Importar `assertRealWorkspaceName` de `_shared/workspace-name.ts`.
+- Validar `b.targetWorkspace` logo após o `safeParse`, devolvendo HTTP 400 com mensagem clara (`"Workspace inválido: 'Em andamento' parece um rótulo de status. Informe o nome real do workspace do Lovable do cliente."`) antes de qualquer inserção/cobrança Pix.
+- Aplicar nos dois `insert` (caminho saldo-cobre-100% e caminho Pix).
 
-### 2.3 Nova edge `partner-shop-set-target-workspace`
-Cria pequena função que chama RPC `set_order_target_workspace` (validações, CORS, fingerprint) usando service-role. Frontend usa essa edge ao definir/alterar workspace; nunca faz `update` direto.
+### 2. Não pré-preencher workspace inválido no reorder
+`src/pages/ComprarParceiro.tsx`:
+- Em `reorderFromHistory`, importar `isStatusLikeWorkspace` de `@/lib/workspace-name` e só fazer `setWorkspace(item.targetWorkspace)` quando o valor for um workspace real. Caso contrário, deixar o campo vazio para o cliente digitar de novo.
+- No submit (`handleConfirmar`/equivalente), rodar `assertRealWorkspaceName` antes do `functions.invoke` e mostrar erro inline em vez de mandar para o servidor.
 
-### 2.4 Webhook Pix (`abacatepay-webhook`)
-Quando marcar `paid`, se o pedido não tem `target_workspace` ou `bot_invite_confirmed_at` ainda nulo, deixar status como `waiting_invite` ou `waiting_workspace` em vez de `paid`/`processing`. Não chamar `assign_bot_to_order` nesses casos.
+### 3. Limpar o pedido travado e os dados ruins (migração)
+Migração SQL única:
+- `UPDATE partner_credit_orders SET target_workspace = NULL WHERE lower(target_workspace) IN ('em andamento','processando','aguardando','pending','processing','queued','paid','waiting','waiting_invite','waiting_workspace','delivered','failed','refunded','expired');` — limpa os 7 registros para que reorders futuros não repopulem.
+- Para o pedido atual `cb71f332-72fc-48fc-bc07-9f699c74f104`: transicionar de `waiting_invite` → `waiting_workspace` e zerar `assigned_bot_id` / `assigned_at` (libera o bot `acc4d4c2` para outros pedidos). Isso permite que o painel ou o próprio cliente escolha um workspace real (ex.: "Betinho's Lovable") via a RPC `set_order_target_workspace` que já existe, sem precisar de estorno.
 
-## 3. Frontend
+### 4. (Opcional, recomendado) Constraint no banco
+Migração: adicionar trigger `BEFORE INSERT OR UPDATE` em `partner_credit_orders` que rejeita gravação de `target_workspace`/`current_workspace` cujo `lower(trim(...))` esteja na mesma blacklist. Defesa em profundidade — garante que qualquer edge function futura que esqueça a validação ainda assim não consiga sujar o banco.
 
-### 3.1 Mapa de status (`src/pages/dashboard/Pedidos.tsx`, `ComprarParceiro.tsx`, `Checkout.tsx`, `admin-checkout-list` consumers)
-Estender `STATUS_MAP`:
-- `waiting_invite`: rótulo "Aguardando confirmação do bot como Owner", azul.
-- `waiting_workspace`: rótulo "Aguardando workspace válido", índigo.
-- `processing`: rótulo "Farm em execução".
+## Arquivos afetados
 
-### 3.2 Guarda anti-status nos writes
-- Centralizar em `src/lib/workspace-name.ts` um `assertRealWorkspaceName(name)` que lança em UI antes de qualquer chamada de edge. Usar em `ManualOrderDialog`, `Pedidos.tsx` (botão "definir workspace"), `Programacoes.tsx`, `CheckoutCreditsDialog.tsx`, `ComprarParceiro.tsx`.
-- Remover qualquer caminho que envie label visual; nunca usar `STATUS_MAP[…].label` para preencher campo workspace.
-
-### 3.3 Campo de display separado
-Adicionar helper `computeOrderDisplayStatus(order)` em `src/lib/order-display.ts` que retorna `{ label, tone }` derivado de `order.status` + flags (`bot_invite_confirmed_at`, `target_workspace`, `stop_requested_at`). Componentes consomem isso para badge; `target_workspace` permanece o nome real.
-
-### 3.4 Modal de detalhes em `Pedidos.tsx`
-- Em `waiting_invite`: destacar passo "Adicionar bot como Owner" + botão `confirm_bot_invite` (já existe).
-- Em `waiting_workspace`: input para selecionar workspace real (lista vinda de `useMyWorkspaces`) que chama nova edge `partner-shop-set-target-workspace`.
-- Bot continua `idle` — esconder bloco "Farm em andamento" do plano anterior nesses estados.
-
-### 3.5 Tipos
-Estender union de `status` em interfaces locais (`OrderRow`, `ScheduleRow`, etc.) com `"waiting_invite" | "waiting_workspace"`. Tipos do supabase virão da regeneração após migração.
-
-## 4. Sem alterações de RLS / secrets
-- Service-role só em edges. Painel chama RPCs/edges; nenhuma mutação direta em `partner_credit_orders.status` no frontend.
-
-## 5. Arquivos a tocar
-- `supabase/migrations/<novo>.sql`
-- `supabase/functions/_shared/workspace-name.ts`
-- `supabase/functions/partner-shop-create-pix/index.ts`
-- `supabase/functions/partner-shop-create-manual-order/index.ts`
-- `supabase/functions/partner-shop-create-balance-only-order/index.ts`
-- `supabase/functions/partner-shop-redeem-balance/index.ts`
-- `supabase/functions/partner-shop-create-order-schedule/index.ts`
-- `supabase/functions/partner-shop-multi-workspace-tick/index.ts`
-- `supabase/functions/abacatepay-webhook/index.ts`
-- `supabase/functions/partner-shop-set-target-workspace/index.ts` (novo)
-- `src/lib/workspace-name.ts`
-- `src/lib/order-display.ts` (novo)
-- `src/pages/dashboard/Pedidos.tsx`
-- `src/pages/dashboard/Programacoes.tsx`
-- `src/pages/dashboard/Checkout.tsx`
-- `src/pages/ComprarParceiro.tsx`
-- `src/components/dashboard/ManualOrderDialog.tsx`
-- `src/components/dashboard/loja/CheckoutCreditsDialog.tsx`
+- `supabase/functions/partner-shop-create-pix/index.ts` — validação `assertRealWorkspaceName`.
+- `src/pages/ComprarParceiro.tsx` — guarda no reorder + validação antes do submit.
+- Nova migração: limpeza dos 7 registros + reset do pedido travado + trigger opcional.
 
 ## Critérios de aceite
-- Enum `partner_order_status` contém `waiting_invite` e `waiting_workspace`; dados antigos preservados.
-- Nenhuma chamada (UI ou edge) consegue gravar "Em andamento"/"Processando"/"Aguardando"/"Pending" em `target_workspace`/`current_workspace` — bloqueio nas duas camadas.
-- Pedido sem confirmação do bot fica `waiting_invite`, `farm_bots.status='idle'`, `current_order_id=NULL`.
-- Pedido confirmado sem workspace real → `waiting_workspace`, sem bot ocupado.
-- Pedido confirmado com workspace real → `processing` e bot fica `busy`.
-- `assign_next_queued_order` continua atribuindo outros pedidos `queued` mesmo havendo `waiting_*` na frente.
-- Realtime do painel reflete a transição para `processing` quando o workspace é definido / convite confirmado.
+
+- Tentar comprar com `targetWorkspace="Em andamento"` em `partner-shop-create-pix` retorna 400 e nada é inserido.
+- Refazer pedido a partir do histórico não pré-preenche o workspace quando o valor anterior era um rótulo de status.
+- Pedido `cb71f332` deixa de ocupar o bot `acc4d4c2` e fica em `waiting_workspace`, esperando o cliente/painel informar um workspace real (ex.: "Betinho's Lovable") — sem novo Pix, sem estorno.
+- Próxima compra automática deste cliente, com workspace válido, é processada pelo worker normalmente.
+
+## Pendência de decisão (rápida)
+
+Para o pedido travado `cb71f332` (R$ pago, créditos `paid`, mas com workspace inválido), há duas saídas — preciso saber qual aplicar:
+
+- **(A) Recomendado:** limpar `target_workspace` e mover para `waiting_workspace`, mantendo o crédito pago. Você (ou o cliente, pela tela pública) informa o workspace real e o worker executa. Sem estorno.
+- **(B)** Estornar como os anteriores (`refunded`) e pedir ao cliente que compre de novo já com a UI corrigida.

@@ -1,51 +1,69 @@
 ## Causa raiz
 
-A migração recente adicionou os status `waiting_workspace` e `waiting_invite` ao enum `partner_order_status`. O backend (`partner-shop-check-status`) já devolve esses status corretamente — eu confirmei direto no banco:
+O pedido `09101730…` está com:
+- `status = paid` (esperado: `processing`)
+- `assigned_bot_id = acc4d4c2…` ✓
+- `target_workspace = 'PRO 04'` ✓
+- `bot_invite_confirmed_at = 2026-05-17 14:25:08` ✓
 
-- Pedido `09101730…` (o que você acabou de pagar): `status = waiting_invite`, `assigned_bot_id` presente, `target_workspace = 'PRO 04'`, `bot_invite_confirmed_at = null`, `failed_reason = "Aguardando cliente clicar em 'Ja adicionei o bot como Owner'."`
+E o bot `acc4d4c2…` está com `status = idle`, `current_order_id = NULL`.
 
-Ou seja: o pagamento foi confirmado, um bot foi atribuído, e o backend está corretamente esperando você confirmar o convite. **O problema é só no frontend** `src/pages/ComprarParceiro.tsx`:
+Todas as 4 condições para iniciar o farm estão satisfeitas, mas o worker não pega o pedido porque:
 
-1. `OrderStatus` (linha 54) só conhece `pending|paid|queued|processing|delivered|failed|expired|refunded` — falta `waiting_workspace` e `waiting_invite`.
-2. `showBotBlock` (linha 2147) exige `status === "processing" || "paid" || "queued"`. Como o status agora é `waiting_invite`, o bloco com o e-mail do bot + botão "Já adicionei o bot como Owner" **nunca renderiza**.
-3. Por isso o usuário cai no fallback "Estamos preparando seu pedido…" (linha 2225) e nunca consegue copiar o e-mail nem confirmar o convite.
-4. `STATUS_LABEL` também não tem entrada para os novos status, por isso o campo "Status" aparece vazio no card (igual à sua screenshot).
+1. **Status ficou em `paid` em vez de `processing`.** Quando o cliente clicou em "Já adicionei o bot como Owner", a função SQL `confirm_bot_invite` transicionou de `waiting_invite` → `paid`. Em seguida, ela só chama `assign_bot_to_order` quando `assigned_bot_id IS NULL`. Como o bot já estava pré-atribuído na fase `waiting_invite`, o `IF` não disparou, e o pedido nunca subiu para `processing`.
+2. **O bot foi marcado como `idle` (provavelmente pelo watchdog ao detectar bot ocioso).** O `current_order_id` foi limpo. Sem isso, o worker não enxerga o vínculo.
 
-## Mudanças (somente em `src/pages/ComprarParceiro.tsx`)
+Resultado: pedido pago + bot atribuído + workspace + convite confirmado, mas nada acontece.
 
-1. **Expandir o tipo `OrderStatus`** para incluir `"waiting_workspace"` e `"waiting_invite"`.
+## Mudanças
 
-2. **Atualizar `STATUS_LABEL`**:
-   - `waiting_workspace`: "Falta informar o workspace"
-   - `waiting_invite`: "Falta confirmar bot como Owner"
+### 1. Migração SQL — corrigir `confirm_bot_invite`
 
-3. **Atualizar `statusHeadline`** para devolver títulos úteis nesses estados (ex.: "Adicione o bot como Owner no seu workspace").
+Quando estiver transicionando para `paid` com bot atribuído e workspace presente, promover direto para `processing` e reclamar o bot:
 
-4. **Atualizar `showBotBlock`** para incluir `waiting_invite` na lista de status que renderizam o painel com:
-   - e-mail do bot + botão "Copiar"
-   - passo-a-passo de convidar como Owner
-   - botão "Já adicionei o bot como Owner" (que chama `partner-shop-confirm-invite`)
-   
-   Esse painel já existe (linhas 2328–2370); só não está sendo mostrado porque a condição está desatualizada.
+```sql
+CREATE OR REPLACE FUNCTION public.confirm_bot_invite(_order_id uuid, _fingerprint text)
+... (mesma assinatura) ...
+-- após o UPDATE que seta status = v_new_status:
+IF v_new_status = 'paid' AND v_order.assigned_bot_id IS NULL THEN
+  PERFORM public.assign_bot_to_order(_order_id);
+ELSIF v_new_status = 'paid'
+   AND v_order.assigned_bot_id IS NOT NULL
+   AND v_order.target_workspace IS NOT NULL
+   AND length(btrim(v_order.target_workspace)) > 0 THEN
+  -- Reclamar o bot e promover para processing
+  UPDATE public.farm_bots
+     SET status = 'busy', current_order_id = _order_id, last_heartbeat_at = now()
+   WHERE id = v_order.assigned_bot_id
+     AND (status = 'idle' OR current_order_id = _order_id OR current_order_id IS NULL);
+  UPDATE public.partner_credit_orders
+     SET status = 'processing', assigned_at = COALESCE(assigned_at, now()), updated_at = now()
+   WHERE id = _order_id;
+END IF;
+```
 
-5. **Adicionar bloco para `waiting_workspace`** (pedido pago mas sem workspace alvo — caso do `cb71f332`):
-   - input + botão "Salvar workspace" que chama a edge function `partner-shop-set-target-workspace` (já existe e já tem validação contra rótulos de status como "Em andamento").
-   - mensagem clara: "Pagamento confirmado. Informe o nome exato do seu workspace Lovable para iniciarmos."
+### 2. One-shot dentro da mesma migração — destravar o pedido `09101730…`
 
-6. **Ajustar a condição amber "Estamos preparando seu pedido. Se demorar, fale com o suporte."** (linha 2371) para **não** renderizar quando o status for `waiting_invite` ou `waiting_workspace` — esses casos têm bloco próprio acima.
+```sql
+UPDATE public.farm_bots
+   SET status = 'busy', current_order_id = '09101730-cc69-43b6-a9ab-34c9f4cd3158',
+       last_heartbeat_at = now()
+ WHERE id = 'acc4d4c2-0678-482d-b288-c2b6641b3491';
+UPDATE public.partner_credit_orders
+   SET status = 'processing', assigned_at = COALESCE(assigned_at, now()),
+       failed_reason = NULL, updated_at = now()
+ WHERE id = '09101730-cc69-43b6-a9ab-34c9f4cd3158' AND status = 'paid';
+```
 
-7. **Atualizar as transições de `step`** (linhas 421 e 1201) que assumem `d.status !== "pending"` ⇒ "paid". Continuam funcionando, mas garantir que `waiting_invite`/`waiting_workspace` também avancem o step para "paid".
+(Limpa o `failed_reason` "Aguardando cliente clicar…" que ficou stale.)
 
 ## Fora do escopo
 
-- Backend: a edge function `partner-shop-check-status` e as RPCs já devolvem e tratam os novos status corretamente. Nada a mudar lá.
-- A página admin `Pedidos.tsx` já foi atualizada nas mensagens anteriores.
-- O fluxo de atribuição de bot está funcionando (o bot foi atribuído com sucesso ao seu último pedido).
+- Frontend: nada a mudar — assim que o pedido virar `processing`, o painel de progresso já renderiza (essa parte já está pronta em `OrderTrackingInline`).
+- Edge function `partner-shop-confirm-invite`: continua igual; só chama a RPC.
+- `assign_bot_to_order`: continua igual; ela já bloqueia bots em estado de espera corretamente.
 
 ## Critérios de aceite
 
-- Após pagar o Pix, o cliente vê imediatamente (ou no próximo poll) o painel com o e-mail do bot e o botão "Já adicionei o bot como Owner".
-- Clicar no botão chama `partner-shop-confirm-invite` e a tela passa para "Convite confirmado — iniciando farm".
-- O pedido `09101730…` que está travado em `waiting_invite` agora exibe o painel correto quando você reabrir a tela.
-- Pedidos `waiting_workspace` (como `cb71f332`) mostram um input para o cliente informar o workspace.
-- O campo "Status" no card nunca aparece vazio.
+- Após a migração, o pedido `09101730…` aparece em `processing` e o worker inicia o farm em até 1 ciclo.
+- Para qualquer pedido futuro: clicar em "Já adicionei o bot como Owner" leva o pedido direto para `processing` quando bot + workspace já estão definidos.

@@ -192,6 +192,14 @@ export default function Pedidos() {
   const [skipLoading, setSkipLoading] = useState(false);
   const [forceCompleteLoading, setForceCompleteLoading] = useState(false);
   const [retryFailedLoading, setRetryFailedLoading] = useState(false);
+  const [wsInput, setWsInput] = useState("");
+  const [wsSaveLoading, setWsSaveLoading] = useState(false);
+  const [inviteConfirmLoading, setInviteConfirmLoading] = useState(false);
+
+  useEffect(() => {
+    // Reset workspace input quando troca o pedido em foco
+    setWsInput("");
+  }, [detail?.id]);
 
   const { data: orders = [] } = useQuery({
     queryKey: ["my-orders", user?.id],

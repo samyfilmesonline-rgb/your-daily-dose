@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { z } from "https://esm.sh/zod@3.23.8";
+import { cleanWorkspaceName, dedupeWorkspaces, normalizeWorkspaceKey } from "../_shared/workspace-name.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -135,7 +136,11 @@ Deno.serve(async (req) => {
         .maybeSingle();
       const remaining = pq ? Math.max(0, Number(pq.limite_creditos) - Number(pq.creditos_consumidos)) : 0;
       const maxWs = Math.floor(remaining / PER_WS);
-      const allowed = b.workspaces.slice(0, Math.max(0, maxWs));
+      const cleanedList = dedupeWorkspaces(b.workspaces);
+      if (cleanedList.length === 0) {
+        return json(400, { error: "Nenhum workspace válido informado" });
+      }
+      const allowed = cleanedList.slice(0, Math.max(0, maxWs));
       if (allowed.length === 0) {
         await sb
           .from("partner_credit_orders")
@@ -208,7 +213,15 @@ Deno.serve(async (req) => {
     if (!plan.length) return json(400, { error: "Plano de workspaces ausente — chame action=start primeiro" });
 
     const targetName = b.action === "next" ? b.finishedWorkspace : b.workspace;
-    const idx = plan.findIndex((w) => w.name === targetName);
+    let idx = plan.findIndex((w) => w.name === targetName);
+    if (idx < 0) {
+      const cleanedTarget = cleanWorkspaceName(targetName);
+      idx = plan.findIndex((w) => w.name === cleanedTarget);
+    }
+    if (idx < 0) {
+      const key = normalizeWorkspaceKey(targetName);
+      idx = plan.findIndex((w) => normalizeWorkspaceKey(w.name) === key);
+    }
     if (idx < 0) return json(400, { error: `Workspace '${targetName}' não está no plano` });
 
     const nowIso = new Date().toISOString();

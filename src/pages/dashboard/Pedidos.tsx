@@ -269,9 +269,7 @@ export default function Pedidos() {
   const stats = useMemo(() => {
     const oneDayAgo = Date.now() - 24 * 3600 * 1000;
     const tenMinAgo = Date.now() - 10 * 60 * 1000;
-    const noWs = orders.filter(
-      (o) => !o.target_workspace && !o.multi_workspace_mode && ["paid", "queued", "processing"].includes(o.status)
-    ).length;
+    const noWs = orders.filter((o) => needsRealWorkspace(o)).length;
     const stale = orders.filter((o) => {
       if (o.status !== "processing" || !o.assigned_bot_id) return false;
       const bot = botById.get(o.assigned_bot_id);
@@ -286,6 +284,51 @@ export default function Pedidos() {
       stale,
     };
   }, [orders, botById]);
+
+  const stuckOrders = useMemo(
+    () =>
+      orders.filter((o) => needsRealWorkspace(o)).sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      ),
+    [orders],
+  );
+
+  // Notificação quando um novo pedido travar por workspace inválido.
+  const lastNotifiedIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!stuckOrders.length) return;
+    const ids = new Set(stuckOrders.map((o) => o.id));
+    const previously = lastNotifiedIdsRef.current;
+    const newOnes = stuckOrders.filter((o) => !previously.has(o.id));
+    lastNotifiedIdsRef.current = ids;
+    // Primeiro carregamento: só registra, sem notificar.
+    if (previously.size === 0) return;
+    if (!newOnes.length) return;
+    for (const o of newOnes) {
+      toast({
+        title: "Pedido aguardando workspace",
+        description: `${o.customer_name} (${o.customer_email}) — defina o workspace real para iniciar o farm.`,
+        variant: "destructive",
+      });
+      try {
+        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+          new Notification("Pedido travado: selecionar workspace", {
+            body: `${o.customer_name} (${o.customer_email})`,
+            tag: `stuck-ws-${o.id}`,
+          });
+        }
+      } catch { /* ignore */ }
+    }
+  }, [stuckOrders, toast]);
+
+  // Pede permissão de notificação na primeira vez que houver pedido travado.
+  useEffect(() => {
+    if (!stuckOrders.length) return;
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission === "default") {
+      try { Notification.requestPermission().catch(() => {}); } catch { /* ignore */ }
+    }
+  }, [stuckOrders.length]);
 
   const fmtAgo = (iso: string | null) => {
     if (!iso) return "—";

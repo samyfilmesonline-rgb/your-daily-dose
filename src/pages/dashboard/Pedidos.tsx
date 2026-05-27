@@ -1039,11 +1039,18 @@ export default function Pedidos() {
                   </div>
                 );
               })()}
-              {detail.status === "failed" && detail.failed_reason && (
+              {(detail.status === "failed" || detail.status === "refunded") && detail.failed_reason && (
                 <div className="rounded border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
-                  <strong>Motivo da falha:</strong> {detail.failed_reason}
+                  <strong>Motivo:</strong> {friendlyReason(detail.failed_reason)}
+                  <div className="text-[10px] opacity-70 mt-0.5 font-mono break-all">{detail.failed_reason}</div>
                 </div>
               )}
+              <div className="rounded border border-border bg-muted/30 p-2">
+                <div className="text-[11px] font-medium text-muted-foreground mb-1.5 uppercase tracking-wider">
+                  Eventos do worker
+                </div>
+                <OrderEventTimeline orderId={detail.id} />
+              </div>
               {detail.status === "pending" && detail.pix_copy_paste && (
                 <div className="rounded border border-primary/30 bg-primary/5 p-2 space-y-1">
                   <div className="text-xs text-muted-foreground">Pix copia e cola (reenvie ao cliente):</div>

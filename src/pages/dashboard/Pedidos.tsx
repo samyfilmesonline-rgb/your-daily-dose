@@ -14,6 +14,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import ManualOrderDialog from "@/components/dashboard/ManualOrderDialog";
 import { cleanWorkspaceName, isStatusLikeWorkspace } from "@/lib/workspace-name";
+import OrderEventTimeline from "@/components/dashboard/pedidos/OrderEventTimeline";
+import WorkerHealthBadge from "@/components/dashboard/WorkerHealthBadge";
+import { friendlyReason } from "@/lib/order-reasons";
+import { orderStateMeta } from "@/lib/order-state";
 
 const dn = (s: string | null | undefined) => cleanWorkspaceName(s) || "—";
 
@@ -397,9 +401,12 @@ export default function Pedidos() {
         <h1 className="text-3xl sm:text-4xl font-black font-mono">
           <GlitchText>PEDIDOS</GlitchText>
         </h1>
-        <p className="text-sm text-muted-foreground max-w-2xl">
-          Pedidos dos seus clientes em tempo real. A atribuição de bot é automática.
-        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-sm text-muted-foreground max-w-2xl">
+            Pedidos dos seus clientes em tempo real. A atribuição de bot é automática.
+          </p>
+          <WorkerHealthBadge />
+        </div>
       </div>
 
       {(stats.queued > 0 || stats.processing > 0 || stats.failed24h > 0) && (

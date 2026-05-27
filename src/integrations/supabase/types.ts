@@ -1080,6 +1080,42 @@ export type Database = {
         }
         Relationships: []
       }
+      worker_events: {
+        Row: {
+          bot_id: string | null
+          created_at: string
+          event_type: string
+          id: string
+          message: string | null
+          order_id: string | null
+          partner_id: string
+          payload: Json
+          severity: string
+        }
+        Insert: {
+          bot_id?: string | null
+          created_at?: string
+          event_type: string
+          id?: string
+          message?: string | null
+          order_id?: string | null
+          partner_id: string
+          payload?: Json
+          severity?: string
+        }
+        Update: {
+          bot_id?: string | null
+          created_at?: string
+          event_type?: string
+          id?: string
+          message?: string | null
+          order_id?: string | null
+          partner_id?: string
+          payload?: Json
+          severity?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       app_updates: {

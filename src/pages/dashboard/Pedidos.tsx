@@ -17,7 +17,6 @@ import { cleanWorkspaceName, isStatusLikeWorkspace } from "@/lib/workspace-name"
 import OrderEventTimeline from "@/components/dashboard/pedidos/OrderEventTimeline";
 import WorkerHealthBadge from "@/components/dashboard/WorkerHealthBadge";
 import { friendlyReason } from "@/lib/order-reasons";
-import { orderStateMeta } from "@/lib/order-state";
 
 const dn = (s: string | null | undefined) => cleanWorkspaceName(s) || "—";
 

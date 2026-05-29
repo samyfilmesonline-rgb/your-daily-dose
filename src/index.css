@@ -129,4 +129,84 @@ All colors MUST be HSL.
       linear-gradient(90deg, hsl(var(--primary) / 0.06) 1px, transparent 1px);
     background-size: 32px 32px;
   }
+  .glitch-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    mix-blend-mode: screen;
+    opacity: 0;
+  }
+  .glitch-layer--cyan {
+    color: hsl(180 100% 60%);
+    animation: glitch 6s infinite;
+    animation-delay: 0s;
+    clip-path: polygon(0 0, 100% 0, 100% 45%, 0 45%);
+  }
+  .glitch-layer--magenta {
+    color: hsl(320 100% 60%);
+    animation: glitch 6s infinite;
+    animation-delay: 0.15s;
+    clip-path: polygon(0 55%, 100% 55%, 100% 100%, 0 100%);
+  }
+  .glitch-text:hover .glitch-layer {
+    animation-duration: 1.2s;
+  }
+  .shimmer-overlay {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    border-radius: inherit;
+  }
+  .shimmer-overlay::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 40%;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      hsl(var(--primary) / 0.35),
+      transparent
+    );
+    transform: translateX(-150%) skewX(-20deg);
+  }
+  .group:hover .shimmer-overlay::after {
+    animation: shimmer 1.1s ease-out;
+  }
+  .scan-border {
+    position: relative;
+    isolation: isolate;
+  }
+  .scan-border::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg,
+      hsl(var(--primary) / 0.9) 30deg,
+      transparent 90deg,
+      transparent 360deg
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    animation: border-spin 6s linear infinite;
+    pointer-events: none;
+    z-index: -1;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .glitch-layer,
+    .scan-border::before,
+    .shimmer-overlay::after {
+      animation: none !important;
+    }
+  }
 }

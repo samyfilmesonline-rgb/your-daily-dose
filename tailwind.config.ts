@@ -84,11 +84,60 @@ export default {
           from: { transform: "translateX(0)" },
           to: { transform: "translateX(-100%)" },
         },
+        "fade-in-up": {
+          "0%": { opacity: "0", transform: "translateY(12px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        "scale-in": {
+          "0%": { opacity: "0", transform: "scale(0.96)" },
+          "100%": { opacity: "1", transform: "scale(1)" },
+        },
+        glitch: {
+          "0%, 92%, 100%": { transform: "translate(0,0)", opacity: "0" },
+          "93%": { transform: "translate(-2px,1px)", opacity: "0.9" },
+          "95%": { transform: "translate(2px,-1px)", opacity: "0.8" },
+          "97%": { transform: "translate(-1px,-1px)", opacity: "0.9" },
+          "99%": { transform: "translate(1px,1px)", opacity: "0.7" },
+        },
+        "pulse-glow": {
+          "0%, 100%": {
+            boxShadow:
+              "0 0 40px -10px hsl(var(--primary) / 0.35), 0 0 80px -30px hsl(var(--primary) / 0.25)",
+          },
+          "50%": {
+            boxShadow:
+              "0 0 60px -10px hsl(var(--primary) / 0.55), 0 0 120px -30px hsl(var(--primary) / 0.45)",
+          },
+        },
+        shimmer: {
+          "0%": { transform: "translateX(-150%) skewX(-20deg)" },
+          "100%": { transform: "translateX(250%) skewX(-20deg)" },
+        },
+        "float-orb": {
+          "0%, 100%": { transform: "translate(0,0) scale(1)" },
+          "50%": { transform: "translate(30px,-20px) scale(1.1)" },
+        },
+        scanline: {
+          "0%": { transform: "translateY(-100%)" },
+          "100%": { transform: "translateY(100vh)" },
+        },
+        "border-spin": {
+          "0%": { transform: "rotate(0deg)" },
+          "100%": { transform: "rotate(360deg)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         marquee: "marquee 35s linear infinite",
+        "fade-in-up": "fade-in-up 0.5s ease-out both",
+        "scale-in": "scale-in 0.4s ease-out both",
+        glitch: "glitch 6s infinite",
+        "pulse-glow": "pulse-glow 3.5s ease-in-out infinite",
+        shimmer: "shimmer 1.1s ease-out",
+        "float-orb": "float-orb 12s ease-in-out infinite",
+        scanline: "scanline 7s linear infinite",
+        "border-spin": "border-spin 6s linear infinite",
       },
     },
   },

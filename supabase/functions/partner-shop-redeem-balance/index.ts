@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { z } from "https://esm.sh/zod@3.23.8";
 import { assertRealWorkspaceName } from "../_shared/workspace-name.ts";
+import { PER_WORKSPACE_DAILY_CAP, getWorkspaceCooldownUntil, createCooldownSchedule } from "../_shared/limits.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -39,10 +40,42 @@ Deno.serve(async (req) => {
     }
     const customerEmail = b.customerEmail.toLowerCase();
 
+    if (b.credits > PER_WORKSPACE_DAILY_CAP) {
+      return new Response(JSON.stringify({
+        error: `Cada workspace só aceita até ${PER_WORKSPACE_DAILY_CAP} créditos a cada 24h.`,
+      }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     const sb = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
+
+    // Cooldown 20/24h por workspace — agenda em vez de processar.
+    {
+      const cd = await getWorkspaceCooldownUntil(sb, b.targetWorkspace);
+      if (cd) {
+        try {
+          const scheduleId = await createCooldownSchedule(sb, {
+            partnerId: b.partnerId,
+            customerName: b.customerName ?? customerEmail,
+            customerEmail,
+            customerWhatsapp: b.customerWhatsapp,
+            targetWorkspace: b.targetWorkspace,
+            credits: b.credits,
+            amountCentsPerRun: 0,
+            scheduledFor: cd,
+            notes: `cooldown 20/24h — uso de saldo reagendado para ${customerEmail}`,
+          });
+          return new Response(JSON.stringify({
+            scheduled: true, scheduleId, scheduledFor: cd,
+            message: "Workspace em cooldown — pedido agendado.",
+          }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        } catch (e) {
+          console.error("schedule on cooldown err", e);
+        }
+      }
+    }
 
     const { data: bal } = await sb
       .from("partner_customer_balances")

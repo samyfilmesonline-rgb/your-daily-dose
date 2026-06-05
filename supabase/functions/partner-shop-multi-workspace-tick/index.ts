@@ -384,11 +384,40 @@ Deno.serve(async (req) => {
 
     // Decide próximo
     let next: WsItem | null = null;
+    const scheduledFromNext: Array<{ name: string; cooldownUntil: string; scheduleId: string }> = [];
     if (!stopRequested) {
-      next = plan.find((w) => w.status === "pending") ?? null;
-      if (next) {
-        next.status = "running";
-        next.started_at = nowIso;
+      // Pula workspaces em cooldown e cria schedules para eles
+      while (true) {
+        const candidate = plan.find((w) => w.status === "pending") ?? null;
+        if (!candidate) { next = null; break; }
+        const cd = await getWorkspaceCooldownUntil(sb, candidate.name);
+        if (!cd) {
+          candidate.status = "running";
+          candidate.started_at = nowIso;
+          next = candidate;
+          break;
+        }
+        candidate.status = "skipped";
+        candidate.finished_at = nowIso;
+        candidate.error = "cooldown_24h";
+        try {
+          const sid = await createCooldownSchedule(sb, {
+            partnerId: order.partner_id as string,
+            botId: order.assigned_bot_id as string | null,
+            customerName: order.customer_name as string,
+            customerEmail: order.customer_email as string,
+            customerWhatsapp: order.customer_whatsapp as string | null,
+            targetWorkspace: candidate.name,
+            credits: PER_WORKSPACE_DAILY_CAP,
+            amountCentsPerRun: Number(order.price_cents_per_workspace ?? 0),
+            scheduledFor: cd,
+            notes: `auto-reagendado por cooldown 20/24h (origem: pedido ${order.id})`,
+            createdBy: order.partner_id as string,
+          });
+          scheduledFromNext.push({ name: candidate.name, cooldownUntil: cd, scheduleId: sid });
+        } catch (e) {
+          console.warn("createCooldownSchedule err (next)", e);
+        }
       }
     } else {
       // marcar restantes como skipped

@@ -1,58 +1,70 @@
 ## Objetivo
 
-Deixar a tela `/auth` mais bonita e impactante mantendo a identidade Matrix (verde neon, mono, glitch), focando em **animações e efeitos visuais** — sem mudar layout, copy ou lógica de autenticação.
+Garantir que cada workspace receba no máximo **20 créditos a cada 24h** (janela móvel, global por nome de workspace). Pedidos que excedam o limite **não falham** — viram um agendamento automático que dispara assim que o cooldown acaba. Vale para pedidos manuais, automáticos, multi-workspace e schedules.
 
-## O que vai mudar
+## Estratégia
 
-### 1. Entrada do card (mount animation)
-- Card faz `scale-in` + `fade-in` ao carregar (200–400ms, easing suave).
-- Título "MATRIX PRO" entra com leve glitch + revelação por letra (stagger).
-- Subtítulo e formulário entram em cascata (delays escalonados de 80ms).
+- Mudar a unidade base do sistema para **20 créditos por workspace por pedido** (hoje single = N do pack, multi = 200/ws).
+- Adicionar um helper SQL `workspace_cooldown_until(name)` que retorna o `timestamptz` em que o workspace volta a poder farmar, ou `NULL` se já está livre.
+- Antes de criar/iniciar qualquer pedido em um workspace, consultar esse helper. Se houver cooldown:
+  - **Pedido novo** → não cria a order; cria/atualiza um `partner_order_schedules` one-shot com `start_at = cooldown_until` e devolve esse horário ao cliente.
+  - **Multi-ws** → particiona os workspaces da lista em "prontos agora" e "em cooldown". Os prontos rodam; os bloqueados viram schedules one-shot individuais para o respectivo `cooldown_until`.
+  - **Tick de schedule** → se na hora de rodar o workspace ainda estiver em cooldown, empurra `next_run_at` para o `cooldown_until` em vez de criar o pedido.
 
-### 2. Glitch aprimorado no título
-- Reescrever `GlitchText` (ou um wrapper local na Auth) com duas camadas pseudo (`::before` / `::after`) em ciano e magenta deslocadas, ativando em loop sutil a cada ~6s e mais forte no hover.
-- Manter o glow verde atual.
+## Mudanças
 
-### 3. Borda animada do card
-- Adicionar um "scan line" verde que percorre a borda do card em loop lento (conic-gradient animado em volta), criando sensação de hologram/perímetro vivo.
-- Glow externo pulsando suavemente (box-shadow com `animate-pulse` customizado, 3s).
+### 1. Banco de dados (migration)
 
-### 4. Inputs com microinterações
-- Ícones (Mail, Lock) ganham glow verde no `:focus-within` do input.
-- Borda do input transiciona de `primary/30` → `primary` com glow ao focar (transição 250ms).
-- Pequeno underline animado (scan) aparecendo da esquerda → direita quando o input recebe foco.
+- Função `public.workspace_cooldown_until(_workspace text) returns timestamptz`:
+  - Olha `execucoes_lovable` dos últimos 24h para esse `workspace_nome` (normalizado, case-insensitive), considerando apenas linhas com `creditos_adicionados > 0` ou `status` em `('sucesso','concluido','limite')`.
+  - Retorna `max(iniciado_em) + interval '24 hours'` se ≥ 20 créditos foram farmados na janela; senão `NULL`.
+- Função `public.workspace_farmed_last_24h(_workspace text) returns int` para inspeção/uso na UI.
+- Índice em `execucoes_lovable(lower(workspace_nome), iniciado_em desc)` para a consulta ficar barata.
 
-### 5. Botão "Entrar / Criar conta"
-- Hover: shimmer/sweep diagonal (gradiente que cruza o botão em 700ms).
-- Loading: substituir texto por um efeito "decoding" (caracteres katakana aleatórios trocando até virar "ENTRANDO…").
-- Active: leve `scale-[0.98]`.
+### 2. Constante 20 créditos
 
-### 6. Tabs (Entrar / Cadastrar)
-- Indicador ativo desliza entre as abas com transição suave (já existe estado, falta animar a faixa).
-- Sublinhado neon abaixo da aba ativa com glow.
+- `supabase/functions/partner-shop-multi-workspace-tick/index.ts`: `PER_WS = 200` → `PER_WS = 20`. Ajusta cálculo de quota (`Math.floor(remaining / 20)`) e `limit_reached` (que hoje credita 200) para creditar 20.
+- `partner-shop-create-pix`, `partner-shop-redeem-balance`, `partner-shop-create-balance-only-order`: validar que `pack.credits <= 20`; se maior, devolver erro pedindo um pacote de 20 (ou cortar para 20 — vou cortar, mantendo refund automático do excedente).
+- `partner-shop-create-manual-order`: forçar `credits = 20` no modo single e `pricePerWorkspaceCents` aplicado a 20 créditos no multi.
+- Constante única em `supabase/functions/_shared/limits.ts` (novo) reutilizada por todas as funções.
 
-### 7. Fundo
-- Manter `MatrixRain` mas reduzir levemente a opacidade do overlay para dar mais presença à chuva atrás do card.
-- Adicionar 2 orbs verdes desfocados flutuando lentamente atrás do card (já existem gradientes; trocar por divs animadas com `translate` em loop de ~12s).
-- Adicionar uma "scanline" horizontal sutil percorrendo a tela inteira em loop (overlay com gradient + animação).
+### 3. Enforcement do cooldown
 
-### 8. Rodapé "CONECTAR · DESPERTAR · EVOLUIR"
-- Cada palavra com glow pulsando dessincronizado (delays diferentes), reforçando o ritmo Matrix.
+Funções tocadas (todas chamam `workspace_cooldown_until` antes de criar/atribuir):
 
-## Detalhes técnicos
+- `partner-shop-create-pix`, `partner-shop-redeem-balance`, `partner-shop-create-balance-only-order`, `partner-shop-force-paid-order`, `partner-shop-create-manual-order`, `partner-shop-set-target-workspace`.
+  - Se cooldown ativo:
+    - Não cria/atribui o pedido imediato.
+    - Cria registro em `partner_order_schedules` com `end_mode='days'`, `total_days=1`, `start_at=cooldown_until`, `next_run_at=cooldown_until`, modo single, `target_workspace`, `credits_per_run=20`, `bot_id` preferido.
+    - Resposta inclui `scheduledFor: cooldown_until` para a UI exibir.
+- `partner-shop-multi-workspace-tick` action=`start`:
+  - Particiona `allowed` em `ready` e `cooldown`. Roda `ready` (debita só `ready.length * 20`). Cria um schedule one-shot por workspace bloqueado.
+  - Se `ready` for vazio, devolve sucesso com `scheduledOnly: true` e os horários.
+- `partner-shop-multi-workspace-tick` action=`next`:
+  - Antes de promover o próximo `pending` para `running`, valida cooldown. Se bloqueado, marca esse item como `skipped` com motivo `cooldown` e cria um schedule one-shot para ele; continua com o próximo pendente que estiver livre. Refunds calculados normalmente para skipped.
+- `partner-shop-schedule-tick`:
+  - Antes de spawn da order, consulta `workspace_cooldown_until`. Se ainda bloqueado, atualiza `next_run_at = cooldown_until` e não cria order nessa rodada.
 
-- **Arquivos a editar**:
-  - `src/pages/Auth.tsx` — aplicar classes de animação, refatorar inputs e botão, animar tabs e rodapé.
-  - `src/components/landing/GlitchText.tsx` — versão com glitch real (camadas duplicadas, keyframes).
-  - `tailwind.config.ts` — adicionar keyframes: `glitch`, `border-scan`, `pulse-glow`, `shimmer`, `float-orb`, `scanline`, `fade-in-up`, e suas `animation` correspondentes.
-  - `src/index.css` — utilitários `.glitch-layer`, `.scan-border`, `.shimmer-btn` se necessário (apenas classes utilitárias compostas, sem cores hard-coded; tudo via `hsl(var(--primary))`).
+### 4. Frontend
 
-- **Sem mudanças** em: `useAuth`, lógica de submit, rotas, copy, tokens de cor do design system, MatrixRain.
+- `src/pages/dashboard/Loja.tsx`, `src/pages/ComprarParceiro.tsx`, `src/components/dashboard/loja/CheckoutCreditsDialog.tsx`, `src/components/dashboard/ManualOrderDialog.tsx`:
+  - Quando a função responder com `scheduledFor`, mostrar toast/diálogo: "Esse workspace já recebeu créditos nas últimas 24h. Pedido agendado para HH:MM."
+  - Em pacotes, ocultar/desabilitar os que pedem mais de 20 créditos (ou marcar como "indisponível — limite 20/ws/24h").
+- `src/lib/credit-packs.ts`: revisar para refletir o novo teto de 20.
 
-- Performance: usar `transform` e `opacity` (GPU). Respeitar `prefers-reduced-motion` desativando loops contínuos (glitch, scanline, border-scan, orbs).
+### 5. Memória do projeto
 
-## Fora do escopo
+Adicionar regra em `mem://index.md`: "Cada workspace só aceita 20 créditos a cada 24h (rolling, global). Pedidos excedentes são agendados, nunca rejeitados."
 
-- Não alterar fluxo de login/cadastro.
-- Não trocar paleta nem fontes.
-- Não mexer em outras páginas.
+## Pontos técnicos
+
+- Cooldown é checado server-side em **todos** os caminhos — UI é apenas hint.
+- Normalização do nome do workspace usa a mesma helper de `_shared/workspace-name.ts` para evitar bypass por capitalização/espaços.
+- Saldo do cliente (`partner_customer_balances`) não é afetado: cooldown bloqueia o consumo, não o saldo.
+- Pedidos em `failed`/`refunded` parciais já têm fluxo de refund — reaproveitado para o caso "skipped por cooldown".
+
+## Fora de escopo
+
+- Mudar a regra para janela de calendário (foi descartado pelo usuário).
+- Limite por cliente/parceiro (foi descartado — é global por workspace).
+- Migrar pedidos já existentes com >20 créditos — só vale para novos pedidos.

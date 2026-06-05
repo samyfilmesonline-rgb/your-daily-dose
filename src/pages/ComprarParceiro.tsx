@@ -1556,12 +1556,20 @@ export default function ComprarParceiro() {
                   }
                   throw error;
                 }
-                const orderId = (data as { orderId?: string })?.orderId;
-                toast({ title: "Resgate enviado!", description: `${n} créditos a caminho.` });
+                const d = (data as { orderId?: string; scheduled?: boolean; scheduledFor?: string }) ?? {};
+                if (d.scheduled && d.scheduledFor) {
+                  const when = new Date(d.scheduledFor).toLocaleString("pt-BR");
+                  toast({
+                    title: "Workspace em cooldown 20/24h",
+                    description: `Resgate agendado para ${when}.`,
+                  });
+                } else {
+                  toast({ title: "Resgate enviado!", description: `${n} créditos a caminho.` });
+                }
                 setRedeemOpen(false);
                 await fetchHistory();
-                if (orderId) {
-                  setTrackingOrderId(orderId);
+                if (d.orderId) {
+                  setTrackingOrderId(d.orderId);
                 }
               } catch (err) {
                 const msg = err instanceof Error ? err.message : "Erro";

@@ -633,6 +633,14 @@ export default function ComprarParceiro() {
         }
         throw error;
       }
+      if ((data as { scheduled?: boolean })?.scheduled && (data as { scheduledFor?: string })?.scheduledFor) {
+        const when = new Date((data as { scheduledFor: string }).scheduledFor).toLocaleString("pt-BR");
+        toast({
+          title: "Workspace em cooldown 20/24h",
+          description: `Pedido agendado automaticamente para ${when}.`,
+        });
+        return;
+      }
       if (!data?.orderId) throw new Error("Resposta inválida");
       const credits = Number(data.credits ?? data.balanceAppliedCredits ?? 0);
       setPix({

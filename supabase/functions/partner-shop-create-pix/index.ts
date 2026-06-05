@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { z } from "https://esm.sh/zod@3.23.8";
 import { createPixCharge, normalizeQrImage } from "../_shared/abacate.ts";
 import { assertRealWorkspaceName } from "../_shared/workspace-name.ts";
+import { PER_WORKSPACE_DAILY_CAP, getWorkspaceCooldownUntil, createCooldownSchedule } from "../_shared/limits.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -74,6 +75,44 @@ Deno.serve(async (req) => {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Regra global: cada pedido só pode farmar até 20 créditos no workspace (limite 20/24h).
+    if (Number(pack.credits) > PER_WORKSPACE_DAILY_CAP) {
+      return new Response(JSON.stringify({
+        error: `Cada workspace só aceita até ${PER_WORKSPACE_DAILY_CAP} créditos a cada 24h. Escolha um pacote menor.`,
+      }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // Cooldown 20/24h por workspace — agenda em vez de cobrar.
+    {
+      const cd = await getWorkspaceCooldownUntil(sb, b.targetWorkspace);
+      if (cd) {
+        try {
+          const scheduleId = await createCooldownSchedule(sb, {
+            partnerId: b.partnerId,
+            customerName: b.customerName,
+            customerEmail: b.customerEmail,
+            customerWhatsapp: b.customerWhatsapp,
+            targetWorkspace: b.targetWorkspace,
+            credits: Number(pack.credits),
+            amountCentsPerRun: Number(pack.price_cents),
+            scheduledFor: cd,
+            notes: `cooldown 20/24h — pedido reagendado para ${b.customerEmail}`,
+          });
+          return new Response(JSON.stringify({
+            scheduled: true,
+            scheduleId,
+            scheduledFor: cd,
+            message: `Esse workspace já recebeu créditos nas últimas 24h. Pedido agendado.`,
+          }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        } catch (e) {
+          console.error("schedule on cooldown err", e);
+          return new Response(JSON.stringify({ error: "Workspace em cooldown e falha ao agendar" }), {
+            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
     }
 
     const cellphone = b.customerWhatsapp.replace(/\D/g, "");

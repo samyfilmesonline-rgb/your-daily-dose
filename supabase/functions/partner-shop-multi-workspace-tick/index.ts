@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { z } from "https://esm.sh/zod@3.23.8";
 import { cleanWorkspaceName, dedupeWorkspaces, normalizeWorkspaceKey, isStatusLikeWorkspace } from "../_shared/workspace-name.ts";
+import { PER_WORKSPACE_DAILY_CAP, getWorkspaceCooldownUntil, createCooldownSchedule } from "../_shared/limits.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,7 +39,7 @@ const Body = z.discriminatedUnion("action", [
   }),
 ]);
 
-const PER_WS = 200;
+const PER_WS = PER_WORKSPACE_DAILY_CAP;
 
 type WsItem = {
   name: string;

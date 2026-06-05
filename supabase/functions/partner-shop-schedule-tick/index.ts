@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { getWorkspaceCooldownUntil } from "../_shared/limits.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -48,6 +49,18 @@ async function processSchedule(sb: SupabaseClient, s: Schedule): Promise<{ actio
   if (s.end_mode === "days" && s.total_days && totalRuns >= s.total_days) {
     await sb.from("partner_order_schedules").update({ status: "completed" }).eq("id", s.id);
     return { action: "completed_by_days" };
+  }
+
+  // Cooldown 20/24h por workspace (single-ws): empurra next_run_at
+  if (!s.multi_workspace_mode && s.target_workspace) {
+    const cd = await getWorkspaceCooldownUntil(sb, s.target_workspace);
+    if (cd) {
+      await sb
+        .from("partner_order_schedules")
+        .update({ next_run_at: cd, updated_at: now.toISOString() })
+        .eq("id", s.id);
+      return { action: "delayed_by_cooldown" };
+    }
   }
 
   // Cria pedido multi-ws

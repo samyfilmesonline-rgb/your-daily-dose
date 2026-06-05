@@ -1442,6 +1442,14 @@ export type Database = {
         }
         Returns: number
       }
+      workspace_cooldown_until: {
+        Args: { _workspace: string }
+        Returns: string
+      }
+      workspace_farmed_last_24h: {
+        Args: { _workspace: string }
+        Returns: number
+      }
     }
     Enums: {
       app_role: "admin" | "user"

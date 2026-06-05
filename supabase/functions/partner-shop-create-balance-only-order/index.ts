@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { z } from "https://esm.sh/zod@3.23.8";
 import { assertRealWorkspaceName } from "../_shared/workspace-name.ts";
+import { PER_WORKSPACE_DAILY_CAP, getWorkspaceCooldownUntil, createCooldownSchedule } from "../_shared/limits.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -58,13 +59,43 @@ Deno.serve(async (req) => {
     );
 
     const customerEmail = b.customerEmail.toLowerCase();
+
+    // Cooldown 20/24h por workspace.
+    {
+      const cd = await getWorkspaceCooldownUntil(sb, b.targetWorkspace);
+      if (cd) {
+        try {
+          const scheduleId = await createCooldownSchedule(sb, {
+            partnerId: b.partnerId,
+            customerName: b.customerName,
+            customerEmail,
+            customerWhatsapp: b.customerWhatsapp,
+            targetWorkspace: b.targetWorkspace,
+            credits: PER_WORKSPACE_DAILY_CAP,
+            amountCentsPerRun: 0,
+            scheduledFor: cd,
+            notes: `cooldown 20/24h — saldo reagendado para ${customerEmail}`,
+          });
+          return new Response(JSON.stringify({
+            scheduled: true, scheduleId, scheduledFor: cd,
+            message: "Workspace em cooldown — pedido agendado.",
+          }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        } catch (e) {
+          console.error("schedule on cooldown err", e);
+        }
+      }
+    }
+
     const { data: bal } = await sb
       .from("partner_customer_balances")
       .select("credits")
       .eq("partner_id", b.partnerId)
       .eq("customer_email", customerEmail)
       .maybeSingle();
-    const available = Math.max(0, Number(bal?.credits ?? 0));
+    const available = Math.min(
+      PER_WORKSPACE_DAILY_CAP,
+      Math.max(0, Number(bal?.credits ?? 0)),
+    );
     if (available <= 0) {
       return new Response(JSON.stringify({ error: "Você não tem saldo disponível." }), {
         status: 400,

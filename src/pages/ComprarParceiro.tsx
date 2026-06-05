@@ -534,6 +534,14 @@ export default function ComprarParceiro() {
         }
         throw error;
       }
+      if ((data as { scheduled?: boolean })?.scheduled && (data as { scheduledFor?: string })?.scheduledFor) {
+        const when = new Date((data as { scheduledFor: string }).scheduledFor).toLocaleString("pt-BR");
+        toast({
+          title: "Workspace em cooldown 20/24h",
+          description: `Esse workspace já recebeu créditos nas últimas 24h. Pedido agendado para ${when}.`,
+        });
+        return;
+      }
       if (!data?.orderId) throw new Error("Resposta inválida");
       const pd = data as PixData;
       setPix(pd);
@@ -624,6 +632,14 @@ export default function ComprarParceiro() {
           } catch { throw error; }
         }
         throw error;
+      }
+      if ((data as { scheduled?: boolean })?.scheduled && (data as { scheduledFor?: string })?.scheduledFor) {
+        const when = new Date((data as { scheduledFor: string }).scheduledFor).toLocaleString("pt-BR");
+        toast({
+          title: "Workspace em cooldown 20/24h",
+          description: `Pedido agendado automaticamente para ${when}.`,
+        });
+        return;
       }
       if (!data?.orderId) throw new Error("Resposta inválida");
       const credits = Number(data.credits ?? data.balanceAppliedCredits ?? 0);
@@ -1540,12 +1556,20 @@ export default function ComprarParceiro() {
                   }
                   throw error;
                 }
-                const orderId = (data as { orderId?: string })?.orderId;
-                toast({ title: "Resgate enviado!", description: `${n} créditos a caminho.` });
+                const d = (data as { orderId?: string; scheduled?: boolean; scheduledFor?: string }) ?? {};
+                if (d.scheduled && d.scheduledFor) {
+                  const when = new Date(d.scheduledFor).toLocaleString("pt-BR");
+                  toast({
+                    title: "Workspace em cooldown 20/24h",
+                    description: `Resgate agendado para ${when}.`,
+                  });
+                } else {
+                  toast({ title: "Resgate enviado!", description: `${n} créditos a caminho.` });
+                }
                 setRedeemOpen(false);
                 await fetchHistory();
-                if (orderId) {
-                  setTrackingOrderId(orderId);
+                if (d.orderId) {
+                  setTrackingOrderId(d.orderId);
                 }
               } catch (err) {
                 const msg = err instanceof Error ? err.message : "Erro";

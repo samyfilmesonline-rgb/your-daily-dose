@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { z } from "https://esm.sh/zod@3.23.8";
 import { cleanWorkspaceName, isStatusLikeWorkspace } from "../_shared/workspace-name.ts";
+import { PER_WORKSPACE_DAILY_CAP, getWorkspaceCooldownUntil, createCooldownSchedule } from "../_shared/limits.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -73,7 +74,42 @@ Deno.serve(async (req) => {
       return json(400, { error: `Workspace inválido: '${targetWs}' parece um rótulo de status` });
     }
 
+    // Single-ws: força no máximo 20 créditos por pedido (limite 20/24h).
+    if (!b.multiWorkspaceMode && b.credits != null && b.credits > PER_WORKSPACE_DAILY_CAP) {
+      return json(400, {
+        error: `Cada workspace só aceita até ${PER_WORKSPACE_DAILY_CAP} créditos a cada 24h. Reduza a quantidade.`,
+      });
+    }
+
     const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
+
+    // Cooldown 20/24h (single-ws). Multi-ws é tratado pelo multi-workspace-tick.
+    if (!b.multiWorkspaceMode && targetWs) {
+      const cd = await getWorkspaceCooldownUntil(sb, targetWs);
+      if (cd) {
+        try {
+          const scheduleId = await createCooldownSchedule(sb, {
+            partnerId: b.partnerId ?? callerId,
+            botId: b.botId ?? null,
+            customerName: b.customerName,
+            customerEmail: b.customerEmail,
+            customerWhatsapp: b.customerWhatsapp,
+            targetWorkspace: targetWs,
+            credits: Number(b.credits),
+            amountCentsPerRun: Number(b.amountCents ?? 0),
+            scheduledFor: cd,
+            notes: `cooldown 20/24h — manual reagendado: ${b.notes.slice(0, 120)}`,
+            createdBy: callerId,
+          });
+          return json(200, {
+            ok: true, scheduled: true, scheduleId, scheduledFor: cd,
+            message: "Workspace em cooldown — pedido agendado.",
+          });
+        } catch (e) {
+          console.error("schedule on cooldown err", e);
+        }
+      }
+    }
 
     // admin check
     const { data: isAdminRpc } = await sb.rpc("has_role", {

@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { z } from "https://esm.sh/zod@3.23.8";
 import { cleanWorkspaceName, dedupeWorkspaces, normalizeWorkspaceKey, isStatusLikeWorkspace } from "../_shared/workspace-name.ts";
+import { PER_WORKSPACE_DAILY_CAP, getWorkspaceCooldownUntil, createCooldownSchedule } from "../_shared/limits.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,7 +39,7 @@ const Body = z.discriminatedUnion("action", [
   }),
 ]);
 
-const PER_WS = 200;
+const PER_WS = PER_WORKSPACE_DAILY_CAP;
 
 type WsItem = {
   name: string;
@@ -120,7 +121,7 @@ Deno.serve(async (req) => {
       if (!b.fingerprint || b.fingerprint.length < 8) return json(401, { error: "Fingerprint inválido" });
 
       const nowIso = new Date().toISOString();
-      const targetCredits = Math.max(Number(order.credits ?? 200), 200);
+      const targetCredits = Math.max(Number(order.credits ?? PER_WS), PER_WS);
       await sb
         .from("partner_credit_orders")
         .update({
@@ -140,7 +141,7 @@ Deno.serve(async (req) => {
           id_do_usuario: order.partner_id,
           email_lovable: bot.email_lovable,
           workspace_nome: order.current_workspace ?? order.target_workspace ?? null,
-          creditos_adicionados: 200,
+          creditos_adicionados: PER_WS,
           status: "limite",
           erro: b.reason || "stripe_daily_farm_limit_reached",
           iniciado_em: nowIso,
@@ -211,8 +212,8 @@ Deno.serve(async (req) => {
       if (cleanedList.length === 0) {
         return json(400, { error: "Nenhum workspace válido informado" });
       }
-      const allowed = cleanedList.slice(0, Math.max(0, maxWs));
-      if (allowed.length === 0) {
+      const allowedByQuota = cleanedList.slice(0, Math.max(0, maxWs));
+      if (allowedByQuota.length === 0) {
         await sb
           .from("partner_credit_orders")
           .update({ status: "failed", failed_reason: "insufficient_quota_no_workspace" })
@@ -223,6 +224,64 @@ Deno.serve(async (req) => {
           .eq("id", bot.id)
           .eq("current_order_id", order.id);
         return json(400, { error: "Quota insuficiente para iniciar" });
+      }
+
+      // Cooldown 20/24h por workspace: separa prontos x bloqueados
+      const ready: string[] = [];
+      const blocked: Array<{ name: string; cooldownUntil: string }> = [];
+      for (const ws of allowedByQuota) {
+        const cd = await getWorkspaceCooldownUntil(sb, ws);
+        if (cd) blocked.push({ name: ws, cooldownUntil: cd });
+        else ready.push(ws);
+      }
+
+      // Cria schedules one-shot para os bloqueados
+      const scheduledIds: string[] = [];
+      for (const item of blocked) {
+        try {
+          const sid = await createCooldownSchedule(sb, {
+            partnerId: order.partner_id as string,
+            botId: order.assigned_bot_id as string | null,
+            customerName: order.customer_name as string,
+            customerEmail: order.customer_email as string,
+            customerWhatsapp: order.customer_whatsapp as string | null,
+            targetWorkspace: item.name,
+            credits: PER_WORKSPACE_DAILY_CAP,
+            amountCentsPerRun: Number(order.price_cents_per_workspace ?? 0),
+            scheduledFor: item.cooldownUntil,
+            notes: `auto-reagendado por cooldown 20/24h (origem: pedido ${order.id})`,
+            createdBy: order.partner_id as string,
+          });
+          scheduledIds.push(sid);
+        } catch (e) {
+          console.warn("createCooldownSchedule err", e);
+        }
+      }
+
+      const allowed = ready;
+      if (allowed.length === 0) {
+        // Nada para rodar agora — tudo agendado
+        await sb
+          .from("partner_credit_orders")
+          .update({
+            status: "refunded",
+            failed_reason: "all_workspaces_in_cooldown",
+            workspaces_total: 0,
+            workspaces_done: 0,
+          })
+          .eq("id", order.id);
+        await sb
+          .from("farm_bots")
+          .update({ status: "idle", current_order_id: null })
+          .eq("id", bot.id)
+          .eq("current_order_id", order.id);
+        return json(200, {
+          ok: true,
+          scheduledOnly: true,
+          scheduledIds,
+          blocked,
+          message: "Todos os workspaces estão no cooldown de 24h. Pedidos agendados.",
+        });
       }
 
       const total = allowed.length;
@@ -276,6 +335,8 @@ Deno.serve(async (req) => {
         workspacesTotal: total,
         workspacesDone: 0,
         truncated: allowed.length < b.workspaces.length,
+        scheduledIds,
+        blocked,
       });
     }
 
@@ -309,7 +370,7 @@ Deno.serve(async (req) => {
       plan[idx].error = null;
     } else if (b.action === "limit_reached") {
       plan[idx].status = "done";
-      plan[idx].farmed = Math.max(plan[idx].farmed, 200);
+      plan[idx].farmed = Math.max(plan[idx].farmed, PER_WS);
       plan[idx].finished_at = nowIso;
       plan[idx].error = b.reason || "stripe_daily_farm_limit_reached";
       plan[idx].limited = true;
@@ -323,11 +384,40 @@ Deno.serve(async (req) => {
 
     // Decide próximo
     let next: WsItem | null = null;
+    const scheduledFromNext: Array<{ name: string; cooldownUntil: string; scheduleId: string }> = [];
     if (!stopRequested) {
-      next = plan.find((w) => w.status === "pending") ?? null;
-      if (next) {
-        next.status = "running";
-        next.started_at = nowIso;
+      // Pula workspaces em cooldown e cria schedules para eles
+      while (true) {
+        const candidate = plan.find((w) => w.status === "pending") ?? null;
+        if (!candidate) { next = null; break; }
+        const cd = await getWorkspaceCooldownUntil(sb, candidate.name);
+        if (!cd) {
+          candidate.status = "running";
+          candidate.started_at = nowIso;
+          next = candidate;
+          break;
+        }
+        candidate.status = "skipped";
+        candidate.finished_at = nowIso;
+        candidate.error = "cooldown_24h";
+        try {
+          const sid = await createCooldownSchedule(sb, {
+            partnerId: order.partner_id as string,
+            botId: order.assigned_bot_id as string | null,
+            customerName: order.customer_name as string,
+            customerEmail: order.customer_email as string,
+            customerWhatsapp: order.customer_whatsapp as string | null,
+            targetWorkspace: candidate.name,
+            credits: PER_WORKSPACE_DAILY_CAP,
+            amountCentsPerRun: Number(order.price_cents_per_workspace ?? 0),
+            scheduledFor: cd,
+            notes: `auto-reagendado por cooldown 20/24h (origem: pedido ${order.id})`,
+            createdBy: order.partner_id as string,
+          });
+          scheduledFromNext.push({ name: candidate.name, cooldownUntil: cd, scheduleId: sid });
+        } catch (e) {
+          console.warn("createCooldownSchedule err (next)", e);
+        }
       }
     } else {
       // marcar restantes como skipped
@@ -467,7 +557,7 @@ Deno.serve(async (req) => {
           id_do_usuario: order.partner_id,
           email_lovable: (await sb.from("farm_bots").select("email_lovable").eq("id", bot.id).maybeSingle()).data?.email_lovable ?? null,
           workspace_nome: targetName,
-          creditos_adicionados: 200,
+          creditos_adicionados: PER_WS,
           status: "limite",
           erro: b.reason || "stripe_daily_farm_limit_reached",
           iniciado_em: nowIso,

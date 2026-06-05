@@ -319,16 +319,25 @@ export default function ManualOrderDialog({
         });
         qc.invalidateQueries({ queryKey: ["my-schedules", user?.id] });
       } else {
-        const status = (data as { status?: string } | null)?.status ?? "paid";
-        toast({
-          title: "Recarga criada",
-          description:
-            status === "processing"
-              ? "Bot iniciou o farm agora."
-              : status === "queued"
-                ? "Sem bot livre — entrou na fila."
-                : `Status: ${status}`,
-        });
+        const d = (data as { status?: string; scheduled?: boolean; scheduledFor?: string } | null) ?? {};
+        if (d.scheduled && d.scheduledFor) {
+          const when = new Date(d.scheduledFor).toLocaleString("pt-BR");
+          toast({
+            title: "Workspace em cooldown 20/24h",
+            description: `Recarga agendada automaticamente para ${when}.`,
+          });
+        } else {
+          const status = d.status ?? "paid";
+          toast({
+            title: "Recarga criada",
+            description:
+              status === "processing"
+                ? "Bot iniciou o farm agora."
+                : status === "queued"
+                  ? "Sem bot livre — entrou na fila."
+                  : `Status: ${status}`,
+          });
+        }
       }
       qc.invalidateQueries({ queryKey: ["my-orders", user?.id] });
       qc.invalidateQueries({ queryKey: ["my-bots-mini", user?.id] });

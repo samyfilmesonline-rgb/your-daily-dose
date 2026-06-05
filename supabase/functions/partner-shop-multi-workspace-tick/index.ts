@@ -212,8 +212,8 @@ Deno.serve(async (req) => {
       if (cleanedList.length === 0) {
         return json(400, { error: "Nenhum workspace válido informado" });
       }
-      const allowed = cleanedList.slice(0, Math.max(0, maxWs));
-      if (allowed.length === 0) {
+      const allowedByQuota = cleanedList.slice(0, Math.max(0, maxWs));
+      if (allowedByQuota.length === 0) {
         await sb
           .from("partner_credit_orders")
           .update({ status: "failed", failed_reason: "insufficient_quota_no_workspace" })
@@ -224,6 +224,64 @@ Deno.serve(async (req) => {
           .eq("id", bot.id)
           .eq("current_order_id", order.id);
         return json(400, { error: "Quota insuficiente para iniciar" });
+      }
+
+      // Cooldown 20/24h por workspace: separa prontos x bloqueados
+      const ready: string[] = [];
+      const blocked: Array<{ name: string; cooldownUntil: string }> = [];
+      for (const ws of allowedByQuota) {
+        const cd = await getWorkspaceCooldownUntil(sb, ws);
+        if (cd) blocked.push({ name: ws, cooldownUntil: cd });
+        else ready.push(ws);
+      }
+
+      // Cria schedules one-shot para os bloqueados
+      const scheduledIds: string[] = [];
+      for (const item of blocked) {
+        try {
+          const sid = await createCooldownSchedule(sb, {
+            partnerId: order.partner_id as string,
+            botId: order.assigned_bot_id as string | null,
+            customerName: order.customer_name as string,
+            customerEmail: order.customer_email as string,
+            customerWhatsapp: order.customer_whatsapp as string | null,
+            targetWorkspace: item.name,
+            credits: PER_WORKSPACE_DAILY_CAP,
+            amountCentsPerRun: Number(order.price_cents_per_workspace ?? 0),
+            scheduledFor: item.cooldownUntil,
+            notes: `auto-reagendado por cooldown 20/24h (origem: pedido ${order.id})`,
+            createdBy: order.partner_id as string,
+          });
+          scheduledIds.push(sid);
+        } catch (e) {
+          console.warn("createCooldownSchedule err", e);
+        }
+      }
+
+      const allowed = ready;
+      if (allowed.length === 0) {
+        // Nada para rodar agora — tudo agendado
+        await sb
+          .from("partner_credit_orders")
+          .update({
+            status: "refunded",
+            failed_reason: "all_workspaces_in_cooldown",
+            workspaces_total: 0,
+            workspaces_done: 0,
+          })
+          .eq("id", order.id);
+        await sb
+          .from("farm_bots")
+          .update({ status: "idle", current_order_id: null })
+          .eq("id", bot.id)
+          .eq("current_order_id", order.id);
+        return json(200, {
+          ok: true,
+          scheduledOnly: true,
+          scheduledIds,
+          blocked,
+          message: "Todos os workspaces estão no cooldown de 24h. Pedidos agendados.",
+        });
       }
 
       const total = allowed.length;
@@ -277,6 +335,8 @@ Deno.serve(async (req) => {
         workspacesTotal: total,
         workspacesDone: 0,
         truncated: allowed.length < b.workspaces.length,
+        scheduledIds,
+        blocked,
       });
     }
 

@@ -121,7 +121,7 @@ Deno.serve(async (req) => {
       if (!b.fingerprint || b.fingerprint.length < 8) return json(401, { error: "Fingerprint inválido" });
 
       const nowIso = new Date().toISOString();
-      const targetCredits = Math.max(Number(order.credits ?? 200), 200);
+      const targetCredits = Math.max(Number(order.credits ?? PER_WS), PER_WS);
       await sb
         .from("partner_credit_orders")
         .update({
@@ -141,7 +141,7 @@ Deno.serve(async (req) => {
           id_do_usuario: order.partner_id,
           email_lovable: bot.email_lovable,
           workspace_nome: order.current_workspace ?? order.target_workspace ?? null,
-          creditos_adicionados: 200,
+          creditos_adicionados: PER_WS,
           status: "limite",
           erro: b.reason || "stripe_daily_farm_limit_reached",
           iniciado_em: nowIso,
@@ -370,7 +370,7 @@ Deno.serve(async (req) => {
       plan[idx].error = null;
     } else if (b.action === "limit_reached") {
       plan[idx].status = "done";
-      plan[idx].farmed = Math.max(plan[idx].farmed, 200);
+      plan[idx].farmed = Math.max(plan[idx].farmed, PER_WS);
       plan[idx].finished_at = nowIso;
       plan[idx].error = b.reason || "stripe_daily_farm_limit_reached";
       plan[idx].limited = true;
@@ -557,7 +557,7 @@ Deno.serve(async (req) => {
           id_do_usuario: order.partner_id,
           email_lovable: (await sb.from("farm_bots").select("email_lovable").eq("id", bot.id).maybeSingle()).data?.email_lovable ?? null,
           workspace_nome: targetName,
-          creditos_adicionados: 200,
+          creditos_adicionados: PER_WS,
           status: "limite",
           erro: b.reason || "stripe_daily_farm_limit_reached",
           iniciado_em: nowIso,
